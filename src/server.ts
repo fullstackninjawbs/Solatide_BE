@@ -1,70 +1,83 @@
 import express, { Request, Response, NextFunction } from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import mongoSanitize from 'express-mongo-sanitize';
+import config from './config';
 import connectDB from './config/db';
+import apiRoutes from './routes';
+import productRoutes from './routes/product.routes';
+import errorHandler from './middleware/errorHandler';
+import AppError from './utils/appError';
 
-// Load environment variables
-dotenv.config();
+// Handle uncaught exceptions before any other code executes
+process.on('uncaughtException', (err: Error) => {
+  console.error('[UNCAUGHT EXCEPTION] Shutting down server...');
+  console.error(err.name, err.message, err.stack);
+  process.exit(1);
+});
 
 // Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB
+// Connect to MongoDB Database
 connectDB();
 
-// Global Middleware
-app.use(helmet());
-app.use(express.json());
+// Global Middleware Stack
+app.use(helmet()); // Security headers
 
-// CORS configuration
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-  credentials: true
-}));
+app.use(express.json({ limit: '10kb' })); // Body parser (capped to prevent payload injection)
 
-// Logger middleware
-if (process.env.NODE_ENV === 'development') {
+// Data sanitization against NoSQL query injection
+app.use(mongoSanitize());
+
+// CORS configuration matching configured origins
+app.use(
+  cors({
+    origin: config.corsOrigin,
+    credentials: true,
+  })
+);
+
+// Logging middleware
+if (config.env === 'development') {
   app.use(morgan('dev'));
 } else {
   app.use(morgan('combined'));
 }
 
-// Data sanitization against NoSQL query injection
-app.use(mongoSanitize());
-
-// Base health/status endpoint
+// Base legacy health/status endpoint for backward compatibility
 app.get('/api/status', (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'Solatide Biosciences API is running successfully',
     timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'development'
+    env: config.env,
   });
 });
 
-// 404 Route handler
-app.use((req: Request, res: Response, next: NextFunction) => {
-  res.status(404).json({
-    success: false,
-    message: `Route not found: ${req.originalUrl}`
-  });
+// Register Direct and Versioned API Routes
+app.use('/api/products', productRoutes);
+app.use('/api/v1', apiRoutes);
+
+// Catch-all: 404 Route handler for unregistered paths
+app.all('*', (req: Request, res: Response, next: NextFunction) => {
+  next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
 });
 
-// Global Error Handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error(`[Error] ${err.stack}`);
-  res.status(500).json({
-    success: false,
-    message: 'Internal Server Error',
-    error: process.env.NODE_ENV === 'development' ? err.message : {}
-  });
-});
+// Centralized Global Error Handler Middleware
+app.use(errorHandler);
 
 // Start the server
-app.listen(PORT, () => {
-  console.log(`[Server] running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+const server = app.listen(config.port, () => {
+  console.log(`[Server] Running in ${config.env} mode on port ${config.port}`);
+});
+
+// Handle unhandled promise rejections gracefully
+process.on('unhandledRejection', (err: any) => {
+  console.error('[UNHANDLED REJECTION] Shutting down server gracefully...');
+  console.error(err.name, err.message);
+  server.close(() => {
+    process.exit(1);
+  });
 });
