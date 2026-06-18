@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 export interface IProduct extends mongoose.Document {
+  id: number;
   name: string;
   description: string;
   price: number;
@@ -8,12 +9,19 @@ export interface IProduct extends mongoose.Document {
   inStock: boolean;
   category: string;
   status: 'In Stock' | 'Sold Out' | 'Sale';
+  tag?: string;
+  reviewsCount?: number;
   imageUrl?: string;
   createdAt: Date;
 }
 
 const productSchema = new mongoose.Schema<IProduct>(
   {
+    id: {
+      type: Number,
+      required: [true, 'A product must have a numeric ID'],
+      unique: true,
+    },
     name: {
       type: String,
       required: [true, 'A product must have a name'],
@@ -49,6 +57,14 @@ const productSchema = new mongoose.Schema<IProduct>(
       type: String,
       enum: ['In Stock', 'Sold Out', 'Sale'],
       default: 'In Stock',
+    },
+    tag: {
+      type: String,
+      trim: true,
+    },
+    reviewsCount: {
+      type: Number,
+      default: 0,
     },
     imageUrl: {
       type: String,

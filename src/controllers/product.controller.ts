@@ -37,13 +37,20 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   // 4) Sorting
   if (req.query.sort) {
     const sortType = req.query.sort as string;
-    if (sortType === 'Price: Low to High') {
+    if (sortType === 'Price: Low to High' || sortType === 'Price, low to high') {
       query = query.sort({ price: 1 });
-    } else if (sortType === 'Price: High to Low') {
+    } else if (sortType === 'Price: High to Low' || sortType === 'Price, high to low') {
       query = query.sort({ price: -1 });
-    } else if (sortType === 'Newest') {
+    } else if (sortType === 'Newest' || sortType === 'Date, new to old') {
       query = query.sort({ createdAt: -1 });
-    } else if (sortType === 'Best Selling') {
+    } else if (sortType === 'Date, old to new') {
+      query = query.sort({ createdAt: 1 });
+    } else if (sortType === 'Alphabetically, A-Z') {
+      query = query.sort({ name: 1 });
+    } else if (sortType === 'Alphabetically, Z-A') {
+      query = query.sort({ name: -1 });
+    } else {
+      // Default: Best Selling / Featured / Most relevant
       query = query.sort({ rating: -1 });
     }
   } else {
@@ -75,7 +82,19 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
  * Get details of a single product
  */
 export const getProductById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const product = await Product.findById(req.params.id);
+  const idOrObjectId = req.params.id;
+  let product;
+
+  // Check if it's a valid 24-char hex MongoDB ObjectId
+  if (idOrObjectId.match(/^[0-9a-fA-F]{24}$/)) {
+    product = await Product.findById(idOrObjectId);
+  } else {
+    // Fallback: try querying by custom numeric id field
+    const numericId = parseInt(idOrObjectId, 10);
+    if (!isNaN(numericId)) {
+      product = await Product.findOne({ id: numericId });
+    }
+  }
 
   if (!product) {
     return next(new AppError('No product found with that ID', 404));
