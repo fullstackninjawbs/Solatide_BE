@@ -47,7 +47,7 @@ export const protect = catchAsync(async (req: AuthenticatedRequest, res: Respons
 /**
  * Restrict routes to specific user roles (e.g., admin)
  */
-export const restrictTo = (...roles: Array<'user' | 'admin'>) => {
+export const restrictTo = (...roles: Array<'super_admin' | 'operations' | 'content_manager' | 'support' | 'user' | 'admin'>) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (!req.user || !roles.includes(req.user.role)) {
       return next(new AppError('You do not have permission to perform this action', 403));
