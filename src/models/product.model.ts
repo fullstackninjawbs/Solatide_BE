@@ -13,6 +13,7 @@ export interface IProductSeo {
 }
 
 export interface IProductVariant {
+  title: string;
   sku: string;
   price: number;
   compareAtPrice?: number | null;
@@ -72,6 +73,11 @@ export interface IProduct extends mongoose.Document {
 }
 
 const variantSchema = new mongoose.Schema<IProductVariant>({
+  title: {
+    type: String,
+    required: true,
+    default: 'Default Title',
+  },
   sku: {
     type: String,
     required: true,

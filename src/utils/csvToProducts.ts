@@ -2,6 +2,7 @@ import csvParser from 'csv-parser';
 import { Readable } from 'stream';
 
 export interface IParsedVariant {
+  title: string;
   sku: string;
   price: number;
   compareAtPrice?: number | null;
@@ -186,9 +187,17 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
         const taxable = row['Variant Taxable']?.trim().toUpperCase() !== 'FALSE';
         const inventoryPolicy = row['Variant Inventory Policy']?.trim().toLowerCase() === 'continue' ? 'continue' : 'deny';
 
+        // 1.5) Determine Variant Title from Options
+        const opt1 = row['Option1 Value']?.trim() || '';
+        const opt2 = row['Option2 Value']?.trim() || '';
+        const opt3 = row['Option3 Value']?.trim() || '';
+        const optionParts = [opt1, opt2, opt3].filter(Boolean);
+        const variantTitle = optionParts.length > 0 ? optionParts.join(' / ') : 'Default Title';
+
         // Add variant if we have a SKU or price
         if (variantSku || rawPrice) {
           pObj.variants.push({
+            title: variantTitle,
             sku: variantSku || `${handle}-var-${pObj.variants.length + 1}`,
             price,
             compareAtPrice,
@@ -241,6 +250,7 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
           // If no variants parsed, add a default variant
           if (pObj.variants.length === 0) {
             pObj.variants.push({
+              title: 'Default Title',
               sku: `${handle}-default`,
               price: 0,
               compareAtPrice: null,

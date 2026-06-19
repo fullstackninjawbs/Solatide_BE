@@ -43,6 +43,15 @@ const runTests = async () => {
       throw new Error(`Assertion failed: Expected cagrisema to have 2 variants, got ${cagrisema.variants.length}`);
     }
 
+    // Validate variant titles
+    console.log('[Test] Validating variant titles...');
+    if (cagrisema.variants[0].title !== '10mg') {
+      throw new Error(`Assertion failed: Expected variant 0 title to be "10mg", got "${cagrisema.variants[0].title}"`);
+    }
+    if (cagrisema.variants[1].title !== 'Variant-2') {
+      throw new Error(`Assertion failed: Expected variant 1 title to be "Variant-2", got "${cagrisema.variants[1].title}"`);
+    }
+
     // Validate prices
     if (cagrisema.variants[0].price !== 149.95 || cagrisema.variants[1].price !== 139.95) {
       throw new Error('Assertion failed: CagriSema variant prices mapped incorrectly');
