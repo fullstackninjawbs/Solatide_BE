@@ -7,6 +7,7 @@ import config from './config';
 import connectDB from './config/db';
 import apiRoutes from './routes';
 import productRoutes from './routes/product.routes';
+import adminRoutes from './routes/admin';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
 
@@ -58,6 +59,7 @@ app.get('/api/status', (req: Request, res: Response) => {
 
 // Register Direct and Versioned API Routes
 app.use('/api/products', productRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
 
 // Catch-all: 404 Route handler for unregistered paths
