@@ -8,6 +8,7 @@ import connectDB from './config/db';
 import apiRoutes from './routes';
 import productRoutes from './routes/product.routes';
 import adminRoutes from './routes/admin';
+import paymentRoutes from './routes/payment.routes';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
 
@@ -27,7 +28,17 @@ connectDB();
 // Global Middleware Stack
 app.use(helmet()); // Security headers
 
-app.use(express.json({ limit: '10kb' })); // Body parser (capped to prevent payload injection)
+// ── Payment webhook route MUST be registered before express.json() ────────────
+// The webhook handler uses express.raw() internally to capture the raw body
+// buffer for HMAC-SHA256 signature verification with TagadaPay.
+app.use('/api/payments', paymentRoutes);
+
+// Body parser (capped to prevent payload injection)
+// Skip for webhook path (already handled by express.raw above)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path === '/api/payments/tagada/webhook') return next();
+  express.json({ limit: '10kb' })(req, res, next);
+});
 
 // Data sanitization against NoSQL query injection
 app.use(mongoSanitize());

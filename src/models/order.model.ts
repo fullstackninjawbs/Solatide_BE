@@ -14,6 +14,16 @@ export interface IOrder extends mongoose.Document {
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   createdAt: Date;
   updatedAt: Date;
+  // Payment fields
+  paymentMethod?: 'tagada' | 'payid' | 'bank_transfer';
+  paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
+  currency: string;
+  // TagadaPay-specific tracking
+  tagadaPaymentId?: string;
+  tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded';
+  // Customer contact snapshot (for Tagada payload)
+  customerEmail?: string;
+  customerName?: string;
 }
 
 const orderSchema = new mongoose.Schema<IOrder>(
@@ -56,6 +66,29 @@ const orderSchema = new mongoose.Schema<IOrder>(
       enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
       default: 'pending',
     },
+    // ── Payment ──────────────────────────────────────────────────────────────
+    paymentMethod: {
+      type: String,
+      enum: ['tagada', 'payid', 'bank_transfer'],
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'paid', 'failed', 'refunded'],
+      default: 'pending',
+    },
+    currency: {
+      type: String,
+      default: 'AUD',
+    },
+    // ── TagadaPay ─────────────────────────────────────────────────────────────
+    tagadaPaymentId: { type: String },
+    tagadaPaymentStatus: {
+      type: String,
+      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded'],
+    },
+    // ── Customer snapshot for Tagada payload ─────────────────────────────────
+    customerEmail: { type: String, trim: true },
+    customerName: { type: String, trim: true },
   },
   {
     timestamps: true,
