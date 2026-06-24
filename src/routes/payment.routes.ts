@@ -16,13 +16,13 @@ import {
   createTagadaPayment,
   tagadaWebhook,
 } from '../controllers/payment.controller';
-import { protect } from '../middleware/auth';
+import { protect, optionalAuth } from '../middleware/auth';
 
 const router = Router();
 
 // ── POST /api/payments/tagada/create ──────────────────────────────────────────
-// Protected: customer must be authenticated
-router.post('/tagada/create', protect, createTagadaPayment);
+// Public: guest or authenticated (populates user if logged in)
+router.post('/tagada/create', optionalAuth, createTagadaPayment);
 
 // ── POST /api/payments/tagada/webhook ─────────────────────────────────────────
 // Public (no auth): Tagada calls this endpoint directly.

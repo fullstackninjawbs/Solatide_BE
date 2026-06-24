@@ -14,6 +14,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import config from '../config';
+import PaymentSettings from '../models/PaymentSettings';
 
 const BASE_URLS = {
   sandbox: 'https://app.tagadapay.dev/api/public/v1',
@@ -57,4 +58,23 @@ export function rebuildTagadaClient(opts?: {
   apiKeyProd?: string;
 }): void {
   tagadaClient = buildTagadaClient(opts);
+}
+
+/**
+ * Loads settings from the database and initializes the client on startup.
+ */
+export async function initializeTagadaClientFromDB(): Promise<void> {
+  try {
+    const settings = await PaymentSettings.findOne();
+    if (settings) {
+      rebuildTagadaClient({
+        env: settings.tagadaEnv as 'sandbox' | 'prod',
+        apiKeySandbox: settings.tagadaApiKeySandbox,
+        apiKeyProd: settings.tagadaApiKeyProd,
+      });
+      console.log('[TagadaPay] Initialized client from DB settings');
+    }
+  } catch (err) {
+    console.error('[TagadaPay] Failed to initialize client from DB', err);
+  }
 }

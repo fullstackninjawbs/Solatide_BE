@@ -5,14 +5,16 @@ import {
   getAllOrders,
   updateOrderStatus,
 } from '../controllers/order.controller';
-import { protect, restrictTo } from '../middleware/auth';
+import { protect, restrictTo, optionalAuth } from '../middleware/auth';
 
 const router = Router();
 
-// Protect all routes
+// Public Routes (Guest checkout allowed, but populate user if logged in)
+router.post('/', optionalAuth, createOrder);
+
+// Protect subsequent routes
 router.use(protect);
 
-router.post('/', createOrder);
 router.get('/my-orders', getMyOrders);
 
 // Admin-Only Routes

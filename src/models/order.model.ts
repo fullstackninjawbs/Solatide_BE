@@ -31,7 +31,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: [true, 'An order must belong to a user'],
+      required: false,
     },
     products: [
       {
@@ -58,7 +58,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
     shippingAddress: {
       type: String,
-      required: [true, 'Please provide a shipping address'],
+      required: false,
       trim: true,
     },
     status: {

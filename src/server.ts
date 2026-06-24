@@ -22,16 +22,23 @@ process.on('uncaughtException', (err: Error) => {
 // Initialize Express app
 const app = express();
 
-// Connect to MongoDB Database
-connectDB();
+import { initializeTagadaClientFromDB } from './services/tagadaClient';
+
+// Connect to MongoDB Database and initialize DB-backed singletons
+connectDB().then(() => {
+  initializeTagadaClientFromDB();
+});
 
 // Global Middleware Stack
 app.use(helmet()); // Security headers
 
-// ── Payment webhook route MUST be registered before express.json() ────────────
-// The webhook handler uses express.raw() internally to capture the raw body
-// buffer for HMAC-SHA256 signature verification with TagadaPay.
-app.use('/api/payments', paymentRoutes);
+// CORS configuration matching configured origins
+app.use(
+  cors({
+    origin: config.corsOrigin,
+    credentials: true,
+  })
+);
 
 // Body parser (capped to prevent payload injection)
 // Skip for webhook path (already handled by express.raw above)
@@ -42,14 +49,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Data sanitization against NoSQL query injection
 app.use(mongoSanitize());
-
-// CORS configuration matching configured origins
-app.use(
-  cors({
-    origin: config.corsOrigin,
-    credentials: true,
-  })
-);
 
 // Logging middleware
 if (config.env === 'development') {
@@ -72,6 +71,7 @@ app.get('/api/status', (req: Request, res: Response) => {
 app.use('/api/products', productRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Catch-all: 404 Route handler for unregistered paths
 app.all('*', (req: Request, res: Response, next: NextFunction) => {

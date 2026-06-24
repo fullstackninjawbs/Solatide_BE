@@ -45,6 +45,32 @@ export const protect = catchAsync(async (req: AuthenticatedRequest, res: Respons
 });
 
 /**
+ * Optional Auth middleware: Populates req.user if a valid JWT is present,
+ * but allows the request to proceed as a guest if missing or invalid.
+ */
+export const optionalAuth = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  let token: string | undefined;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
+  if (!token) return next();
+
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
+    const currentUser = await User.findById(decoded.id);
+    if (currentUser) {
+      req.user = currentUser;
+    }
+  } catch (err) {
+    // Ignore JWT errors (e.g., invalid signature, expired) and proceed as guest
+  }
+
+  next();
+});
+
+/**
  * Restrict routes to specific user roles (e.g., admin)
  */
 export const restrictTo = (...roles: Array<'super_admin' | 'operations' | 'content_manager' | 'support' | 'user' | 'admin'>) => {

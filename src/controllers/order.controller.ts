@@ -16,9 +16,8 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
     return next(new AppError('Please provide a list of products for your order.', 400));
   }
 
-  if (!shippingAddress) {
-    return next(new AppError('Please provide a shipping address.', 400));
-  }
+  // Address collected via Tagada hosted checkout
+
 
   const orderItems = [];
   let totalAmount = 0;
@@ -47,7 +46,7 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
 
   // 2) Create the order document
   const newOrder = await Order.create({
-    user: req.user!._id as any,
+    user: req.user?._id,
     products: orderItems,
     totalAmount,
     shippingAddress,
