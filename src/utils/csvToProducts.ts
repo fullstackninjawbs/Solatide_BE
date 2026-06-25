@@ -11,6 +11,7 @@ export interface IParsedVariant {
   requiresShipping: boolean;
   taxable: boolean;
   weightGrams?: number;
+  tagadaVariantId?: string;
 }
 
 export interface IParsedImage {
@@ -194,8 +195,10 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
         const optionParts = [opt1, opt2, opt3].filter(Boolean);
         const variantTitle = optionParts.length > 0 ? optionParts.join(' / ') : 'Default Title';
 
-        // Add variant if we have a SKU or price
-        if (variantSku || rawPrice) {
+        const tagadaVariantId = row['Tagada Variant ID']?.trim();
+
+        // Add variant if we have a SKU, price, or Tagada Variant ID
+        if (variantSku || rawPrice || tagadaVariantId) {
           pObj.variants.push({
             title: variantTitle,
             sku: variantSku || `${handle}-var-${pObj.variants.length + 1}`,
@@ -205,7 +208,8 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
             inventoryPolicy,
             requiresShipping,
             taxable,
-            weightGrams
+            weightGrams,
+            tagadaVariantId
           });
           variantsCount++;
         }

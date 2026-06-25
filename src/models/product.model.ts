@@ -22,6 +22,7 @@ export interface IProductVariant {
   requiresShipping: boolean;
   taxable: boolean;
   weightGrams?: number;
+  tagadaVariantId?: string;
 }
 
 export interface IProduct extends mongoose.Document {
@@ -110,6 +111,10 @@ const variantSchema = new mongoose.Schema<IProductVariant>({
   },
   weightGrams: {
     type: Number,
+  },
+  tagadaVariantId: {
+    type: String,
+    sparse: true,
   },
 });
 
@@ -286,8 +291,6 @@ const productSchema = new mongoose.Schema<IProduct>(
 // Indexes
 productSchema.index({ category: 1 });
 productSchema.index({ price: 1 });
-productSchema.index({ slug: 1 }, { unique: true, sparse: true });
-productSchema.index({ id: 1 }, { unique: true });
 
 export const Product = mongoose.model<IProduct>('Product', productSchema);
 export default Product;

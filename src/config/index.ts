@@ -19,6 +19,7 @@ interface Config {
   tagadaDefaultCurrency: string;
   tagadaStoreId: string;
   tagadaAccountId: string;
+  tagadaCheckoutUrl: string;
 }
 
 const requiredEnv = ['JWT_SECRET', 'MONGO_URI'];
@@ -45,6 +46,7 @@ export const config: Config = {
   tagadaDefaultCurrency: process.env.TAGADA_DEFAULT_CURRENCY || 'AUD',
   tagadaStoreId: process.env.TAGADA_STORE_ID || '',
   tagadaAccountId: process.env.TAGADA_ACCOUNT_ID || '',
+  tagadaCheckoutUrl: process.env.TAGADA_CHECKOUT_URL || '',
 };
 
 export default config;

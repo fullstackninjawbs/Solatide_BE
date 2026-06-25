@@ -4,6 +4,7 @@ import {
   getMyOrders,
   getAllOrders,
   updateOrderStatus,
+  getOrderById,
 } from '../controllers/order.controller';
 import { protect, restrictTo, optionalAuth } from '../middleware/auth';
 
@@ -11,6 +12,9 @@ const router = Router();
 
 // Public Routes (Guest checkout allowed, but populate user if logged in)
 router.post('/', optionalAuth, createOrder);
+
+// Public order lookup (used by checkout success/failure pages)
+router.get('/:id', optionalAuth, getOrderById);
 
 // Protect subsequent routes
 router.use(protect);

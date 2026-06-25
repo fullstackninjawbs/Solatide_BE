@@ -12,52 +12,47 @@
  * singleton picks up the new values without restarting the server.
  */
 
-import axios, { AxiosInstance } from 'axios';
 import config from '../config';
 import PaymentSettings from '../models/PaymentSettings';
 
-const BASE_URLS = {
-  sandbox: 'https://app.tagadapay.dev/api/public/v1',
-  prod: 'https://app.tagadapay.com/api/public/v1',
-} as const;
+let TagadaSDK: any = null;
+
+// Singleton instance
+export let tagadaClient: any = null;
 
 /**
- * Build a fresh Axios instance using current config values.
- * Can be called with override credentials (e.g. from DB-backed settings).
+ * Build a fresh Tagada instance using current config values.
  */
-export function buildTagadaClient(opts?: {
+export async function buildTagadaClient(opts?: {
   env?: 'sandbox' | 'prod';
   apiKeySandbox?: string;
   apiKeyProd?: string;
-}): AxiosInstance {
+}) {
+  if (!TagadaSDK) {
+    // Bypass TS compiler transpiling import() to require() in CommonJS
+    const dynamicImport = new Function('modulePath', 'return import(modulePath)');
+    const imported = await dynamicImport('@tagadapay/node-sdk');
+    TagadaSDK = imported.default || imported.Tagada || imported;
+  }
+
   const env = opts?.env ?? config.tagadaEnv;
   const apiKey =
     env === 'prod'
-      ? (opts?.apiKeyProd ?? config.tagadaApiKeyProd)
-      : (opts?.apiKeySandbox ?? config.tagadaApiKeySandbox);
+      ? (opts?.apiKeyProd || config.tagadaApiKeyProd)
+      : (opts?.apiKeySandbox || config.tagadaApiKeySandbox);
 
-  return axios.create({
-    baseURL: BASE_URLS[env],
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    timeout: 10_000, // 10 seconds
-  });
+  return new TagadaSDK(apiKey);
 }
-
-// Singleton instance — used throughout the app
-export let tagadaClient: AxiosInstance = buildTagadaClient();
 
 /**
  * Rebuild the singleton (e.g. after admin updates credentials from the UI).
  */
-export function rebuildTagadaClient(opts?: {
+export async function rebuildTagadaClient(opts?: {
   env?: 'sandbox' | 'prod';
   apiKeySandbox?: string;
   apiKeyProd?: string;
-}): void {
-  tagadaClient = buildTagadaClient(opts);
+}): Promise<void> {
+  tagadaClient = await buildTagadaClient(opts);
 }
 
 /**
@@ -67,14 +62,24 @@ export async function initializeTagadaClientFromDB(): Promise<void> {
   try {
     const settings = await PaymentSettings.findOne();
     if (settings) {
-      rebuildTagadaClient({
+      await rebuildTagadaClient({
         env: settings.tagadaEnv as 'sandbox' | 'prod',
         apiKeySandbox: settings.tagadaApiKeySandbox,
         apiKeyProd: settings.tagadaApiKeyProd,
       });
       console.log('[TagadaPay] Initialized client from DB settings');
+    } else {
+      await rebuildTagadaClient();
     }
   } catch (err) {
     console.error('[TagadaPay] Failed to initialize client from DB', err);
+    await rebuildTagadaClient();
   }
+}
+
+export async function getTagadaClient() {
+  if (!tagadaClient) {
+    await rebuildTagadaClient();
+  }
+  return tagadaClient;
 }

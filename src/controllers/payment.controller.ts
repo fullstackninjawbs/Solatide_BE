@@ -13,7 +13,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { tagadaClient } from '../services/tagadaClient';
+import { tagadaClient, getTagadaClient } from '../services/tagadaClient';
 import Order from '../models/order.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
@@ -98,60 +98,63 @@ export const createTagadaPayment = catchAsync(
     const customerName: string =
       order.customerName ?? populatedUser?.name ?? 'Valued Customer';
 
-    // 4) Build Tagada payload
-    //    Amount: TagadaPay accepts decimal AUD (verify against their docs —
-    //    some gateways require cents as integers).
-    const payload = {
-      amount: order.totalAmount,
-      currency: order.currency || config.tagadaDefaultCurrency,
-      reference: order._id.toString(), // our internal order id
-      storeId: config.tagadaStoreId,   // provisioned store id
-      customer: {
-        email: customerEmail,
-        name: customerName,
-      },
-      metadata: {
-        orderId: order._id.toString(),
-        accountId: config.tagadaAccountId,
-        store: 'Solatide Biosciences',
-        researchUseOnly: true,
-      },
-    };
+    // 4) Build Tagada payload using the Node SDK
+    // Map order products to Tagada's items array: { variantId, quantity }
+    const items = order.products.map((item: any) => {
+      // Assuming single variant products or defaulting to the first variant
+      const variant = item.product?.variants?.[0];
+      const variantId = variant?.tagadaVariantId || 'missing_variant_id';
+      
+      if (variantId === 'missing_variant_id') {
+        throw new AppError(`Product "${item.product?.name || 'Unknown'}" does not have a Tagada Variant ID configured. Please update your database products to include 'tagadaVariantId'.`, 400);
+      }
 
-    // 5) Call TagadaPay API
-    let tagadaResponse: TagadaPaymentResponse;
+      return {
+        variantId,
+        quantity: item.quantity,
+      };
+    });
+
+    // 5) Call TagadaPay SDK to create session
+    let session: any;
     try {
-      const { data } = await tagadaClient.post<TagadaPaymentResponse>(
-        '/payments',
-        payload
-      );
-      tagadaResponse = data;
+      const client = await getTagadaClient();
+      session = await client.checkout.createSession({
+        storeId: config.tagadaStoreId,
+        items,
+        currency: order.currency || config.tagadaDefaultCurrency,
+        checkoutUrl: config.tagadaCheckoutUrl,
+        metadata: { 
+          orderId: order._id.toString(),
+          accountId: config.tagadaAccountId,
+        },
+      });
     } catch (err: any) {
-      console.error('[TagadaPay] /payments API error:', err?.response?.data ?? err.message);
+      console.error('[TagadaPay SDK] createSession error:', err?.response?.data ?? err.message);
       const status = err?.response?.status ?? 502;
       const message =
-        err?.response?.data?.message ?? 'TagadaPay payment initiation failed';
+        err?.response?.data?.message ?? err.message ?? 'TagadaPay session creation failed';
       return next(new AppError(message, status));
     }
 
-    // 6) Persist Tagada payment id on the order
-    order.tagadaPaymentId = tagadaResponse.id;
+    // 6) Persist Tagada session id on the order
+    order.tagadaPaymentId = session.id;
     order.tagadaPaymentStatus = 'initiated';
     order.paymentMethod = 'tagada';
     // paymentStatus stays 'pending' — webhook will flip it to 'paid'
     await order.save({ validateBeforeSave: false });
 
     console.log(
-      `[TagadaPay] Payment initiated | orderId=${orderId} | tagadaId=${tagadaResponse.id}`
+      `[TagadaPay] Session created | orderId=${orderId} | sessionId=${session.id}`
     );
 
-    // 7) Return to frontend
+    // 7) Return redirect URL to frontend
     res.status(200).json({
       success: true,
-      paymentId: tagadaResponse.id,
+      paymentId: session.id,
       status: 'initiated',
-      checkoutUrl: tagadaResponse.checkoutUrl ?? null,
-      clientToken: tagadaResponse.clientToken ?? null,
+      checkoutUrl: session.redirectUrl ?? null,
+      clientToken: null, // Removed in SDK v2 approach
     });
   }
 );
@@ -247,8 +250,10 @@ export const tagadaWebhook = async (
 
   // 5) Side effects per status
   if (newPaymentStatus === 'paid') {
+    // Advance order status so the shipping/label flow can pick it up
+    order.status = 'processing';
     // TODO: Trigger order confirmation email (plug in nodemailer / SendGrid here)
-    console.log(`[TagadaPay] Order ${order._id} PAID — trigger confirmation email`);
+    console.log(`[TagadaPay] Order ${order._id} PAID — status → processing, trigger confirmation email`);
     // TODO: Mark stock as finally sold (if using stock reservation)
   }
 
@@ -279,8 +284,17 @@ export const tagadaWebhook = async (
 export const testTagadaConnection = catchAsync(
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
+      const axios = require('axios').default;
       // Use a lightweight endpoint — list payments with limit 1
-      await tagadaClient.get('/payments', { params: { limit: 1 } });
+      const env = config.tagadaEnv;
+      const apiKey = env === 'prod' ? config.tagadaApiKeyProd : config.tagadaApiKeySandbox;
+      const baseUrl = env === 'prod' ? 'https://app.tagadapay.com/api/public/v1' : 'https://app.tagadapay.dev/api/public/v1';
+      
+      await axios.get(`${baseUrl}/payments`, { 
+        params: { limit: 1 },
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+      
       res.status(200).json({
         success: true,
         message: `TagadaPay connection successful (env: ${config.tagadaEnv})`,

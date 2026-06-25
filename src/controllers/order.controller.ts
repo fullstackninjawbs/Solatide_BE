@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import Order from '../models/order.model';
 import Product from '../models/product.model';
 import AppError from '../utils/appError';
@@ -10,7 +10,7 @@ import { AuthenticatedRequest } from '../middleware/auth';
  * Resolves prices from Database (client prices are not trusted) and aggregates total amount.
  */
 export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  const { products, shippingAddress } = req.body;
+  const { products, shippingAddress, customerEmail, customerName, paymentMethod } = req.body;
 
   if (!products || !Array.isArray(products) || products.length === 0) {
     return next(new AppError('Please provide a list of products for your order.', 400));
@@ -50,6 +50,9 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
     products: orderItems,
     totalAmount,
     shippingAddress,
+    customerEmail: customerEmail || '',
+    customerName: customerName || '',
+    paymentMethod: paymentMethod || undefined,
   });
 
   res.status(201).json({
@@ -105,6 +108,25 @@ export const updateOrderStatus = catchAsync(async (req: AuthenticatedRequest, re
     { status },
     { new: true, runValidators: true }
   );
+
+  if (!order) {
+    return next(new AppError('No order found with that ID', 404));
+  }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      order,
+    },
+  });
+});
+
+/**
+ * Get a single order by ID.
+ * Used by the checkout success page to display order confirmation.
+ */
+export const getOrderById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order = await Order.findById(req.params.id);
 
   if (!order) {
     return next(new AppError('No order found with that ID', 404));

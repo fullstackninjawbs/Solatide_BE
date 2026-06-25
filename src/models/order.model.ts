@@ -97,7 +97,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
 
 // Populate user and products automatically on queries
 orderSchema.pre(/^find/, function (this: any, next) {
-  this.populate('user', 'name email').populate('products.product', 'name price category');
+  this.populate('user', 'name email').populate('products.product', 'name price category variants');
   next();
 });
 
