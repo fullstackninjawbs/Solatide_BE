@@ -31,7 +31,12 @@ export const protect = catchAsync(async (req: AuthenticatedRequest, res: Respons
   }
 
   // 2) Verify JWT token
-  const decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
+  let decoded: JwtPayload;
+  try {
+    decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
+  } catch (error) {
+    return next(new AppError('Your session is invalid or expired. Please log in again.', 401));
+  }
 
   // 3) Check if user still exists in the database
   const currentUser = await User.findById(decoded.id);

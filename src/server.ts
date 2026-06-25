@@ -44,7 +44,7 @@ app.use(
 // Skip for webhook path (already handled by express.raw above)
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.path === '/api/payments/tagada/webhook') return next();
-  express.json({ limit: '10kb' })(req, res, next);
+  express.json({ limit: '10mb' })(req, res, next);
 });
 
 // Data sanitization against NoSQL query injection
