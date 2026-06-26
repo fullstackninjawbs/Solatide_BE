@@ -102,16 +102,21 @@ export const createTagadaPayment = catchAsync(
     // Map order products to Tagada's items array: { variantId, quantity }
     const items = order.products.map((item: any) => {
       // Assuming single variant products or defaulting to the root tagadaVariantId
-      const variantId = item.product?.tagadaVariantId || item.product?.variants?.[0]?.tagadaVariantId || 'missing_variant_id';
+      const variantId = item.product?.tagadaVariantId || item.product?.variants?.[0]?.tagadaVariantId;
       
-      if (variantId === 'missing_variant_id') {
-        throw new AppError(`Product "${item.product?.name || 'Unknown'}" does not have a Tagada Variant ID configured. Please update your database products to include 'tagadaVariantId'.`, 400);
-      }
-
-      return {
-        variantId,
+      const payload: any = {
         quantity: item.quantity,
       };
+
+      if (variantId) {
+        payload.variantId = variantId;
+      } else {
+        // Fallback for custom items without a variant ID
+        payload.name = item.product?.name || 'Unknown Product';
+        payload.price = item.price; // Price from order snapshot
+      }
+
+      return payload;
     });
 
     // 5) Call TagadaPay SDK to create session

@@ -56,6 +56,7 @@ export interface IProduct extends mongoose.Document {
   isBestSeller: boolean;
   isNewProduct: boolean;
   seo?: IProductSeo;
+  currentBatchId?: mongoose.Types.ObjectId;
   
   // New Shopify CSV attributes
   slug?: string;
@@ -251,9 +252,13 @@ const productSchema = new mongoose.Schema<IProduct>(
       default: false,
     },
     seo: {
-      title: { type: String, trim: true },
-      description: { type: String, trim: true },
-      canonicalUrl: { type: String, trim: true },
+      title: { type: String },
+      description: { type: String },
+      canonicalUrl: { type: String },
+    },
+    currentBatchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Batch'
     },
     
     // Expanded shopify integration

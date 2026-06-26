@@ -1,23 +1,25 @@
 import express from 'express';
-import authRoutes from './auth.routes.ts';
-import dashboardRoutes from './dashboard.routes.ts';
-import productRoutes from './product.routes.ts';
-import collectionRoutes from './collection.routes.ts';
-import inventoryRoutes from './inventory.routes.ts';
-import coaRoutes from './coa.routes.ts';
-import orderRoutes from './order.routes.ts';
-import customerRoutes from './customer.routes.ts';
-import discountRoutes from './discount.routes.ts';
-import contentRoutes from './content.routes.ts';
-import growthRoutes from './growth.routes.ts';
-import analyticsRoutes from './analytics.routes.ts';
-import settingsRoutes from './settings.routes.ts';
+import authRoutes from './auth.routes';
+import dashboardRoutes from './dashboard.routes';
+import productRoutes from './product.routes';
+import batchRoutes from './batch.routes';
+import collectionRoutes from './collection.routes';
+import inventoryRoutes from './inventory.routes';
+import coaRoutes from './coa.routes';
+import orderRoutes from './order.routes';
+import customerRoutes from './customer.routes';
+import discountRoutes from './discount.routes';
+import contentRoutes from './content.routes';
+import growthRoutes from './growth.routes';
+import analyticsRoutes from './analytics.routes';
+import settingsRoutes from './settings.routes';
 
 const router = express.Router();
 
 router.use('/auth', authRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/product', productRoutes);
+router.use('/batches', batchRoutes);
 router.use('/collection', collectionRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/coa', coaRoutes);

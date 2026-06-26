@@ -47,6 +47,7 @@ export interface IParsedProduct {
   // Root compatibility properties
   price: number;
   sku: string;
+  tagadaVariantId?: string;
   stockQuantity: number;
   imageUrl: string;
   inStock: boolean;

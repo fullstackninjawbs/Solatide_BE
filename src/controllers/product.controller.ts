@@ -87,12 +87,12 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
 
   // Check if it's a valid 24-char hex MongoDB ObjectId
   if (idOrObjectId.match(/^[0-9a-fA-F]{24}$/)) {
-    product = await Product.findById(idOrObjectId);
+    product = await Product.findById(idOrObjectId).populate('currentBatchId');
   } else {
     // Fallback: try querying by custom numeric id field
     const numericId = parseInt(idOrObjectId, 10);
     if (!isNaN(numericId)) {
-      product = await Product.findOne({ id: numericId });
+      product = await Product.findOne({ id: numericId }).populate('currentBatchId');
     }
   }
 
@@ -100,10 +100,17 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('No product found with that ID', 404));
   }
 
+  // Transform currentBatchId to currentBatch for frontend convenience
+  const productObj: any = product.toObject();
+  if (productObj.currentBatchId) {
+    productObj.currentBatch = productObj.currentBatchId;
+    delete productObj.currentBatchId;
+  }
+
   res.status(200).json({
     success: true,
     data: {
-      product,
+      product: productObj,
     },
   });
 });
