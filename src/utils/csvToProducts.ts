@@ -268,6 +268,7 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
           // Aggregate Root properties for backward compatibility
           pObj.price = pObj.variants[0].price;
           pObj.sku = pObj.variants[0].sku;
+          pObj.tagadaVariantId = pObj.variants[0].tagadaVariantId || '';
           pObj.stockQuantity = pObj.variants.reduce((sum: number, v: any) => sum + v.stockQty, 0);
           pObj.imageUrl = pObj.images[0]?.url || '';
           pObj.inStock = pObj.stockQuantity > 0;

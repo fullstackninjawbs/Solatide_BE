@@ -38,6 +38,7 @@ export interface IProduct extends mongoose.Document {
   reviewsCount?: number;
   imageUrl?: string;
   sku?: string;
+  tagadaVariantId?: string;
   compareAtPrice?: number;
   stockQuantity: number;
   lowStockThreshold: number;
@@ -175,6 +176,10 @@ const productSchema = new mongoose.Schema<IProduct>(
     sku: {
       type: String,
       sparse: true,
+    },
+    tagadaVariantId: {
+      type: String,
+      trim: true,
     },
     compareAtPrice: {
       type: Number,

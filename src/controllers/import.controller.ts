@@ -113,6 +113,7 @@ export const importProductsCommit = catchAsync(async (req: Request, res: Respons
         // Keep root properties synced
         existing.price = parsedProduct.price;
         existing.sku = parsedProduct.sku;
+        existing.tagadaVariantId = parsedProduct.tagadaVariantId;
         existing.stockQuantity = parsedProduct.stockQuantity;
         existing.imageUrl = parsedProduct.imageUrl;
         existing.inStock = parsedProduct.inStock;

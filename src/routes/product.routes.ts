@@ -6,6 +6,7 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  deleteAllProducts,
 } from '../controllers/product.controller';
 import {
   importProductsPreview,
@@ -47,6 +48,7 @@ router.post(
 // Protected Admin/Operations Product CRUD Routes
 router.post('/', protect, restrictTo('super_admin', 'operations', 'admin'), createProduct);
 router.patch('/:id', protect, restrictTo('super_admin', 'operations', 'admin'), updateProduct);
+router.delete('/', protect, restrictTo('super_admin', 'admin'), deleteAllProducts);
 router.delete('/:id', protect, restrictTo('super_admin', 'admin'), deleteProduct);
 
 export default router;

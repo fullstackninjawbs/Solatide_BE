@@ -158,3 +158,15 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
     data: null,
   });
 });
+
+/**
+ * Delete all products from catalog (Admin Only)
+ */
+export const deleteAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  await Product.deleteMany({});
+
+  res.status(200).json({
+    success: true,
+    message: 'All products have been deleted successfully.'
+  });
+});

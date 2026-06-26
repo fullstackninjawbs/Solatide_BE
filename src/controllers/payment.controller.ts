@@ -101,9 +101,8 @@ export const createTagadaPayment = catchAsync(
     // 4) Build Tagada payload using the Node SDK
     // Map order products to Tagada's items array: { variantId, quantity }
     const items = order.products.map((item: any) => {
-      // Assuming single variant products or defaulting to the first variant
-      const variant = item.product?.variants?.[0];
-      const variantId = variant?.tagadaVariantId || 'missing_variant_id';
+      // Assuming single variant products or defaulting to the root tagadaVariantId
+      const variantId = item.product?.tagadaVariantId || item.product?.variants?.[0]?.tagadaVariantId || 'missing_variant_id';
       
       if (variantId === 'missing_variant_id') {
         throw new AppError(`Product "${item.product?.name || 'Unknown'}" does not have a Tagada Variant ID configured. Please update your database products to include 'tagadaVariantId'.`, 400);
