@@ -6,7 +6,7 @@ const router = Router();
 
 // Protect all routes and restrict to admin
 router.use(protect);
-router.use(restrictTo('admin', 'superadmin'));
+router.use(restrictTo('admin', 'super_admin'));
 
 router.route('/')
   .get(batchController.getBatches)
