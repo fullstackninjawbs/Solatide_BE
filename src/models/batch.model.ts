@@ -5,51 +5,65 @@ export interface IBatch extends Document {
   displayName?: string;
   productId: mongoose.Types.ObjectId;
   variantSku?: string;
-  
+  variantId?: mongoose.Types.ObjectId; // Per-variant ObjectId reference
+
   purity?: string;
   measuredContent?: string;
+  content?: string; // Alias for measuredContent (Shopify spec name)
   method?: string;
-  
+
   coaUrl?: string;
   coaStatus: 'pending' | 'approved';
-  
+
+  // COA content flags
   includesPurity: boolean;
   includesMeasuredContent: boolean;
   includesEndotoxin: boolean;
   includesSterility: boolean;
+
+  // Test flags
   hasEndotoxinTest: boolean;
   hasSterilityTest: boolean;
+  endotoxinIncludedInCoa: boolean;  // NEW: distinct from hasEndotoxinTest
+  sterilityIncludedInCoa: boolean;  // NEW: distinct from hasSterilityTest
+
   endotoxinReportUrl?: string;
   sterilityReportUrl?: string;
-  
+
   appearance?: string;
   notes?: string;
-  
+
   status: 'active' | 'inactive';
-  
+
   createdAt: Date;
   updatedAt: Date;
 }
 
 const batchSchema = new Schema<IBatch>({
-  batchId: { type: String, required: true },       // e.g. SOL-WLV-010
-  displayName: { type: String },                   // optional
+  batchId: { type: String, required: true },
+  displayName: { type: String },
   productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
   variantSku: { type: String, required: false },
+  variantId: { type: Schema.Types.ObjectId, ref: 'ProductVariant', default: null },
 
-  purity: { type: String },                        // e.g. "99.20%"
-  measuredContent: { type: String },               // e.g. "BPC-157 15mg + TB-500 5mg"
-  method: { type: String },                        // e.g. "HPLC + LC-MS Tested"
+  purity: { type: String },
+  measuredContent: { type: String },
+  content: { type: String },
+  method: { type: String },
 
-  coaUrl: { type: String },                        // link to COA PDF
+  coaUrl: { type: String },
   coaStatus: { type: String, enum: ['pending', 'approved'], default: 'pending' },
 
   includesPurity: { type: Boolean, default: true },
   includesMeasuredContent: { type: Boolean, default: true },
   includesEndotoxin: { type: Boolean, default: false },
   includesSterility: { type: Boolean, default: false },
+
   hasEndotoxinTest: { type: Boolean, default: false },
   hasSterilityTest: { type: Boolean, default: false },
+  endotoxinIncludedInCoa: { type: Boolean, default: false },
+  sterilityIncludedInCoa: { type: Boolean, default: false },
+
   endotoxinReportUrl: { type: String },
   sterilityReportUrl: { type: String },
 

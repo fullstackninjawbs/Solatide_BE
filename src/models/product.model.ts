@@ -23,18 +23,25 @@ export interface IProductVariant {
   taxable: boolean;
   weightGrams?: number;
   tagadaVariantId?: string;
+  currentBatchId?: mongoose.Types.ObjectId; // Per-variant batch reference
 }
 
 export interface IProduct extends mongoose.Document {
-  id: number; // numeric id for backward compatibility fallback
+  id: number; // numeric id for backward compatibility
   name: string;
+  slug: string; // auto-generated from name
   description: string;
-  price: number; // base price (e.g. minimum variant price)
+  price: number;
   rating: number;
   inStock: boolean;
   category: string;
+  /** @deprecated Use status field instead */
   status: 'In Stock' | 'Sold Out' | 'Sale';
+  /** Shopify-equivalent status */
+  publishStatus: 'active' | 'draft' | 'archived';
+  /** @deprecated Use tags[] instead */
   tag?: string;
+  tags: string[]; // Array of tags
   reviewsCount?: number;
   imageUrl?: string;
   sku?: string;
@@ -56,10 +63,10 @@ export interface IProduct extends mongoose.Document {
   isBestSeller: boolean;
   isNewProduct: boolean;
   seo?: IProductSeo;
+  /** @deprecated currentBatchId is now per-variant. Kept for migration compatibility. */
   currentBatchId?: mongoose.Types.ObjectId;
-  
-  // New Shopify CSV attributes
-  slug?: string;
+
+  // Shopify CSV attributes
   vendor?: string;
   published: boolean;
   overviewHtml?: string;
@@ -68,9 +75,23 @@ export interface IProduct extends mongoose.Document {
   technicalSpecs?: {
     rawHtml?: string;
   };
+  technicalSpecsTable?: {
+    parameter: string;
+    specification: string;
+  }[];
   ratingCount: number;
   variants: IProductVariant[];
-  
+
+  // Shopify refinements
+  productType?: string;
+  barcode?: string;
+  costPerItem?: number;
+  countryOfOrigin?: string;
+  hsCode?: string;
+  chemicalGrade?: string;
+  chemicalPurity?: string;
+  chemicalColor?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -118,6 +139,11 @@ const variantSchema = new mongoose.Schema<IProductVariant>({
     type: String,
     sparse: true,
   },
+  currentBatchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Batch',
+    default: null,
+  },
 });
 
 const productSchema = new mongoose.Schema<IProduct>(
@@ -132,6 +158,11 @@ const productSchema = new mongoose.Schema<IProduct>(
       required: [true, 'A product must have a name'],
       trim: true,
       unique: true,
+    },
+    slug: {
+      type: String,
+      unique: true,
+      sparse: true,
     },
     description: {
       type: String,
@@ -158,14 +189,27 @@ const productSchema = new mongoose.Schema<IProduct>(
       required: [true, 'A product must have a category'],
       trim: true,
     },
+    // Legacy status (stock-based)
     status: {
       type: String,
       enum: ['In Stock', 'Sold Out', 'Sale'],
       default: 'In Stock',
     },
+    // Shopify-equivalent lifecycle status
+    publishStatus: {
+      type: String,
+      enum: ['active', 'draft', 'archived'],
+      default: 'active',
+    },
+    // Legacy single tag (kept for backward compat)
     tag: {
       type: String,
       trim: true,
+    },
+    // Tags array (primary)
+    tags: {
+      type: [String],
+      default: [],
     },
     reviewsCount: {
       type: Number,
@@ -256,17 +300,13 @@ const productSchema = new mongoose.Schema<IProduct>(
       description: { type: String },
       canonicalUrl: { type: String },
     },
+    // Legacy root-level currentBatchId (deprecated — now per-variant)
     currentBatchId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Batch'
+      ref: 'Batch',
     },
-    
+
     // Expanded shopify integration
-    slug: {
-      type: String,
-      unique: true,
-      sparse: true,
-    },
     vendor: {
       type: String,
       trim: true,
@@ -287,20 +327,52 @@ const productSchema = new mongoose.Schema<IProduct>(
     technicalSpecs: {
       rawHtml: { type: String },
     },
+    technicalSpecsTable: [
+      {
+        parameter: { type: String, required: true },
+        specification: { type: String, required: true }
+      }
+    ],
     ratingCount: {
       type: Number,
       default: 0,
     },
     variants: [variantSchema],
+
+    // Shopify refinements
+    productType: { type: String, trim: true },
+    barcode: { type: String, trim: true },
+    costPerItem: { type: Number, default: 0 },
+    countryOfOrigin: { type: String, trim: true },
+    hsCode: { type: String, trim: true },
+    chemicalGrade: { type: String, trim: true },
+    chemicalPurity: { type: String, trim: true },
+    chemicalColor: { type: String, trim: true },
   },
   {
     timestamps: true,
   }
 );
 
+// Pre-save hook: auto-generate slug from name if not set
+productSchema.pre('save', function (next) {
+  if (this.isModified('name') || !this.slug) {
+    this.slug = (this.name || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+  next();
+});
+
 // Indexes
 productSchema.index({ category: 1 });
 productSchema.index({ price: 1 });
+productSchema.index({ tags: 1 });
+productSchema.index({ publishStatus: 1 });
 
 export const Product = mongoose.model<IProduct>('Product', productSchema);
 export default Product;

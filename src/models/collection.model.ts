@@ -1,10 +1,20 @@
 import mongoose from 'mongoose';
 
+export interface ICollectionRule {
+  field: string;
+  operator: string;
+  value: string;
+}
+
 export interface ICollection extends mongoose.Document {
   name: string;
   slug: string;
   description?: string;
   bannerImage?: string;
+  status: 'active' | 'draft';
+  type: 'manual' | 'automated';
+  ruleRelation: 'all' | 'any';
+  rules: ICollectionRule[];
   sortOrder: number;
   displayOptions: {
     showFaqBlock: boolean;
@@ -34,6 +44,28 @@ const collectionSchema = new mongoose.Schema<ICollection>(
     bannerImage: {
       type: String,
     },
+    status: {
+      type: String,
+      enum: ['active', 'draft'],
+      default: 'active',
+    },
+    type: {
+      type: String,
+      enum: ['manual', 'automated'],
+      default: 'manual',
+    },
+    ruleRelation: {
+      type: String,
+      enum: ['all', 'any'],
+      default: 'all',
+    },
+    rules: [
+      {
+        field: { type: String, required: true },
+        operator: { type: String, required: true },
+        value: { type: String, required: true },
+      },
+    ],
     sortOrder: {
       type: Number,
       default: 0,

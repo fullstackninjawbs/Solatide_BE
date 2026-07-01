@@ -1,5 +1,19 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
+import {
+  getAllProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  deleteAllProducts,
+} from '../../controllers/product.controller';
 
-export const getPlaceholder = async (req: Request, res: Response) => {
-  res.json({ message: 'Stub for productController.ts' });
+// Re-export the full product controller under the admin namespace
+export {
+  getAllProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  deleteAllProducts,
 };
