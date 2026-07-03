@@ -5,8 +5,15 @@ export interface IReview extends mongoose.Document {
   rating: number;
   title?: string;
   displayName: string;
+  email?: string;
+  anonymous: boolean;
   content: string;
+  images: string[];
+  youtubeUrl?: string;
   status: 'pending' | 'approved' | 'rejected';
+  emailVerified: boolean;
+  verificationToken?: string;
+  verificationExpires?: Date;
   isVerifiedPurchase: boolean;
   adminResponse?: string;
   createdAt: Date;
@@ -40,10 +47,38 @@ const reviewSchema = new mongoose.Schema<IReview>(
       required: [true, 'A review must have content text'],
       trim: true,
     },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
+    anonymous: {
+      type: Boolean,
+      default: false,
+    },
+    images: [
+      {
+        type: String,
+      },
+    ],
+    youtubeUrl: {
+      type: String,
+      trim: true,
+    },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],
       default: 'pending',
+    },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    verificationToken: {
+      type: String,
+    },
+    verificationExpires: {
+      type: Date,
     },
     isVerifiedPurchase: {
       type: Boolean,
