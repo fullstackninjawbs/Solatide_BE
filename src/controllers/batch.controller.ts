@@ -101,6 +101,30 @@ export const updateBatch = catchAsync(async (req: Request, res: Response, next: 
   // If requested, set as current batch for the variant
   if (setAsCurrent && batch.productId) {
     await setCurrentBatchOnVariant(batch.productId, batch._id, batch.variantId);
+  } else if (setAsCurrent === false && batch.productId) {
+    // Explicitly unchecked — remove this batch as current if it was set
+    const product = await Product.findById(batch.productId);
+    if (product) {
+      let changed = false;
+
+      // Clear root-level reference if it points to this batch
+      if ((product as any).currentBatchId?.toString() === batch._id.toString()) {
+        (product as any).currentBatchId = undefined;
+        changed = true;
+      }
+
+      // Clear variant-level reference if it points to this batch
+      if (product.variants) {
+        product.variants.forEach(v => {
+          if ((v as any).currentBatchId?.toString() === batch._id.toString()) {
+            (v as any).currentBatchId = undefined;
+            changed = true;
+          }
+        });
+      }
+
+      if (changed) await product.save();
+    }
   }
 
   res.status(200).json({
