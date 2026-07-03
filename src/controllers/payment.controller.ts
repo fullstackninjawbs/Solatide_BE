@@ -32,8 +32,13 @@ interface TagadaPaymentResponse {
 }
 
 interface TagadaWebhookPayload {
+  type: string | string[] | undefined;
+  metadata: any;
   event: string;
   data: {
+    checkoutSessionId: any;
+    paymentId: any;
+    cartToken: null;
     id: string;            // TagadaPay payment id
     status: string;        // authorized | captured | failed | refunded | created
     reference?: string;    // our internal orderId passed as metadata
@@ -312,20 +317,23 @@ export const tagadaWebhook = async (
 
   // The Tagada webhook body IS the raw Payment object directly, not wrapped in { event, data }
   // Extract the webhook type (e.g., 'payment/succeeded', 'order/paid', 'funnel/stepViewed')
-  const eventType = payload.type || req.headers['x-tagadapay-event'] || 'unknown';
+  const rawEventType = payload.type || req.headers['x-tagadapay-event'] || 'unknown';
+  // Ensure eventType is a string for subsequent checks
+  const eventType = Array.isArray(rawEventType) ? (rawEventType[0] ?? '') : (rawEventType ?? '');
   const data = payload.data || payload; // fallback to payload if data is missing
 
   // 4) Ignore events we don't care about
   if (!eventType.startsWith('payment/') && !eventType.startsWith('order/')) {
     console.log(`[TagadaPay Webhook] Ignored non-payment event type: ${eventType}`);
-    return res.status(200).send(`Ignored event: ${eventType}`);
+    res.status(200).send(`Ignored event: ${eventType}`);
+    return;
   }
 
   // We originally saved the Checkout Session ID as tagadaPaymentId in MongoDB.
   // Tagada's webhook data object contains checkoutSessionId, paymentId, or orderId depending on the event.
-  const tagadaPaymentId = data.checkoutSessionId || data.paymentId || data.orderId || 'unknown';
+  const tagadaPaymentId = data.checkoutSessionId || data.paymentId || data.order_id || 'unknown';
   const tagadaStatus = data.status || 'unknown';
-  const reference = data.reference || data.metadata?.orderId || null;
+  const reference = data.reference || data.metadata?.order_id || null;
 
   // ==========================================
   // 🚨 DEVELOPMENT LOGGER - WEBHOOK RECEIVED
@@ -345,9 +353,9 @@ export const tagadaWebhook = async (
     $or: [
       ...(mongoOrderId ? [{ _id: mongoOrderId }] : []),
       { tagadaPaymentId },
-      { tagadaOrderId: data.orderId },
+      { tagadaOrderId: data.order_id },
       ...(reference ? [{ _id: reference }] : []),
-      ...(payload.metadata?.orderId ? [{ _id: payload.metadata.orderId }] : []),
+      ...(payload.metadata?.order_id ? [{ _id: payload.metadata.order_id }] : []),
     ],
   });
 
@@ -375,8 +383,8 @@ export const tagadaWebhook = async (
   order.paymentMethod = 'tagada';
 
   // Store Tagada's own order/session IDs
-  if (data.orderId) order.tagadaOrderId = data.orderId;
-  if (data.sessionId) order.tagadaSessionId = data.sessionId;
+  if (data.order_id) order.tagadaOrderId = data.order_id;
+  if (data.session_id) order.tagadaSessionId = data.session_id;
 
   // 5) On paid — enrich with full order data from Tagada payload
   if (newPaymentStatus === 'paid') {
@@ -384,12 +392,12 @@ export const tagadaWebhook = async (
     order.fulfilmentStatus = 'unfulfilled';
 
     let fullOrder: any = data; // fallback to data if fetch fails or data IS the order
-    if (data.orderId) {
+    if (data.order_id) {
       try {
         const client = await getTagadaClient();
-        fullOrder = await client.orders.retrieve(data.orderId);
+        fullOrder = await client.orders.retrieve(data.order_id);
         console.log('\n\n======================================================');
-        console.log(`[TagadaPay] Fetched full order details for Tagada Order: ${data.orderId}`);
+        console.log(`[TagadaPay] Fetched full order details for Tagada Order: ${data.order_id}`);
         console.log('======================================================');
         console.log(JSON.stringify(fullOrder, null, 2));
         console.log('======================================================\n\n');
@@ -428,8 +436,8 @@ export const tagadaWebhook = async (
       };
       // Backfill legacy string field
       order.shippingAddress = [
-        order.shippingAddressObj.street1, order.shippingAddressObj.street2, 
-        order.shippingAddressObj.city, order.shippingAddressObj.state, 
+        order.shippingAddressObj.street1, order.shippingAddressObj.street2,
+        order.shippingAddressObj.city, order.shippingAddressObj.state,
         order.shippingAddressObj.zip, order.shippingAddressObj.country
       ].filter(Boolean).join(', ');
     }
@@ -494,7 +502,7 @@ export const tagadaWebhook = async (
     const existingTags: string[] = (order.tags as string[]) ?? [];
     const newTags: string[] = fullOrder.tags ?? [];
     // Append any Tagada IDs for display in the admin list
-    if (data.orderId && !existingTags.includes(data.orderId)) newTags.push(data.orderId);
+    if (data.order_id && !existingTags.includes(data.order_id)) newTags.push(data.order_id);
     if (tagadaPaymentId && !existingTags.includes(tagadaPaymentId)) newTags.push(tagadaPaymentId);
     order.tags = [...new Set([...existingTags, ...newTags])];
 
