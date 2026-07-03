@@ -35,6 +35,19 @@ export interface IBatch extends Document {
 
   status: 'active' | 'inactive';
 
+  tests?: {
+    purityHplc?: { performed: boolean; result?: string };
+    netPeptideContent?: { performed: boolean; result?: string };
+    identityHplc?: { performed: boolean; result?: string };
+    fentanylScreen?: { performed: boolean; result?: string };
+    hplcConformity?: { performed: boolean; result?: string };
+    heavyMetalsIcpMs?: { performed: boolean; result?: string };
+    sterilityPcr?: { performed: boolean; result?: string };
+    endotoxinUsp85?: { performed: boolean; result?: string };
+  };
+
+  customTests?: Array<{ name: string; result: string }>;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,7 +83,48 @@ const batchSchema = new Schema<IBatch>({
   appearance: { type: String },
   notes: { type: String },
 
-  status: { type: String, enum: ['active', 'inactive'], default: 'active' }
+  status: { type: String, enum: ['active', 'inactive'], default: 'active' },
+
+  tests: {
+    purityHplc: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    netPeptideContent: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    identityHplc: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    fentanylScreen: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    hplcConformity: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    heavyMetalsIcpMs: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    sterilityPcr: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    },
+    endotoxinUsp85: {
+      performed: { type: Boolean, default: false },
+      result: { type: String, default: '' }
+    }
+  },
+  customTests: [
+    {
+      name: { type: String, required: true },
+      result: { type: String, default: '' }
+    }
+  ]
 }, {
   timestamps: true
 });

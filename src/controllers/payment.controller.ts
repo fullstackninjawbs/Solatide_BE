@@ -15,6 +15,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { tagadaClient, getTagadaClient } from '../services/tagadaClient';
 import Order from '../models/order.model';
+import PaymentSettings from '../models/PaymentSettings';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
@@ -33,11 +34,55 @@ interface TagadaPaymentResponse {
 interface TagadaWebhookPayload {
   event: string;
   data: {
-    id: string;           // TagadaPay payment id
-    status: string;       // authorized | captured | failed | refunded | created
-    reference?: string;   // orderId we sent in /create
+    id: string;            // TagadaPay payment id
+    status: string;        // authorized | captured | failed | refunded | created
+    reference?: string;    // our internal orderId passed as metadata
     amount?: number;
     currency?: string;
+    // Checkout-enriched fields (present on checkout.completed / payment.captured)
+    customer?: {
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+      phone?: string;
+    };
+    shipping_address?: {
+      name?: string;
+      company?: string;
+      address1?: string;
+      address2?: string;
+      city?: string;
+      province?: string;
+      zip?: string;
+      country?: string;
+    };
+    billing_address?: {
+      name?: string;
+      company?: string;
+      address1?: string;
+      address2?: string;
+      city?: string;
+      province?: string;
+      zip?: string;
+      country?: string;
+    };
+    line_items?: Array<{
+      title?: string;
+      variant_title?: string;
+      sku?: string;
+      quantity?: number;
+      price?: number | string;
+      image_url?: string;
+    }>;
+    subtotal_price?: number | string;
+    shipping_price?: number | string;
+    tax_price?: number | string;
+    total_price?: number | string;
+    shipping_lines?: Array<{ title?: string; code?: string; price?: number | string }>;
+    order_id?: string;    // Tagada's own order reference
+    session_id?: string;
+    metadata?: Record<string, any>;
+    tags?: string[];
   };
 }
 
@@ -74,8 +119,10 @@ export const createTagadaPayment = catchAsync(
       return next(new AppError('orderId is required', 400));
     }
 
-    // 1) Load order — populate user for email/name
-    const order = await Order.findById(orderId).populate('user', 'name email');
+    // 1) Load order — populate user for email/name and products for Tagada variant IDs
+    const order = await Order.findById(orderId)
+      .populate('user', 'name email')
+      .populate('products.product', 'name tagadaVariantId variants');
 
     if (!order) {
       return next(new AppError(`No order found with id ${orderId}`, 404));
@@ -98,26 +145,24 @@ export const createTagadaPayment = catchAsync(
     const customerName: string =
       order.customerName ?? populatedUser?.name ?? 'Valued Customer';
 
-    // 4) Build Tagada payload using the Node SDK
-    // Map order products to Tagada's items array: { variantId, quantity }
-    const items = order.products.map((item: any) => {
-      // Assuming single variant products or defaulting to the root tagadaVariantId
-      const variantId = item.product?.tagadaVariantId || item.product?.variants?.[0]?.tagadaVariantId;
-      
-      const payload: any = {
-        quantity: item.quantity,
-      };
+    // 4) Build Tagada payload
+    // Only include items that have a Tagada variantId — required by CheckoutInitParams
+    const rawItems = (order.products ?? []).map((item: any) => {
+      const variantId =
+        item.product?.tagadaVariantId ||
+        item.product?.variants?.find((v: any) => v.tagadaVariantId)?.tagadaVariantId;
+      return variantId
+        ? { variantId: String(variantId), quantity: item.quantity || 1 }
+        : null;
+    }).filter(Boolean) as Array<{ variantId: string; quantity: number }>;
 
-      if (variantId) {
-        payload.variantId = variantId;
-      } else {
-        // Fallback for custom items without a variant ID
-        payload.name = item.product?.name || 'Unknown Product';
-        payload.price = item.price; // Price from order snapshot
-      }
+    if (rawItems.length === 0) {
+      console.error('[TagadaPay] No items with a valid tagadaVariantId — cannot create session');
+      return next(new AppError('No Tagada variant IDs found on this order. Please ensure products have a tagadaVariantId configured.', 400));
+    }
 
-      return payload;
-    });
+    const clientOrigin = config.corsOrigin.replace(/\/$/, '');
+    const returnUrl = `${clientOrigin}/checkout/success`;
 
     // 5) Call TagadaPay SDK to create session
     let session: any;
@@ -125,13 +170,14 @@ export const createTagadaPayment = catchAsync(
       const client = await getTagadaClient();
       session = await client.checkout.createSession({
         storeId: config.tagadaStoreId,
-        items,
+        items: rawItems,
         currency: order.currency || config.tagadaDefaultCurrency,
-        checkoutUrl: config.tagadaCheckoutUrl,
-        metadata: { 
-          orderId: order._id.toString(),
-          accountId: config.tagadaAccountId,
-        },
+        returnUrl,
+        cartToken: order._id.toString(),
+        checkoutUrl: config.tagadaCheckoutUrl || undefined,
+        customerEmail: customerEmail || undefined,
+        customerFirstName: customerName.split(' ')[0] || undefined,
+        customerLastName: customerName.split(' ').slice(1).join(' ') || undefined,
       });
     } catch (err: any) {
       console.error('[TagadaPay SDK] createSession error:', err?.response?.data ?? err.message);
@@ -142,23 +188,33 @@ export const createTagadaPayment = catchAsync(
     }
 
     // 6) Persist Tagada session id on the order
-    order.tagadaPaymentId = session.id;
+    order.tagadaPaymentId = session.id ?? session.redirectUrl ?? 'unknown';
     order.tagadaPaymentStatus = 'initiated';
     order.paymentMethod = 'tagada';
     // paymentStatus stays 'pending' — webhook will flip it to 'paid'
     await order.save({ validateBeforeSave: false });
 
     console.log(
-      `[TagadaPay] Session created | orderId=${orderId} | sessionId=${session.id}`
+      `[TagadaPay] Session created | orderId=${orderId} | sessionId=${session.id} | redirectUrl=${session.redirectUrl}`
     );
+    // Log full session in non-prod for debugging
+    if (config.env !== 'production') {
+      console.log('[TagadaPay] Full session object:', JSON.stringify(session, null, 2));
+    }
+
+    // Guard: if Tagada returned no redirect URL something went wrong
+    if (!session.redirectUrl) {
+      console.error('[TagadaPay] No redirectUrl in session response:', JSON.stringify(session));
+      return next(new AppError('TagadaPay did not return a checkout URL. Check storeId and API key configuration.', 502));
+    }
 
     // 7) Return redirect URL to frontend
     res.status(200).json({
       success: true,
       paymentId: session.id,
       status: 'initiated',
-      checkoutUrl: session.redirectUrl ?? null,
-      clientToken: null, // Removed in SDK v2 approach
+      checkoutUrl: session.redirectUrl,
+      clientToken: null,
     });
   }
 );
@@ -166,11 +222,28 @@ export const createTagadaPayment = catchAsync(
 // ─── 2. TagadaPay Webhook ─────────────────────────────────────────────────────
 
 /**
+ * Generate a human-readable order number like SOL-00042.
+ * Uses the total count of orders at the time of creation.
+ */
+async function generateOrderNumber(): Promise<string> {
+  const count = await Order.countDocuments();
+  const padded = String(count + 1).padStart(5, '0');
+  return `SOL-${padded}`;
+}
+
+/**
  * POST /api/payments/tagada/webhook
  *
  * Receives async payment status updates from TagadaPay.
  * No auth middleware — Tagada must be able to reach this endpoint.
  * Signature is verified via HMAC-SHA256 before processing.
+ *
+ * On a paid/captured event this handler:
+ *  1. Verifies HMAC-SHA256 signature
+ *  2. Parses the full Tagada payload (customer, addresses, line items, totals)
+ *  3. Upserts all structured fields onto the matching Order document
+ *  4. Generates an orderNumber if one doesn't exist yet
+ *  5. Always returns 200 to prevent Tagada from retrying
  *
  * NOTE: This route must receive the raw body buffer (not parsed JSON).
  * Register it in server.ts BEFORE the global express.json() middleware,
@@ -181,25 +254,46 @@ export const tagadaWebhook = async (
   res: Response,
   next: NextFunction
 ): Promise<void> => {
-  // 1) Verify signature
-  const signature = req.headers['x-tagada-signature'] as string | undefined;
+  // 1) Verify HMAC-SHA256 signature
+  const signature = req.headers['x-tagadapay-signature'] as string | undefined;
 
   if (!signature) {
-    console.warn('[TagadaPay Webhook] Missing x-tagada-signature header');
+    console.warn('[TagadaPay Webhook] Missing x-tagadapay-signature header');
+    console.log('[TagadaPay Webhook] Received headers:', req.headers);
     res.status(401).json({ error: 'Missing signature' });
     return;
   }
 
-  const secret = config.tagadaWebhookSecret;
-  const rawBody: Buffer = (req as any).rawBody ?? req.body;
+  // Fetch DB settings or fallback to env
+  const settings = await PaymentSettings.findOne();
+  const secret = settings?.tagadaWebhookSecret || config.tagadaWebhookSecret;
 
+  if (!secret) {
+    console.error('[TagadaPay Webhook] CRITICAL ERROR: Webhook secret is missing (not in DB or .env). Cannot verify signature.');
+    res.status(500).json({ error: 'Server misconfiguration' });
+    return;
+  }
+
+  const rawBody: Buffer = (req as any).rawBody ?? req.body;
+  const bodyStr = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+
+  // Tagada uses a GitHub-style signature format: "sha256=<hex>"
+  let receivedHash = signature;
+  if (signature.startsWith('sha256=')) {
+    receivedHash = signature.replace('sha256=', '');
+  }
+
+  // Hash the raw body directly
   const expectedSig = crypto
     .createHmac('sha256', secret)
     .update(rawBody)
     .digest('hex');
 
-  if (signature !== expectedSig) {
-    console.warn('[TagadaPay Webhook] Signature mismatch — rejecting request');
+  if (receivedHash !== expectedSig) {
+    console.warn('\n[TagadaPay Webhook] ❌ SIGNATURE MISMATCH');
+    console.warn(` - Received Hash: ${receivedHash}`);
+    console.warn(` - Expected Hash: ${expectedSig}`);
+    console.warn(` - Using Secret from: ${settings?.tagadaWebhookSecret ? 'Database' : '.env file'}`);
     res.status(401).json({ error: 'Invalid signature' });
     return;
   }
@@ -216,31 +310,57 @@ export const tagadaWebhook = async (
     return;
   }
 
-  const { event, data } = payload;
-  const { id: tagadaPaymentId, status: tagadaStatus, reference } = data;
+  // The Tagada webhook body IS the raw Payment object directly, not wrapped in { event, data }
+  // Extract the webhook type (e.g., 'payment/succeeded', 'order/paid', 'funnel/stepViewed')
+  const eventType = payload.type || req.headers['x-tagadapay-event'] || 'unknown';
+  const data = payload.data || payload; // fallback to payload if data is missing
 
-  console.log(
-    `[TagadaPay Webhook] event=${event} | tagadaId=${tagadaPaymentId} | status=${tagadaStatus} | ref=${reference}`
-  );
+  // 4) Ignore events we don't care about
+  if (!eventType.startsWith('payment/') && !eventType.startsWith('order/')) {
+    console.log(`[TagadaPay Webhook] Ignored non-payment event type: ${eventType}`);
+    return res.status(200).send(`Ignored event: ${eventType}`);
+  }
 
-  // 3) Find matching order
+  // We originally saved the Checkout Session ID as tagadaPaymentId in MongoDB.
+  // Tagada's webhook data object contains checkoutSessionId, paymentId, or orderId depending on the event.
+  const tagadaPaymentId = data.checkoutSessionId || data.paymentId || data.orderId || 'unknown';
+  const tagadaStatus = data.status || 'unknown';
+  const reference = data.reference || data.metadata?.orderId || null;
+
+  // ==========================================
+  // 🚨 DEVELOPMENT LOGGER - WEBHOOK RECEIVED
+  // ==========================================
+  console.log('\n\n======================================================');
+  console.log(`🛎️  [WEBHOOK RECEIVED] Event: ${eventType}`);
+  console.log(`💳  Tagada Payment ID: ${tagadaPaymentId}`);
+  console.log(`📊  Status: ${tagadaStatus}`);
+  console.log('======================================================');
+
+  console.log('[TagadaPay Webhook] Raw payload:', JSON.stringify(payload, null, 2));
+
+  // 4) Find the matching order
+  // We explicitly saved our MongoDB _id as the 'cartToken' during createSession
+  const mongoOrderId = data.cartToken || null;
   const order = await Order.findOne({
     $or: [
+      ...(mongoOrderId ? [{ _id: mongoOrderId }] : []),
       { tagadaPaymentId },
+      { tagadaOrderId: data.orderId },
       ...(reference ? [{ _id: reference }] : []),
+      ...(payload.metadata?.orderId ? [{ _id: payload.metadata.orderId }] : []),
     ],
   });
 
   if (!order) {
-    // Log anomaly but respond 200 so Tagada stops retrying
     console.warn(
       `[TagadaPay Webhook] No order found for tagadaId=${tagadaPaymentId} ref=${reference}`
     );
+    // Still 200 so Tagada stops retrying
     res.status(200).json({ received: true });
     return;
   }
 
-  // 4) Map Tagada status → internal fields
+  // 4) Map Tagada status → internal status fields
   const newTagadaStatus = tagadaStatus as
     | 'initiated'
     | 'authorized'
@@ -249,31 +369,161 @@ export const tagadaWebhook = async (
     | 'refunded';
   const newPaymentStatus = mapTagadaStatus(tagadaStatus);
 
+  order.tagadaPaymentId = tagadaPaymentId;
   order.tagadaPaymentStatus = newTagadaStatus;
   order.paymentStatus = newPaymentStatus;
+  order.paymentMethod = 'tagada';
 
-  // 5) Side effects per status
+  // Store Tagada's own order/session IDs
+  if (data.orderId) order.tagadaOrderId = data.orderId;
+  if (data.sessionId) order.tagadaSessionId = data.sessionId;
+
+  // 5) On paid — enrich with full order data from Tagada payload
   if (newPaymentStatus === 'paid') {
-    // Advance order status so the shipping/label flow can pick it up
     order.status = 'processing';
-    // TODO: Trigger order confirmation email (plug in nodemailer / SendGrid here)
-    console.log(`[TagadaPay] Order ${order._id} PAID — status → processing, trigger confirmation email`);
-    // TODO: Mark stock as finally sold (if using stock reservation)
+    order.fulfilmentStatus = 'unfulfilled';
+
+    let fullOrder: any = data; // fallback to data if fetch fails or data IS the order
+    if (data.orderId) {
+      try {
+        const client = await getTagadaClient();
+        fullOrder = await client.orders.retrieve(data.orderId);
+        console.log('\n\n======================================================');
+        console.log(`[TagadaPay] Fetched full order details for Tagada Order: ${data.orderId}`);
+        console.log('======================================================');
+        console.log(JSON.stringify(fullOrder, null, 2));
+        console.log('======================================================\n\n');
+      } catch (err) {
+        console.error('[TagadaPay] Failed to fetch full order details:', err);
+      }
+    }
+
+    // ── Customer snapshot ──────────────────────────────────────────────────────
+    if (fullOrder.customer) {
+      order.customer = {
+        firstName: fullOrder.customer.firstName ?? fullOrder.customer.first_name ?? '',
+        lastName: fullOrder.customer.lastName ?? fullOrder.customer.last_name ?? '',
+        email: fullOrder.customer.email ?? '',
+        phone: fullOrder.customer.phone ?? undefined,
+      };
+      // Backfill legacy fields for any code still reading them
+      order.customerEmail = order.customer.email ?? order.customerEmail;
+      order.customerName =
+        [order.customer.firstName, order.customer.lastName].filter(Boolean).join(' ') ||
+        order.customerName;
+    }
+
+    // ── Shipping address ───────────────────────────────────────────────────────
+    const sa = fullOrder.shippingAddress || fullOrder.shipping_address;
+    if (sa) {
+      order.shippingAddressObj = {
+        name: sa.name ?? undefined,
+        company: sa.company ?? undefined,
+        street1: sa.address1 ?? sa.line1 ?? undefined,
+        street2: sa.address2 ?? sa.line2 ?? undefined,
+        city: sa.city ?? undefined,
+        state: sa.province ?? sa.state ?? undefined,
+        zip: sa.zip ?? sa.postalCode ?? undefined,
+        country: sa.country ?? undefined,
+      };
+      // Backfill legacy string field
+      order.shippingAddress = [
+        order.shippingAddressObj.street1, order.shippingAddressObj.street2, 
+        order.shippingAddressObj.city, order.shippingAddressObj.state, 
+        order.shippingAddressObj.zip, order.shippingAddressObj.country
+      ].filter(Boolean).join(', ');
+    }
+
+    // ── Billing address ────────────────────────────────────────────────────────
+    const ba = fullOrder.billingAddress || fullOrder.billing_address;
+    if (ba) {
+      order.billingAddressObj = {
+        name: ba.name ?? undefined,
+        company: ba.company ?? undefined,
+        street1: ba.address1 ?? ba.line1 ?? undefined,
+        street2: ba.address2 ?? ba.line2 ?? undefined,
+        city: ba.city ?? undefined,
+        state: ba.province ?? ba.state ?? undefined,
+        zip: ba.zip ?? ba.postalCode ?? undefined,
+        country: ba.country ?? undefined,
+      };
+    }
+
+    // ── Line items ─────────────────────────────────────────────────────────────
+    const lineItems = fullOrder.items || fullOrder.lineItems || fullOrder.line_items;
+    if (lineItems && lineItems.length > 0) {
+      order.lineItems = lineItems.map((item: any) => {
+        const unitPrice = Number(item.unitPrice || item.price) || 0;
+        const qty = item.quantity || 1;
+        return {
+          title: item.name ?? item.title ?? 'Unknown Product',
+          variantTitle: item.variantTitle ?? item.variant_title ?? undefined,
+          sku: item.sku ?? undefined,
+          quantity: qty,
+          unitPrice,
+          subtotal: unitPrice * qty,
+          productImageUrl: item.imageUrl ?? item.image_url ?? undefined,
+        };
+      });
+    }
+
+    // ── Totals ─────────────────────────────────────────────────────────────────
+    if (fullOrder.subtotalAmount !== undefined || fullOrder.subtotal_price !== undefined) {
+      order.subtotal = Number(fullOrder.subtotalAmount ?? fullOrder.subtotal_price);
+    }
+    if (fullOrder.shippingAmount !== undefined || fullOrder.shipping_price !== undefined) {
+      order.shippingAmount = Number(fullOrder.shippingAmount ?? fullOrder.shipping_price);
+    }
+    if (fullOrder.taxAmount !== undefined || fullOrder.tax_price !== undefined) {
+      order.taxAmount = Number(fullOrder.taxAmount ?? fullOrder.tax_price);
+    }
+    if (fullOrder.totalAmount !== undefined || fullOrder.total_price !== undefined) {
+      order.grandTotal = Number(fullOrder.totalAmount ?? fullOrder.total_price);
+      order.totalAmount = Number(fullOrder.totalAmount ?? fullOrder.total_price); // backfill legacy
+    }
+    if (fullOrder.currency) order.currency = fullOrder.currency;
+
+    // ── Shipping method ────────────────────────────────────────────────────────
+    const firstShipping = fullOrder.shipping_lines?.[0];
+    if (firstShipping) {
+      order.shippingMethodName = firstShipping.title ?? undefined;
+      order.shippingMethodCode = firstShipping.code ?? undefined;
+    }
+
+    // ── Tags (Tagada IDs) ──────────────────────────────────────────────────────
+    const existingTags: string[] = (order.tags as string[]) ?? [];
+    const newTags: string[] = fullOrder.tags ?? [];
+    // Append any Tagada IDs for display in the admin list
+    if (data.orderId && !existingTags.includes(data.orderId)) newTags.push(data.orderId);
+    if (tagadaPaymentId && !existingTags.includes(tagadaPaymentId)) newTags.push(tagadaPaymentId);
+    order.tags = [...new Set([...existingTags, ...newTags])];
+
+    // ── Generate human-readable order number ───────────────────────────────────
+    if (!order.orderNumber) {
+      order.orderNumber = await generateOrderNumber();
+    }
+
+    order.deliveryStatus = 'pending';
+
+    console.log(
+      `[TagadaPay] Order ${order._id} PAID → orderNumber=${order.orderNumber}, status=processing`
+    );
+    // TODO: Trigger order confirmation email (nodemailer / SendGrid)
   }
 
   if (newPaymentStatus === 'failed') {
-    console.log(`[TagadaPay] Order ${order._id} FAILED — keeping order, marked failed`);
+    console.log(`[TagadaPay] Order ${order._id} FAILED`);
     // TODO: Release reserved stock
   }
 
   if (newPaymentStatus === 'refunded') {
+    console.log(`[TagadaPay] Order ${order._id} REFUNDED`);
     // TODO: Trigger refund confirmation email
-    console.log(`[TagadaPay] Order ${order._id} REFUNDED — trigger refund email`);
   }
 
   await order.save({ validateBeforeSave: false });
 
-  // 6) Always respond 200 to prevent Tagada retries
+  // Always respond 200 to prevent Tagada from retrying
   res.status(200).json({ received: true });
 };
 
@@ -293,12 +543,12 @@ export const testTagadaConnection = catchAsync(
       const env = config.tagadaEnv;
       const apiKey = env === 'prod' ? config.tagadaApiKeyProd : config.tagadaApiKeySandbox;
       const baseUrl = env === 'prod' ? 'https://app.tagadapay.com/api/public/v1' : 'https://app.tagadapay.dev/api/public/v1';
-      
-      await axios.get(`${baseUrl}/payments`, { 
+
+      await axios.get(`${baseUrl}/payments`, {
         params: { limit: 1 },
         headers: { Authorization: `Bearer ${apiKey}` }
       });
-      
+
       res.status(200).json({
         success: true,
         message: `TagadaPay connection successful (env: ${config.tagadaEnv})`,
