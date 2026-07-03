@@ -20,6 +20,12 @@ interface Config {
   tagadaStoreId: string;
   tagadaAccountId: string;
   tagadaCheckoutUrl: string;
+  // Cloudinary
+  cloudinary: {
+    cloudName: string;
+    apiKey: string;
+    apiSecret: string;
+  };
 }
 
 const requiredEnv = ['JWT_SECRET', 'MONGO_URI'];
@@ -47,6 +53,12 @@ export const config: Config = {
   tagadaStoreId: process.env.TAGADA_STORE_ID || '',
   tagadaAccountId: process.env.TAGADA_ACCOUNT_ID || '',
   tagadaCheckoutUrl: process.env.TAGADA_CHECKOUT_URL || '',
+  // Cloudinary
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+    apiKey: process.env.CLOUDINARY_API_KEY || '',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+  },
 };
 
 export default config;
