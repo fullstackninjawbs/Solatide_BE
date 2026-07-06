@@ -7,6 +7,7 @@ import {
   updateProduct,
   deleteProduct,
   deleteAllProducts,
+  uploadProductImage,
 } from '../controllers/product.controller';
 import {
   importProductsPreview,
@@ -50,5 +51,8 @@ router.post('/', protect, restrictTo('super_admin', 'operations', 'admin'), crea
 router.patch('/:id', protect, restrictTo('super_admin', 'operations', 'admin'), updateProduct);
 router.delete('/', protect, restrictTo('super_admin', 'admin'), deleteAllProducts);
 router.delete('/:id', protect, restrictTo('super_admin', 'admin'), deleteProduct);
+
+// Upload Image Route
+router.post('/upload-image', protect, restrictTo('super_admin', 'operations', 'admin'), upload.single('file'), uploadProductImage);
 
 export default router;

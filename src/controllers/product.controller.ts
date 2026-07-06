@@ -3,6 +3,7 @@ import Product from '../models/product.model';
 import Collection from '../models/collection.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
+import { uploadImageBuffer } from '../utils/cloudinary';
 
 const slugify = (name: string): string =>
   name
@@ -13,18 +14,14 @@ const slugify = (name: string): string =>
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 
-/**
- * Get all products — with search, category, publishStatus, tag, and collection filters.
- */
+
 export const getAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const queryObj: any = {};
 
-  // 1) Category filter
   if (req.query.category && req.query.category !== 'All Products') {
     queryObj.category = req.query.category;
   }
 
-  // 2) Availability filter (legacy)
   if (req.query.availability) {
     if (req.query.availability === 'In Stock') {
       queryObj.inStock = true;
@@ -33,7 +30,7 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
     }
   }
 
-  // 3) publishStatus filter (active / draft / archived)
+
   if (req.query.status && req.query.status !== 'all') {
     queryObj.publishStatus = req.query.status;
   }
@@ -101,10 +98,6 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   });
 });
 
-/**
- * Get a single product by ObjectId, numeric id, or slug.
- * Populates variants.currentBatchId and root currentBatchId.
- */
 export const getProductById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const idOrSlug = req.params.id;
   let product: any;
@@ -167,9 +160,7 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
   });
 });
 
-/**
- * Create a new product (Admin Only)
- */
+
 export const createProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { collections, tags, tag, ...productData } = req.body;
 
@@ -222,26 +213,19 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
   });
 });
 
-/**
- * Update an existing product (Admin Only)
- */
 export const updateProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { collections, tags, tag, ...productData } = req.body;
 
-  // Merge tags
   if (tags && Array.isArray(tags)) {
     productData.tags = tags;
   } else if (tag && typeof tag === 'string') {
     productData.tags = tag.split(',').map((t: string) => t.trim()).filter(Boolean);
     productData.tag = tag;
   }
-
-  // Auto-generate slug if name changed and slug not provided
   if (productData.name && !productData.slug) {
     productData.slug = slugify(productData.name);
   }
 
-  // Sync publishStatus with published
   if (productData.published !== undefined && !productData.publishStatus) {
     productData.publishStatus = productData.published ? 'active' : 'draft';
   }
@@ -288,9 +272,7 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
   });
 });
 
-/**
- * Delete a product (Admin Only)
- */
+
 export const deleteProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const deletedProduct = await Product.findByIdAndDelete(req.params.id);
 
@@ -301,13 +283,26 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
   res.status(204).json({ success: true, data: null });
 });
 
-/**
- * Delete all products (Admin Only)
- */
+
 export const deleteAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   await Product.deleteMany({});
   res.status(200).json({
     success: true,
     message: 'All products have been deleted successfully.'
+  });
+});
+
+export const uploadProductImage = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'No file uploaded' });
+  }
+  
+  const result = await uploadImageBuffer(req.file.buffer, 'products');
+  
+  res.status(200).json({
+    success: true,
+    data: {
+      secure_url: result.secure_url
+    }
   });
 });
