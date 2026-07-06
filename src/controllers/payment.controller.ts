@@ -20,6 +20,7 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
 import config from '../config';
+import { sendOrderConfirmationEmail } from '../services/emailService';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -372,6 +373,8 @@ export const tagadaWebhook = async (
     return;
   }
 
+  const wasAlreadyPaid = order.paymentStatus === 'paid';
+
   // 4) Map Tagada status → internal status fields
   let inferredStatus = tagadaStatus;
   if (eventType === 'order/paid' || eventType === 'payment/succeeded' || eventType === 'payment/captured') {
@@ -557,7 +560,15 @@ export const tagadaWebhook = async (
     console.log(
       `[TagadaPay] Order ${order._id} PAID → orderNumber=${order.orderNumber}, status=processing`
     );
-    // TODO: Trigger order confirmation email (nodemailer / SendGrid)
+    
+    if (!wasAlreadyPaid) {
+      try {
+        await sendOrderConfirmationEmail(order);
+        console.log(`[Email] Order confirmation sent for ${order.orderNumber}`);
+      } catch (error) {
+        console.error(`[Email] Failed to send order confirmation for ${order.orderNumber}:`, error);
+      }
+    }
   }
 
   if (newPaymentStatus === 'failed') {
