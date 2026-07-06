@@ -95,10 +95,13 @@ interface TagadaWebhookPayload {
 
 function mapTagadaStatus(tagadaStatus: string): 'pending' | 'paid' | 'failed' | 'refunded' {
   switch (tagadaStatus) {
+    case 'succeeded':
+    case 'paid':
     case 'authorized':
     case 'captured':
       return 'paid';
     case 'failed':
+    case 'declined':
       return 'failed';
     case 'refunded':
       return 'refunded';
@@ -321,6 +324,7 @@ export const tagadaWebhook = async (
   // Ensure eventType is a string for subsequent checks
   const eventType = Array.isArray(rawEventType) ? (rawEventType[0] ?? '') : (rawEventType ?? '');
   const data = payload.data || payload; // fallback to payload if data is missing
+  const dAny = data as any;
 
   // 4) Ignore events we don't care about
   if (!eventType.startsWith('payment/') && !eventType.startsWith('order/')) {
@@ -331,9 +335,9 @@ export const tagadaWebhook = async (
 
   // We originally saved the Checkout Session ID as tagadaPaymentId in MongoDB.
   // Tagada's webhook data object contains checkoutSessionId, paymentId, or orderId depending on the event.
-  const tagadaPaymentId = data.checkoutSessionId || data.paymentId || data.order_id || 'unknown';
-  const tagadaStatus = data.status || 'unknown';
-  const reference = data.reference || data.metadata?.order_id || null;
+  const tagadaPaymentId = dAny.checkoutSessionId || dAny.paymentId || dAny.orderId || dAny.order_id || 'unknown';
+  const tagadaStatus = dAny.status || 'unknown';
+  const reference = dAny.reference || dAny.metadata?.order_id || null;
 
   // ==========================================
   // 🚨 DEVELOPMENT LOGGER - WEBHOOK RECEIVED
@@ -348,12 +352,12 @@ export const tagadaWebhook = async (
 
   // 4) Find the matching order
   // We explicitly saved our MongoDB _id as the 'cartToken' during createSession
-  const mongoOrderId = data.cartToken || null;
+  const mongoOrderId = dAny.cartToken || null;
   const order = await Order.findOne({
     $or: [
       ...(mongoOrderId ? [{ _id: mongoOrderId }] : []),
       { tagadaPaymentId },
-      { tagadaOrderId: data.order_id },
+      { tagadaOrderId: dAny.orderId || dAny.order_id },
       ...(reference ? [{ _id: reference }] : []),
       ...(payload.metadata?.order_id ? [{ _id: payload.metadata.order_id }] : []),
     ],
@@ -369,13 +373,19 @@ export const tagadaWebhook = async (
   }
 
   // 4) Map Tagada status → internal status fields
-  const newTagadaStatus = tagadaStatus as
+  let inferredStatus = tagadaStatus;
+  if (eventType === 'order/paid' || eventType === 'payment/succeeded' || eventType === 'payment/captured') {
+    inferredStatus = 'succeeded';
+  }
+
+  const newTagadaStatus = inferredStatus as
     | 'initiated'
     | 'authorized'
     | 'captured'
     | 'failed'
-    | 'refunded';
-  const newPaymentStatus = mapTagadaStatus(tagadaStatus);
+    | 'refunded'
+    | 'succeeded';
+  const newPaymentStatus = mapTagadaStatus(inferredStatus);
 
   order.tagadaPaymentId = tagadaPaymentId;
   order.tagadaPaymentStatus = newTagadaStatus;
@@ -383,8 +393,11 @@ export const tagadaWebhook = async (
   order.paymentMethod = 'tagada';
 
   // Store Tagada's own order/session IDs
-  if (data.order_id) order.tagadaOrderId = data.order_id;
-  if (data.session_id) order.tagadaSessionId = data.session_id;
+  const tagadaOrderId = dAny.orderId || dAny.order_id;
+  const tagadaSessionId = dAny.sessionId || dAny.session_id;
+
+  if (tagadaOrderId) order.tagadaOrderId = tagadaOrderId;
+  if (tagadaSessionId) order.tagadaSessionId = tagadaSessionId;
 
   // 5) On paid — enrich with full order data from Tagada payload
   if (newPaymentStatus === 'paid') {
@@ -392,14 +405,13 @@ export const tagadaWebhook = async (
     order.fulfilmentStatus = 'unfulfilled';
 
     let fullOrder: any = data; // fallback to data if fetch fails or data IS the order
-    if (data.order_id) {
+    if (tagadaOrderId) {
       try {
         const client = await getTagadaClient();
-        fullOrder = await client.orders.retrieve(data.order_id);
+        const res = await client.orders.retrieve(tagadaOrderId);
+        fullOrder = res.order || res; // Tagada SDK returns { order: { ... } }
         console.log('\n\n======================================================');
-        console.log(`[TagadaPay] Fetched full order details for Tagada Order: ${data.order_id}`);
-        console.log('======================================================');
-        console.log(JSON.stringify(fullOrder, null, 2));
+        console.log(`[TagadaPay] Fetched full order details for Tagada Order: ${tagadaOrderId}`);
         console.log('======================================================\n\n');
       } catch (err) {
         console.error('[TagadaPay] Failed to fetch full order details:', err);
@@ -407,12 +419,13 @@ export const tagadaWebhook = async (
     }
 
     // ── Customer snapshot ──────────────────────────────────────────────────────
-    if (fullOrder.customer) {
+    if (fullOrder.customer || dAny.user_data) {
+      const cust = fullOrder.customer || {};
       order.customer = {
-        firstName: fullOrder.customer.firstName ?? fullOrder.customer.first_name ?? '',
-        lastName: fullOrder.customer.lastName ?? fullOrder.customer.last_name ?? '',
-        email: fullOrder.customer.email ?? '',
-        phone: fullOrder.customer.phone ?? undefined,
+        firstName: cust.firstName ?? cust.first_name ?? '',
+        lastName: cust.lastName ?? cust.last_name ?? '',
+        email: cust.email ?? dAny.user_data?.email ?? '',
+        phone: cust.phone ?? undefined,
       };
       // Backfill legacy fields for any code still reading them
       order.customerEmail = order.customer.email ?? order.customerEmail;
@@ -422,16 +435,18 @@ export const tagadaWebhook = async (
     }
 
     // ── Shipping address ───────────────────────────────────────────────────────
-    const sa = fullOrder.shippingAddress || fullOrder.shipping_address;
+    const sa = fullOrder.shippingAddress || fullOrder.shipping_address || fullOrder.customer?.shippingAddress;
     if (sa) {
+      const saName = sa.name ?? (`${sa.firstName || ''} ${sa.lastName || ''}`.trim() || undefined);
+      const saZip = sa.zip ?? sa.postalCode ?? sa.postal ?? undefined;
       order.shippingAddressObj = {
-        name: sa.name ?? undefined,
+        name: saName,
         company: sa.company ?? undefined,
         street1: sa.address1 ?? sa.line1 ?? undefined,
         street2: sa.address2 ?? sa.line2 ?? undefined,
         city: sa.city ?? undefined,
         state: sa.province ?? sa.state ?? undefined,
-        zip: sa.zip ?? sa.postalCode ?? undefined,
+        zip: saZip,
         country: sa.country ?? undefined,
       };
       // Backfill legacy string field
@@ -443,68 +458,94 @@ export const tagadaWebhook = async (
     }
 
     // ── Billing address ────────────────────────────────────────────────────────
-    const ba = fullOrder.billingAddress || fullOrder.billing_address;
+    const ba = fullOrder.billingAddress || fullOrder.billing_address || fullOrder.customer?.billingAddress;
     if (ba) {
+      const baName = ba.name ?? (`${ba.firstName || ''} ${ba.lastName || ''}`.trim() || undefined);
+      const baZip = ba.zip ?? ba.postalCode ?? ba.postal ?? undefined;
       order.billingAddressObj = {
-        name: ba.name ?? undefined,
+        name: baName,
         company: ba.company ?? undefined,
         street1: ba.address1 ?? ba.line1 ?? undefined,
         street2: ba.address2 ?? ba.line2 ?? undefined,
         city: ba.city ?? undefined,
         state: ba.province ?? ba.state ?? undefined,
-        zip: ba.zip ?? ba.postalCode ?? undefined,
+        zip: baZip,
         country: ba.country ?? undefined,
       };
     }
 
     // ── Line items ─────────────────────────────────────────────────────────────
-    const lineItems = fullOrder.items || fullOrder.lineItems || fullOrder.line_items;
+    const lineItems = fullOrder.items || fullOrder.lineItems || fullOrder.line_items || dAny.lineItems;
     if (lineItems && lineItems.length > 0) {
       order.lineItems = lineItems.map((item: any) => {
-        const unitPrice = Number(item.unitPrice || item.price) || 0;
+        const title = item.orderLineItemProduct?.name ?? item.productName ?? item.name ?? item.title ?? 'Unknown Product';
+        const variantTitle = item.orderLineItemVariant?.name ?? item.variantName ?? item.variantTitle ?? item.variant_title ?? undefined;
+        const fallbackPrice = Number(item.unitPrice || item.price) || 0;
+        let unitPrice = item.unitAmount ? (item.unitAmount / 100) : fallbackPrice;
         const qty = item.quantity || 1;
+        const imageUrl = item.orderLineItemVariant?.imageUrl ?? item.imageUrl ?? item.image_url ?? undefined;
+        
         return {
-          title: item.name ?? item.title ?? 'Unknown Product',
-          variantTitle: item.variantTitle ?? item.variant_title ?? undefined,
+          title,
+          variantTitle,
           sku: item.sku ?? undefined,
           quantity: qty,
           unitPrice,
           subtotal: unitPrice * qty,
-          productImageUrl: item.imageUrl ?? item.image_url ?? undefined,
+          productImageUrl: imageUrl,
         };
       });
     }
 
     // ── Totals ─────────────────────────────────────────────────────────────────
-    if (fullOrder.subtotalAmount !== undefined || fullOrder.subtotal_price !== undefined) {
-      order.subtotal = Number(fullOrder.subtotalAmount ?? fullOrder.subtotal_price);
+    const summary = fullOrder.summaries?.[0] || {};
+    
+    // Subtotal
+    if (summary.subtotalAmount !== undefined) order.subtotal = summary.subtotalAmount / 100;
+    else if (fullOrder.subtotalAmount !== undefined) order.subtotal = Number(fullOrder.subtotalAmount);
+    else if (fullOrder.subtotal_price !== undefined) order.subtotal = Number(fullOrder.subtotal_price);
+
+    // Shipping
+    if (summary.shippingCost !== undefined) order.shippingAmount = summary.shippingCost / 100;
+    else if (fullOrder.shippingAmount !== undefined) order.shippingAmount = Number(fullOrder.shippingAmount);
+    else if (fullOrder.shipping_price !== undefined) order.shippingAmount = Number(fullOrder.shipping_price);
+
+    // Tax
+    if (summary.totalTaxAmount !== undefined) order.taxAmount = summary.totalTaxAmount / 100;
+    else if (fullOrder.taxAmount !== undefined) order.taxAmount = Number(fullOrder.taxAmount);
+    else if (fullOrder.tax_price !== undefined) order.taxAmount = Number(fullOrder.tax_price);
+
+    // Total
+    if (summary.totalAmount !== undefined) {
+      order.grandTotal = summary.totalAmount / 100;
+      order.totalAmount = summary.totalAmount / 100;
+    } else if (fullOrder.totalAmount !== undefined || fullOrder.total_price !== undefined) {
+      const tot = Number(fullOrder.totalAmount ?? fullOrder.total_price);
+      order.grandTotal = tot;
+      order.totalAmount = tot;
     }
-    if (fullOrder.shippingAmount !== undefined || fullOrder.shipping_price !== undefined) {
-      order.shippingAmount = Number(fullOrder.shippingAmount ?? fullOrder.shipping_price);
+
+    if (summary.currency || fullOrder.currency) {
+      order.currency = summary.currency || fullOrder.currency;
     }
-    if (fullOrder.taxAmount !== undefined || fullOrder.tax_price !== undefined) {
-      order.taxAmount = Number(fullOrder.taxAmount ?? fullOrder.tax_price);
-    }
-    if (fullOrder.totalAmount !== undefined || fullOrder.total_price !== undefined) {
-      order.grandTotal = Number(fullOrder.totalAmount ?? fullOrder.total_price);
-      order.totalAmount = Number(fullOrder.totalAmount ?? fullOrder.total_price); // backfill legacy
-    }
-    if (fullOrder.currency) order.currency = fullOrder.currency;
 
     // ── Shipping method ────────────────────────────────────────────────────────
-    const firstShipping = fullOrder.shipping_lines?.[0];
+    const firstShipping = fullOrder.shipping_lines?.[0] || fullOrder.shippingLines?.[0];
     if (firstShipping) {
-      order.shippingMethodName = firstShipping.title ?? undefined;
+      order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
+    } else if (fullOrder.checkoutSession?.shippingRateId) {
+      order.shippingMethodCode = fullOrder.checkoutSession.shippingRateId;
+      order.shippingMethodName = 'Standard Shipping'; // Fallback if Tagada SDK doesn't provide the string
     }
 
     // ── Tags (Tagada IDs) ──────────────────────────────────────────────────────
     const existingTags: string[] = (order.tags as string[]) ?? [];
     const newTags: string[] = fullOrder.tags ?? [];
     // Append any Tagada IDs for display in the admin list
-    if (data.order_id && !existingTags.includes(data.order_id)) newTags.push(data.order_id);
+    if (tagadaOrderId && !existingTags.includes(tagadaOrderId)) newTags.push(tagadaOrderId);
     if (tagadaPaymentId && !existingTags.includes(tagadaPaymentId)) newTags.push(tagadaPaymentId);
-    order.tags = [...new Set([...existingTags, ...newTags])];
+    order.tags = Array.from(new Set([...existingTags, ...newTags]));
 
     // ── Generate human-readable order number ───────────────────────────────────
     if (!order.orderNumber) {
