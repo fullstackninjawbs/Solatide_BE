@@ -351,8 +351,17 @@ const productSchema = new mongoose.Schema<IProduct>(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
   }
 );
+
+productSchema.virtual('reviews', {
+  ref: 'Review',
+  localField: '_id',
+  foreignField: 'product',
+  match: { status: 'approved' }
+});
 
 // Pre-save hook: auto-generate slug from name if not set
 productSchema.pre('save', function (next) {

@@ -89,7 +89,24 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
     }
   }
 
-  const products = await query;
+  query = query.populate('reviews');
+  const productsResult = await query;
+
+  const products = productsResult.map((prod: any) => {
+    const p = prod.toObject ? prod.toObject() : prod;
+    if (p.reviews && p.reviews.length > 0) {
+      p.ratingCount = p.reviews.length;
+      p.reviewsCount = p.reviews.length;
+      const sum = p.reviews.reduce((acc: number, r: any) => acc + (r.rating || 0), 0);
+      p.rating = Number((sum / p.reviews.length).toFixed(1));
+    } else {
+      p.ratingCount = 0;
+      p.reviewsCount = 0;
+      p.rating = 0;
+    }
+    delete p.reviews;
+    return p;
+  });
 
   res.status(200).json({
     success: true,
@@ -106,7 +123,8 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
   if (idOrSlug.match(/^[0-9a-fA-F]{24}$/)) {
     product = await Product.findById(idOrSlug)
       .populate('currentBatchId')
-      .populate('variants.currentBatchId');
+      .populate('variants.currentBatchId')
+      .populate('reviews');
   }
 
   // Try numeric id
@@ -115,7 +133,8 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
     if (!isNaN(numericId)) {
       product = await Product.findOne({ id: numericId })
         .populate('currentBatchId')
-        .populate('variants.currentBatchId');
+        .populate('variants.currentBatchId')
+        .populate('reviews');
     }
   }
 
@@ -123,7 +142,8 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
   if (!product) {
     product = await Product.findOne({ slug: idOrSlug })
       .populate('currentBatchId')
-      .populate('variants.currentBatchId');
+      .populate('variants.currentBatchId')
+      .populate('reviews');
   }
 
   if (!product) {
@@ -153,6 +173,19 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
   const collections = await Collection.find({ products: product._id }).select('_id name type');
   productObj.collections = collections.map(c => c._id);
   productObj.collectionObjects = collections;
+
+  // Compute dynamic reviews
+  if (productObj.reviews && productObj.reviews.length > 0) {
+    productObj.ratingCount = productObj.reviews.length;
+    productObj.reviewsCount = productObj.reviews.length;
+    const sum = productObj.reviews.reduce((acc: number, r: any) => acc + (r.rating || 0), 0);
+    productObj.rating = Number((sum / productObj.reviews.length).toFixed(1));
+  } else {
+    productObj.ratingCount = 0;
+    productObj.reviewsCount = 0;
+    productObj.rating = 0;
+  }
+  delete productObj.reviews;
 
   res.status(200).json({
     success: true,
