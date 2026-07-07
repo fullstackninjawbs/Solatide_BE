@@ -11,6 +11,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import PaymentSettings from '../../models/PaymentSettings';
+import StoreSettings from '../../models/StoreSettings';
 import { rebuildTagadaClient } from '../../services/tagadaClient';
 import catchAsync from '../../utils/catchAsync';
 import AppError from '../../utils/appError';
@@ -88,7 +89,45 @@ export const updateTagadaSettings = catchAsync(
   }
 );
 
-// Legacy placeholder (preserved for other admin sections still using it)
-export const getPlaceholder = async (req: Request, res: Response) => {
-  res.json({ message: 'Settings controller — use /tagada sub-routes' });
-};
+// ─── GET /api/admin/settings/store ──────────────────────────────────────────────
+
+export const getStoreSettings = catchAsync(async (_req: Request, res: Response) => {
+  let settings = await StoreSettings.findOne();
+  if (!settings) {
+    settings = await StoreSettings.create({
+      storeName: 'Solatide Biosciences',
+      contactEmail: 'contact@solatidebiosciences.com.au'
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    data: { settings },
+  });
+});
+
+// ─── PUT /api/admin/settings/store ──────────────────────────────────────────────
+
+export const updateStoreSettings = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  let settings = await StoreSettings.findOne();
+  if (!settings) {
+    settings = new StoreSettings();
+  }
+
+  const { storeName, contactEmail, contactPhone, shippingOrigin, baseCurrency, freeShippingThreshold } = req.body;
+
+  if (storeName !== undefined) settings.storeName = storeName;
+  if (contactEmail !== undefined) settings.contactEmail = contactEmail;
+  if (contactPhone !== undefined) settings.contactPhone = contactPhone;
+  if (shippingOrigin !== undefined) settings.shippingOrigin = shippingOrigin;
+  if (baseCurrency !== undefined) settings.baseCurrency = baseCurrency;
+  if (freeShippingThreshold !== undefined) settings.freeShippingThreshold = freeShippingThreshold;
+
+  await settings.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Store settings updated successfully',
+    data: { settings }
+  });
+});

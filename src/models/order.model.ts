@@ -100,6 +100,7 @@ export interface IOrder extends mongoose.Document {
   // ── Metadata ─────────────────────────────────────────────────────────────────
   tags?: string[];
   adminNotes?: string;
+  comments?: { text: string; createdAt: Date }[];
 
   createdAt: Date;
   updatedAt: Date;
@@ -225,6 +226,10 @@ const orderSchema = new mongoose.Schema<IOrder>(
     // ── Metadata ─────────────────────────────────────────────────────────────────
     tags: [{ type: String }],
     adminNotes: { type: String },
+    comments: [{
+      text: { type: String, required: true },
+      createdAt: { type: Date, default: Date.now }
+    }],
   },
   { timestamps: true }
 );

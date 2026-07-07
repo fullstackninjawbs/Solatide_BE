@@ -4,8 +4,9 @@ import { testTagadaConnection } from '../../controllers/payment.controller';
 
 const router = express.Router();
 
-// Legacy placeholder
-router.get('/', settingsController.getPlaceholder);
+// ── Store Settings ────────────────────────────────────────────────────────────
+router.get('/store', settingsController.getStoreSettings);
+router.put('/store', settingsController.updateStoreSettings);
 
 // ── TagadaPay Settings ────────────────────────────────────────────────────────
 router.get('/tagada', settingsController.getTagadaSettings);

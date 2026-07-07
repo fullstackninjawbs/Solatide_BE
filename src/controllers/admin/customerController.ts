@@ -67,11 +67,11 @@ export const getCustomerById = catchAsync(async (req: Request, res: Response, ne
 
 // PUT /api/admin/customers/:id
 export const updateCustomer = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const { name, country, tags, banned } = req.body;
+  const { name, email, phone, defaultAddress, country, tags, banned, comments } = req.body;
   
   const customer = await Customer.findByIdAndUpdate(
     req.params.id,
-    { name, country, tags, banned },
+    { name, email, phone, defaultAddress, country, tags, banned, comments },
     { new: true, runValidators: true }
   );
 
