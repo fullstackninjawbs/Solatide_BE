@@ -15,6 +15,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { tagadaClient, getTagadaClient } from '../services/tagadaClient';
 import Order from '../models/order.model';
+import Customer from '../models/Customer';
 import PaymentSettings from '../models/PaymentSettings';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
@@ -567,6 +568,32 @@ export const tagadaWebhook = async (
         console.log(`[Email] Order confirmation sent for ${order.orderNumber}`);
       } catch (error) {
         console.error(`[Email] Failed to send order confirmation for ${order.orderNumber}:`, error);
+      }
+
+      // Upsert Customer Record
+      if (order.customerEmail) {
+        try {
+          const customerName = order.customerName || (order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : 'Unknown Customer');
+          const customerCountry = order.shippingAddressObj?.country || order.billingAddressObj?.country || '';
+          
+          await Customer.findOneAndUpdate(
+            { email: order.customerEmail },
+            { 
+              $set: { 
+                name: customerName,
+                country: customerCountry,
+              },
+              $inc: {
+                orderCount: 1,
+                totalSpent: order.grandTotal || 0,
+              }
+            },
+            { upsert: true, new: true }
+          );
+          console.log(`[Customer] Upserted CRM record for ${order.customerEmail}`);
+        } catch (error) {
+          console.error(`[Customer] Failed to upsert CRM record:`, error);
+        }
       }
     }
   }

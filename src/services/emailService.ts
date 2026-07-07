@@ -97,7 +97,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
   const orderUrl = `${clientUrl}/order/${order._id}`;
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
-  const currency = order.currency || 'USD';
+  const currency = order.currency || 'AUD';
 
   const formatPrice = (amount: number) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
