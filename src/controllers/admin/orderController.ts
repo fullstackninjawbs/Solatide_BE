@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
-import EasyPostClient from '@easypost/api';
+import client from '../../config/easypost';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 
@@ -190,11 +190,9 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Store shipping origin address not configured in settings', 400));
   }
 
-  const apiKey = process.env.EASYPOST_API_KEY;
-  if (!apiKey) {
+  if (!process.env.EASYPOST_API_KEY) {
     return next(new AppError('EASYPOST_API_KEY is not configured', 500));
   }
-  const client = new EasyPostClient(apiKey);
 
   // Calculate weight
   let totalWeightGrams = 0;
