@@ -35,6 +35,7 @@ export interface IProduct extends mongoose.Document {
   rating: number;
   inStock: boolean;
   category: string;
+  researchCategory?: 'metabolic-pathway' | 'tissue-cellular' | 'dermal-pigmentation' | 'laboratory-support';
   /** @deprecated Use status field instead */
   status: 'In Stock' | 'Sold Out' | 'Sale';
   /** Shopify-equivalent status */
@@ -188,6 +189,12 @@ const productSchema = new mongoose.Schema<IProduct>(
       type: String,
       required: [true, 'A product must have a category'],
       trim: true,
+    },
+    researchCategory: {
+      type: String,
+      enum: ['metabolic-pathway', 'tissue-cellular', 'dermal-pigmentation', 'laboratory-support'],
+      required: true,
+      default: 'laboratory-support',
     },
     // Legacy status (stock-based)
     status: {

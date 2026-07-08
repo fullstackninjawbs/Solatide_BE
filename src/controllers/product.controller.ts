@@ -19,7 +19,7 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   const queryObj: any = {};
 
   if (req.query.category && req.query.category !== 'All Products') {
-    queryObj.category = req.query.category;
+    queryObj.researchCategory = req.query.category;
   }
 
   if (req.query.availability) {
