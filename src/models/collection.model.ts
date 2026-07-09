@@ -20,6 +20,8 @@ export interface ICollection extends mongoose.Document {
     showFaqBlock: boolean;
   };
   products: mongoose.Types.ObjectId[];
+  publishing: string[];
+  themeTemplate: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,6 +84,14 @@ const collectionSchema = new mongoose.Schema<ICollection>(
         ref: 'Product',
       },
     ],
+    publishing: {
+      type: [String],
+      default: ['online_store', 'pos'],
+    },
+    themeTemplate: {
+      type: String,
+      default: 'default',
+    }
   },
   {
     timestamps: true,
