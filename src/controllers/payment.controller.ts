@@ -519,8 +519,30 @@ export const tagadaWebhook = async (
     else if (fullOrder.taxAmount !== undefined) order.taxAmount = Number(fullOrder.taxAmount);
     else if (fullOrder.tax_price !== undefined) order.taxAmount = Number(fullOrder.tax_price);
 
+    // Discounts
+    let discountAmt = 0;
+    if (summary.totalPromotionAmount !== undefined) discountAmt = summary.totalPromotionAmount / 100;
+    else if (fullOrder.totalPromotionAmount !== undefined) discountAmt = Number(fullOrder.totalPromotionAmount) / 100;
+    else if (fullOrder.discount_price !== undefined) discountAmt = Number(fullOrder.discount_price);
+    
+    if (discountAmt > 0) {
+      order.discountAmount = discountAmt;
+      // Try to find the coupon code
+      const adjustments = summary.adjustments || fullOrder.adjustments || [];
+      const promoAdjustment = adjustments.find((adj: any) => adj.type === 'Promotion' || adj.description);
+      if (promoAdjustment && promoAdjustment.description) {
+        order.couponCode = promoAdjustment.description;
+      } else if (fullOrder.discount_codes?.length > 0) {
+        order.couponCode = fullOrder.discount_codes[0].code;
+      }
+    }
+
     // Total
-    if (summary.totalAmount !== undefined) {
+    if (summary.totalAdjustedAmount !== undefined) {
+      // Use the final adjusted amount which includes discounts
+      order.grandTotal = summary.totalAdjustedAmount / 100;
+      order.totalAmount = summary.totalAdjustedAmount / 100;
+    } else if (summary.totalAmount !== undefined) {
       order.grandTotal = summary.totalAmount / 100;
       order.totalAmount = summary.totalAmount / 100;
     } else if (fullOrder.totalAmount !== undefined || fullOrder.total_price !== undefined) {

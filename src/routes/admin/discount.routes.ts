@@ -3,6 +3,7 @@ import * as discountController from '../../controllers/admin/discountController'
 
 const router = express.Router();
 
+router.post('/sync-from-tagada', discountController.syncFromTagada);
 router.get('/', discountController.getDiscounts);
 router.get('/:id', discountController.getDiscountById);
 router.post('/', discountController.createDiscount);

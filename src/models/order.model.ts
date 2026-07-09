@@ -71,6 +71,7 @@ export interface IOrder extends mongoose.Document {
   shippingAmount?: number;
   taxAmount?: number;
   discountAmount?: number;
+  couponCode?: string;
   grandTotal?: number;
   /** @deprecated use grandTotal */
   totalAmount?: number;
@@ -177,6 +178,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     shippingAmount: { type: Number },
     taxAmount: { type: Number },
     discountAmount: { type: Number },
+    couponCode: { type: String, trim: true },
     grandTotal: { type: Number },
     totalAmount: { type: Number, min: 0 },
     currency: { type: String, default: 'AUD' },
