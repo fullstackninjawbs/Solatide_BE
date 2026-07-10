@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IBatch extends Document {
   batchId: string;
+  vendorLotNumber?: string;
   displayName?: string;
   productId: mongoose.Types.ObjectId;
   variantSku?: string;
@@ -12,8 +13,23 @@ export interface IBatch extends Document {
   content?: string; // Alias for measuredContent (Shopify spec name)
   method?: string;
 
+  /** @deprecated Use coaFile instead */
   coaUrl?: string;
+  coaFile?: {
+    url: string;
+    filename: string;
+    uploadedAt: Date;
+  };
   coaStatus: 'pending' | 'approved';
+
+  verificationDetails?: {
+    labName?: string;
+    coaReportId?: string;
+    testDate?: Date;
+    verificationUrl?: string;
+  };
+
+  qcLevel: 'full' | 'partial' | 'none';
 
   // COA content flags
   includesPurity: boolean;
@@ -54,6 +70,7 @@ export interface IBatch extends Document {
 
 const batchSchema = new Schema<IBatch>({
   batchId: { type: String, required: true },
+  vendorLotNumber: { type: String, trim: true },
   displayName: { type: String },
   productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
   variantSku: { type: String, required: false },
@@ -65,7 +82,21 @@ const batchSchema = new Schema<IBatch>({
   method: { type: String },
 
   coaUrl: { type: String },
+  coaFile: {
+    url: { type: String },
+    filename: { type: String },
+    uploadedAt: { type: Date }
+  },
   coaStatus: { type: String, enum: ['pending', 'approved'], default: 'pending' },
+
+  verificationDetails: {
+    labName: { type: String, trim: true },
+    coaReportId: { type: String, trim: true },
+    testDate: { type: Date },
+    verificationUrl: { type: String, trim: true }
+  },
+
+  qcLevel: { type: String, enum: ['full', 'partial', 'none'], default: 'none' },
 
   includesPurity: { type: Boolean, default: true },
   includesMeasuredContent: { type: Boolean, default: true },

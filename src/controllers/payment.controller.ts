@@ -392,7 +392,7 @@ export const tagadaWebhook = async (
   const newPaymentStatus = mapTagadaStatus(inferredStatus);
 
   order.tagadaPaymentId = tagadaPaymentId;
-  order.tagadaPaymentStatus = newTagadaStatus;
+  (order as any).tagadaPaymentStatus = newTagadaStatus;
   order.paymentStatus = newPaymentStatus;
   order.paymentMethod = 'tagada';
 

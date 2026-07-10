@@ -107,7 +107,7 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   ];
 
   // Actionable Tasks
-  const tasksList = [];
+  const tasksList: any[] = [];
 
   // Pending manual orders
   const pendingOrders = await Order.find({ paymentStatus: 'pending' })

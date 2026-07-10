@@ -47,7 +47,7 @@ export const getDiscounts = catchAsync(async (req: Request, res: Response, next:
 export const syncFromTagada = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const client = await getTagadaClient();
   const settings = await PaymentSettings.findOne();
-  const storeId = config.tagadaStoreId || settings?.tagadaStoreId;
+  const storeId = config.tagadaStoreId || (settings as any)?.tagadaStoreId;
   
   if (!storeId) {
     return next(new AppError('Tagada Pay Store ID is not configured.', 400));

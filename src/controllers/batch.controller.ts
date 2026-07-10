@@ -3,6 +3,41 @@ import Batch from '../models/batch.model';
 import Product from '../models/product.model';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
+import { uploadFileBuffer } from '../utils/cloudinary';
+
+const computeQcLevel = (tests: any) => {
+  if (!tests) return 'none';
+  
+  // Requirement: at least HPLC purity must be performed to even be considered 'partial'
+  // If not performed, we might reject the save earlier, but here we just return 'none'
+  if (!tests.purityHplc?.performed) return 'none';
+
+  // "Full panel" requires: purityHplc, netPeptideContent, identityHplc, endotoxinUsp85
+  const isFull = 
+    tests.purityHplc?.performed &&
+    tests.netPeptideContent?.performed &&
+    tests.identityHplc?.performed &&
+    tests.endotoxinUsp85?.performed;
+    
+  return isFull ? 'full' : 'partial';
+};
+
+export const uploadCOA = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.file) {
+    return next(new AppError('Please provide a COA file', 400));
+  }
+
+  const result = await uploadFileBuffer(req.file.buffer, 'solatide/coas');
+  
+  res.status(200).json({
+    success: true,
+    data: {
+      url: result.secure_url,
+      filename: req.file.originalname,
+      uploadedAt: new Date()
+    }
+  });
+});
 
 export const getBatches = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const filter: any = {};
@@ -18,6 +53,25 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
     success: true,
     results: batches.length,
     data: { batches }
+  });
+});
+
+export const proxyCoa = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') {
+    return next(new AppError('Please provide a URL to proxy', 400));
+  }
+  
+  const https = require('https');
+  https.get(url, (cloudinaryRes: any) => {
+    if (cloudinaryRes.statusCode !== 200) {
+      return next(new AppError('Failed to fetch from Cloudinary', cloudinaryRes.statusCode || 500));
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="coa.pdf"');
+    cloudinaryRes.pipe(res);
+  }).on('error', (err: any) => {
+    next(new AppError('Error proxying COA: ' + err.message, 500));
   });
 });
 
@@ -65,9 +119,15 @@ const setCurrentBatchOnVariant = async (
 export const createBatch = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { setAsCurrent, ...batchData } = req.body;
 
+  if (!batchData.productId) return next(new AppError('Product ID is required', 400));
+  if (!batchData.batchId) return next(new AppError('Batch ID is required', 400));
+  if (!batchData.tests?.purityHplc?.performed) return next(new AppError('HPLC Purity test is required', 400));
+
   if (batchData.variantId === '') {
     batchData.variantId = null;
   }
+
+  batchData.qcLevel = computeQcLevel(batchData.tests);
 
   const newBatch = await Batch.create(batchData);
 
@@ -85,8 +145,18 @@ export const createBatch = catchAsync(async (req: Request, res: Response, next: 
 export const updateBatch = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { setAsCurrent, ...batchData } = req.body;
 
+  if (batchData.productId === '') return next(new AppError('Product ID is required', 400));
+  if (batchData.batchId === '') return next(new AppError('Batch ID is required', 400));
+  if (batchData.tests && !batchData.tests.purityHplc?.performed) {
+    return next(new AppError('HPLC Purity test is required', 400));
+  }
+
   if (batchData.variantId === '') {
     batchData.variantId = null;
+  }
+  
+  if (batchData.tests) {
+    batchData.qcLevel = computeQcLevel(batchData.tests);
   }
 
   const batch = await Batch.findByIdAndUpdate(req.params.id, batchData, {

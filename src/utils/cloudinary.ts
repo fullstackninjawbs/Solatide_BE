@@ -32,6 +32,30 @@ export const uploadImageBuffer = (buffer: Buffer, folder: string = 'reviews'): P
 };
 
 /**
+ * Uploads a generic file buffer (like PDF) to Cloudinary
+ * @param buffer - File buffer from multer
+ * @param folder - Cloudinary folder name
+ * @returns Promise that resolves with the Cloudinary upload result
+ */
+export const uploadFileBuffer = (buffer: Buffer, folder: string = 'documents'): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const options: any = {
+      folder,
+      resource_type: 'raw', // Use raw to prevent Cloudinary from blocking PDF delivery
+    };
+
+    const uploadStream = cloudinary.uploader.upload_stream(
+      options,
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(uploadStream);
+  });
+};
+
+/**
  * Deletes an image from Cloudinary given its secure_url
  * @param imageUrl - The Cloudinary secure_url
  * @returns Promise that resolves when deletion is complete
