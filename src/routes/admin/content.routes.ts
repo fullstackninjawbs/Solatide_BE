@@ -3,6 +3,13 @@ import * as contentController from '../../controllers/admin/contentController';
 
 const router = express.Router();
 
-router.get('/', contentController.getPlaceholder);
+// FAQ Management Routes
+router.route('/faqs')
+  .get(contentController.getFaqSections)
+  .post(contentController.createFaqSection);
+
+router.route('/faqs/:id')
+  .put(contentController.updateFaqSection)
+  .delete(contentController.deleteFaqSection);
 
 export default router;
