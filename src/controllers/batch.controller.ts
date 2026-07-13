@@ -3,7 +3,7 @@ import Batch from '../models/batch.model';
 import Product from '../models/product.model';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
-import { uploadFileBuffer } from '../utils/cloudinary';
+import { uploadImageBuffer } from '../utils/cloudinary';
 
 const computeQcLevel = (tests: any) => {
   if (!tests) return 'none';
@@ -27,7 +27,7 @@ export const uploadCOA = catchAsync(async (req: Request, res: Response, next: Ne
     return next(new AppError('Please provide a COA file', 400));
   }
 
-  const result = await uploadFileBuffer(req.file.buffer, 'solatide/coas');
+  const result = await uploadImageBuffer(req.file.buffer, 'solatide/coas');
   
   res.status(200).json({
     success: true,
@@ -121,7 +121,7 @@ export const createBatch = catchAsync(async (req: Request, res: Response, next: 
 
   if (!batchData.productId) return next(new AppError('Product ID is required', 400));
   if (!batchData.batchId) return next(new AppError('Batch ID is required', 400));
-  if (!batchData.tests?.purityHplc?.performed) return next(new AppError('HPLC Purity test is required', 400));
+
 
   if (batchData.variantId === '') {
     batchData.variantId = null;
@@ -147,9 +147,7 @@ export const updateBatch = catchAsync(async (req: Request, res: Response, next: 
 
   if (batchData.productId === '') return next(new AppError('Product ID is required', 400));
   if (batchData.batchId === '') return next(new AppError('Batch ID is required', 400));
-  if (batchData.tests && !batchData.tests.purityHplc?.performed) {
-    return next(new AppError('HPLC Purity test is required', 400));
-  }
+
 
   if (batchData.variantId === '') {
     batchData.variantId = null;

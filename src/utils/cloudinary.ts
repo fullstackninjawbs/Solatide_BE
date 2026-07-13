@@ -42,6 +42,7 @@ export const uploadFileBuffer = (buffer: Buffer, folder: string = 'documents'): 
     const options: any = {
       folder,
       resource_type: 'raw', // Use raw to prevent Cloudinary from blocking PDF delivery
+      format: 'pdf', // Ensures the generated URL has the .pdf extension
     };
 
     const uploadStream = cloudinary.uploader.upload_stream(
