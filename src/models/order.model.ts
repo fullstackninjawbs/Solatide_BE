@@ -90,13 +90,15 @@ export interface IOrder extends mongoose.Document {
 
   // ── TagadaPay ────────────────────────────────────────────────────────────────
   tagadaPaymentId?: string;
-  tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded';
+  tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded' | 'succeeded';
 
-  // ── EasyPost (stub — Phase 2) ─────────────────────────────────────────────────
+  // ── Shipping Providers ────────────────────────────────────────────────────────
   trackingNumber?: string;
   trackingCarrier?: string;
   labelUrl?: string;
+  /** @deprecated EasyPost is being replaced by Starshipit */
   easyPostShipmentId?: string;
+  starshipitOrderId?: string;
 
   // ── Metadata ─────────────────────────────────────────────────────────────────
   tags?: string[];
@@ -216,14 +218,15 @@ const orderSchema = new mongoose.Schema<IOrder>(
     tagadaPaymentId: { type: String },
     tagadaPaymentStatus: {
       type: String,
-      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded'],
+      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'succeeded'],
     },
 
-    // ── EasyPost (Phase 2 stubs) ──────────────────────────────────────────────────
+    // ── Shipping Providers ────────────────────────────────────────────────────────
     trackingNumber: { type: String },
     trackingCarrier: { type: String },
     labelUrl: { type: String },
     easyPostShipmentId: { type: String },
+    starshipitOrderId: { type: String },
 
     // ── Metadata ─────────────────────────────────────────────────────────────────
     tags: [{ type: String }],

@@ -18,7 +18,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@easypost/api": "^8.9.0",
     "@tagadapay/node-sdk": "^2.4.0",
     "axios": "^1.18.1",
     "bcryptjs": "^2.4.3",

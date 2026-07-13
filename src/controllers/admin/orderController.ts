@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
-import client from '../../config/easypost';
+import { starshipitService } from '../../services/shipping/starshipit.service';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 
@@ -176,7 +176,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Cannot create shipment for unpaid order', 400));
   }
 
-  if (order.easyPostShipmentId) {
+  if (order.easyPostShipmentId || order.starshipitOrderId) {
     return next(new AppError('Shipment already created for this order', 400));
   }
 
@@ -190,8 +190,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Store shipping origin address not configured in settings', 400));
   }
 
-  if (!process.env.EASYPOST_API_KEY) {
-    return next(new AppError('EASYPOST_API_KEY is not configured', 500));
+  if (!process.env.STARSHIPIT_API_KEY || !process.env.STARSHIPIT_SUBSCRIPTION_KEY) {
+    return next(new AppError('Starshipit API keys are not configured', 500));
   }
 
   // Calculate weight
@@ -214,55 +214,31 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   // Fallback to 500g if no weight could be calculated
   if (totalWeightGrams === 0) totalWeightGrams = 500;
   
-  // Convert to ounces (1 gram = 0.035274 oz)
-  const weightOz = totalWeightGrams * 0.035274;
+  // Convert to Kilograms for Starshipit
+  const weightKg = totalWeightGrams / 1000;
 
   try {
-    // 1. Create Shipment
-    const shipment = await client.Shipment.create({
-      to_address: {
-        name: order.shippingAddressObj.name || (order.customer?.firstName ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() : 'Customer'),
-        company: order.shippingAddressObj.company,
-        street1: order.shippingAddressObj.street1,
-        street2: order.shippingAddressObj.street2,
-        city: order.shippingAddressObj.city,
-        state: order.shippingAddressObj.state,
-        zip: order.shippingAddressObj.zip,
-        country: order.shippingAddressObj.country || 'AU',
-        email: order.customer?.email || order.customerEmail,
-        phone: order.customer?.phone
-      },
-      from_address: {
-        name: settings.shippingOrigin.name || settings.storeName || 'Store',
-        company: settings.shippingOrigin.company,
-        street1: settings.shippingOrigin.street1,
-        street2: settings.shippingOrigin.street2,
-        city: settings.shippingOrigin.city,
-        state: settings.shippingOrigin.state,
-        zip: settings.shippingOrigin.zip,
-        country: settings.shippingOrigin.country || 'AU',
-        phone: settings.shippingOrigin.phone
-      },
-      parcel: {
-        weight: weightOz
-      }
+    // 1. Create Shipment via Service
+    const shippingResult = await starshipitService.createShipment({
+      order,
+      origin: settings.shippingOrigin,
+      weightKg
     });
 
-    if (!shipment.rates || shipment.rates.length === 0) {
-      return next(new AppError('No shipping rates found for this address', 400));
-    }
-
-    // 2. Buy lowest rate
-    const lowestRate = shipment.rates.reduce((lowest, r) => Number(r.rate) < Number(lowest.rate) ? r : lowest, shipment.rates[0]);
-    const boughtShipment = await client.Shipment.buy(shipment.id, lowestRate.id);
-
-    // 3. Update Order
-    order.easyPostShipmentId = boughtShipment.id;
-    order.labelUrl = boughtShipment.postage_label?.label_url;
-    order.trackingNumber = boughtShipment.tracking_code;
-    order.trackingCarrier = lowestRate.carrier;
-    order.status = 'processing';
+    // 2. Update Order
+    order.starshipitOrderId = shippingResult.orderId;
     
+    if (shippingResult.trackingNumber) {
+      order.trackingNumber = shippingResult.trackingNumber;
+    }
+    if (shippingResult.trackingCarrier) {
+      order.trackingCarrier = shippingResult.trackingCarrier;
+    }
+    if (shippingResult.labelUrl) {
+      order.labelUrl = shippingResult.labelUrl;
+    }
+    
+    order.status = 'processing';
     await order.save();
 
     res.status(200).json({
@@ -270,7 +246,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       data: { order },
     });
   } catch (error: any) {
-    console.error('EasyPost Error:', error);
-    return next(new AppError(error.message || 'Failed to create shipment with EasyPost', 500));
+    console.error('Starshipit Error:', error);
+    return next(new AppError(error.message || 'Failed to create shipment with Starshipit', 500));
   }
 });
