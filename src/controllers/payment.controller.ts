@@ -178,7 +178,8 @@ export const createTagadaPayment = catchAsync(
     let session: any;
     try {
       const client = await getTagadaClient();
-      session = await client.checkout.createSession({
+      
+      const sessionPayload: any = {
         storeId: config.tagadaStoreId,
         items: rawItems,
         currency: order.currency || config.tagadaDefaultCurrency,
@@ -188,7 +189,21 @@ export const createTagadaPayment = catchAsync(
         customerEmail: customerEmail || undefined,
         customerFirstName: customerName.split(' ')[0] || undefined,
         customerLastName: customerName.split(' ').slice(1).join(' ') || undefined,
-      });
+        metadata: {
+          order_id: order._id.toString()
+        }
+      };
+
+      // Route ALL users on the DEV server to the test payment flow
+      console.log('[DEBUG] NODE_ENV:', process.env.NODE_ENV);
+      console.log('[DEBUG] TAGADA_TEST_FLOW_ID:', process.env.TAGADA_TEST_FLOW_ID);
+      
+      if (process.env.NODE_ENV !== 'production' && process.env.TAGADA_TEST_FLOW_ID) {
+        sessionPayload.paymentFlowId = process.env.TAGADA_TEST_FLOW_ID;
+        console.log('[DEBUG] Injected paymentFlowId:', sessionPayload.paymentFlowId);
+      }
+
+      session = await client.checkout.createSession(sessionPayload);
     } catch (err: any) {
       console.error('[TagadaPay SDK] createSession error:', err?.response?.data ?? err.message);
       const status = err?.response?.status ?? 502;
@@ -355,14 +370,17 @@ export const tagadaWebhook = async (
   // 4) Find the matching order
   // We explicitly saved our MongoDB _id as the 'cartToken' during createSession
   const mongoOrderId = dAny.cartToken || null;
+  const isValidObjectId = (id: any) => typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+
   const order = await Order.findOne({
     $or: [
-      ...(mongoOrderId ? [{ _id: mongoOrderId }] : []),
+      ...(isValidObjectId(mongoOrderId) ? [{ _id: mongoOrderId }] : []),
       { tagadaPaymentId },
       { tagadaOrderId: dAny.orderId || dAny.order_id },
-      ...(reference ? [{ _id: reference }] : []),
-      ...(payload.metadata?.order_id ? [{ _id: payload.metadata.order_id }] : []),
-    ],
+      ...(isValidObjectId(reference) ? [{ _id: reference }] : []),
+      ...(isValidObjectId(payload.metadata?.order_id) ? [{ _id: payload.metadata.order_id }] : []),
+      ...(isValidObjectId(dAny.metadata?.order_id) ? [{ _id: dAny.metadata.order_id }] : []),
+    ].filter(Boolean),
   });
 
   if (!order) {
