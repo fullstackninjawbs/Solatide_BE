@@ -97,8 +97,5 @@ const collectionSchema = new mongoose.Schema<ICollection>(
     timestamps: true,
   }
 );
-
-collectionSchema.index({ slug: 1 }, { unique: true });
-
 export const Collection = mongoose.model<ICollection>('Collection', collectionSchema);
 export default Collection;

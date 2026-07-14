@@ -56,6 +56,28 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   });
 });
 
+export const getPublicCoas = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  // Fetch active batches that have an approved COA document
+  const filter: any = {
+    status: 'active',
+    coaStatus: 'approved',
+    $or: [
+      { 'coaFile.url': { $exists: true, $ne: null } },
+      { coaUrl: { $exists: true, $ne: null } }
+    ]
+  };
+
+  const batches = await Batch.find(filter)
+    .populate('productId', 'name slug')
+    .sort('-createdAt');
+
+  res.status(200).json({
+    success: true,
+    results: batches.length,
+    data: { batches }
+  });
+});
+
 export const proxyCoa = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') {

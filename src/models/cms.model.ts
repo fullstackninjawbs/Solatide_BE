@@ -152,10 +152,6 @@ const researchLibraryEntrySchema = new mongoose.Schema<IResearchLibraryEntry>(
   }
 );
 
-faqSectionSchema.index({ name: 1 });
-staticPageSchema.index({ slug: 1 }, { unique: true });
-researchLibraryEntrySchema.index({ slug: 1 }, { unique: true });
-
 export const FaqSection = mongoose.model<IFaqSection>('FaqSection', faqSectionSchema);
 export const StaticPage = mongoose.model<IStaticPage>('StaticPage', staticPageSchema);
 export const ResearchLibraryEntry = mongoose.model<IResearchLibraryEntry>('ResearchLibraryEntry', researchLibraryEntrySchema);

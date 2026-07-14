@@ -240,7 +240,6 @@ const orderSchema = new mongoose.Schema<IOrder>(
 );
 
 // Indexes for fast admin queries
-orderSchema.index({ orderNumber: 1 });
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ fulfilmentStatus: 1 });
 orderSchema.index({ status: 1 });

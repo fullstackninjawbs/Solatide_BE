@@ -3,6 +3,10 @@ import * as analyticsController from '../../controllers/admin/analyticsControlle
 
 const router = express.Router();
 
-router.get('/', analyticsController.getPlaceholder);
+router.get('/orders/summary', analyticsController.getSummary);
+router.get('/orders/by-day', analyticsController.getOrdersByDay);
+router.get('/orders/by-status', analyticsController.getOrdersByStatus);
+router.get('/revenue/by-product', analyticsController.getRevenueByProduct);
+router.get('/customers/top', analyticsController.getTopCustomers);
 
 export default router;

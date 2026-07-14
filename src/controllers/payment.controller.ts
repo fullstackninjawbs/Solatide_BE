@@ -178,14 +178,21 @@ export const createTagadaPayment = catchAsync(
     let session: any;
     try {
       const client = await getTagadaClient();
-      
+
+      let checkoutUrl = config.tagadaCheckoutUrl;
+      if (process.env.NODE_ENV !== 'production' && process.env.TAGADA_TEST_CHECKOUT_URL) {
+        checkoutUrl = process.env.TAGADA_TEST_CHECKOUT_URL;
+        console.log('[DEBUG] Using Test Checkout URL:', checkoutUrl);
+      }
+
       const sessionPayload: any = {
         storeId: config.tagadaStoreId,
         items: rawItems,
         currency: order.currency || config.tagadaDefaultCurrency,
         returnUrl,
         cartToken: order._id.toString(),
-        checkoutUrl: config.tagadaCheckoutUrl || undefined,
+        externalOrderId: order._id.toString(),
+        checkoutUrl: checkoutUrl || undefined,
         customerEmail: customerEmail || undefined,
         customerFirstName: customerName.split(' ')[0] || undefined,
         customerLastName: customerName.split(' ').slice(1).join(' ') || undefined,
@@ -193,15 +200,6 @@ export const createTagadaPayment = catchAsync(
           order_id: order._id.toString()
         }
       };
-
-      // Route ALL users on the DEV server to the test payment flow
-      console.log('[DEBUG] NODE_ENV:', process.env.NODE_ENV);
-      console.log('[DEBUG] TAGADA_TEST_FLOW_ID:', process.env.TAGADA_TEST_FLOW_ID);
-      
-      if (process.env.NODE_ENV !== 'production' && process.env.TAGADA_TEST_FLOW_ID) {
-        sessionPayload.paymentFlowId = process.env.TAGADA_TEST_FLOW_ID;
-        console.log('[DEBUG] Injected paymentFlowId:', sessionPayload.paymentFlowId);
-      }
 
       session = await client.checkout.createSession(sessionPayload);
     } catch (err: any) {
@@ -369,7 +367,7 @@ export const tagadaWebhook = async (
 
   // 4) Find the matching order
   // We explicitly saved our MongoDB _id as the 'cartToken' during createSession
-  const mongoOrderId = dAny.cartToken || null;
+  const mongoOrderId = dAny.cartToken || dAny.externalOrderId || null;
   const isValidObjectId = (id: any) => typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
 
   const order = await Order.findOne({
@@ -506,7 +504,7 @@ export const tagadaWebhook = async (
         let unitPrice = item.unitAmount ? (item.unitAmount / 100) : fallbackPrice;
         const qty = item.quantity || 1;
         const imageUrl = item.orderLineItemVariant?.imageUrl ?? item.imageUrl ?? item.image_url ?? undefined;
-        
+
         return {
           title,
           variantTitle,
@@ -521,7 +519,7 @@ export const tagadaWebhook = async (
 
     // ── Totals ─────────────────────────────────────────────────────────────────
     const summary = fullOrder.summaries?.[0] || {};
-    
+
     // Subtotal
     if (summary.subtotalAmount !== undefined) order.subtotal = summary.subtotalAmount / 100;
     else if (fullOrder.subtotalAmount !== undefined) order.subtotal = Number(fullOrder.subtotalAmount);
@@ -542,7 +540,7 @@ export const tagadaWebhook = async (
     if (summary.totalPromotionAmount !== undefined) discountAmt = summary.totalPromotionAmount / 100;
     else if (fullOrder.totalPromotionAmount !== undefined) discountAmt = Number(fullOrder.totalPromotionAmount) / 100;
     else if (fullOrder.discount_price !== undefined) discountAmt = Number(fullOrder.discount_price);
-    
+
     if (discountAmt > 0) {
       order.discountAmount = discountAmt;
       // Try to find the coupon code
@@ -601,7 +599,7 @@ export const tagadaWebhook = async (
     console.log(
       `[TagadaPay] Order ${order._id} PAID → orderNumber=${order.orderNumber}, status=processing`
     );
-    
+
     if (!wasAlreadyPaid) {
       try {
         await sendOrderConfirmationEmail(order);
@@ -615,11 +613,11 @@ export const tagadaWebhook = async (
         try {
           const customerName = order.customerName || (order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : 'Unknown Customer');
           const customerCountry = order.shippingAddressObj?.country || order.billingAddressObj?.country || '';
-          
+
           await Customer.findOneAndUpdate(
             { email: order.customerEmail },
-            { 
-              $set: { 
+            {
+              $set: {
                 name: customerName,
                 country: customerCountry,
               },
