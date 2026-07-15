@@ -70,6 +70,7 @@ export class StarshipitService {
     // 2. Call Starshipit API
     try {
       const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, { headers: this.headers });
+      console.log('Starshipit Orders Response:', JSON.stringify(response.data, null, 2));
       
       const starshipitOrder = response.data?.order;
       if (!starshipitOrder || !starshipitOrder.order_id) {
@@ -90,6 +91,7 @@ export class StarshipitService {
         const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, { 
           order_id: starshipitOrder.order_id 
         }, { headers: this.headers });
+        console.log('Starshipit Label Response:', JSON.stringify(labelResponse.data, null, 2));
         
         // The response structure varies, but usually contains order details with tracking
         const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];
@@ -117,6 +119,51 @@ export class StarshipitService {
     } catch (error: any) {
       console.error('Starshipit API Error:', error.response?.data || error.message);
       throw new Error(error.response?.data?.message || 'Failed to create shipment with Starshipit');
+    }
+  }
+
+  public async getShipmentDetails(orderId: string): Promise<{
+    trackingNumber?: string;
+    trackingCarrier?: string;
+    labelUrl?: string;
+    shipmentStatus?: string;
+    trackingUrl?: string;
+  }> {
+    try {
+      const response = await axios.get(`${this.baseUrl}/orders?order_id=${orderId}`, { headers: this.headers });
+      console.log('Starshipit GetShipmentDetails Response:', JSON.stringify(response.data, null, 2));
+      const order = response.data?.order || (response.data?.orders && response.data.orders[0]);
+      
+      if (!order) {
+        throw new Error('Order not found in Starshipit');
+      }
+
+      let trackingNumber = order.tracking_number || '';
+      let trackingCarrier = order.carrier || '';
+      let labelUrl = order.label_url || order.pdf_url || '';
+      let trackingUrl = order.tracking_url || '';
+      let shipmentStatus = order.status || '';
+
+      if (order.packages && order.packages.length > 0) {
+        const pkg = order.packages[0];
+        trackingNumber = trackingNumber || pkg.tracking_number || '';
+        trackingUrl = trackingUrl || pkg.tracking_url || '';
+        
+        if (pkg.labels && pkg.labels.length > 0) {
+          labelUrl = labelUrl || pkg.labels[0].label_url || '';
+        }
+      }
+
+      return {
+        trackingNumber,
+        trackingCarrier,
+        labelUrl,
+        trackingUrl,
+        shipmentStatus
+      };
+    } catch (error: any) {
+      console.error('Starshipit Get Shipment Details Error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to fetch shipment details from Starshipit');
     }
   }
 }

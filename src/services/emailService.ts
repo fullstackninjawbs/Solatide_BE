@@ -245,3 +245,95 @@ export const sendOrderConfirmationEmail = async (order: any) => {
   }
 };
 
+export const sendShipmentConfirmationEmail = async (order: any) => {
+  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+  const orderUrl = `${clientUrl}/order/${order._id}`;
+  const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
+  
+  const customerName = order.customer?.firstName 
+    ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() 
+    : (order.customerName || 'Customer');
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Your order has been shipped</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px 0; }
+        .content { background-color: #ffffff; padding: 40px; border-radius: 0; }
+        h2 { color: #333; font-size: 24px; font-weight: 400; margin: 0 0 10px 0; }
+        p { color: #555; font-size: 15px; line-height: 1.5; margin: 0 0 20px 0; }
+        .button { background-color: #00bfef; color: #ffffff !important; text-decoration: none; padding: 15px 25px; border-radius: 4px; font-weight: 500; font-size: 15px; display: inline-block; margin-right: 10px; }
+        .button-secondary { background-color: #f5f5f5; color: #333 !important; text-decoration: none; padding: 15px 25px; border-radius: 4px; font-weight: 500; font-size: 15px; display: inline-block; border: 1px solid #ddd; }
+        .details-box { margin-top: 30px; border: 1px solid #e5e5e5; border-radius: 8px; overflow: hidden; padding: 20px; }
+        .detail-row { margin-bottom: 10px; }
+        .detail-label { color: #737373; font-size: 13px; display: inline-block; width: 120px; }
+        .detail-value { color: #333; font-size: 14px; font-weight: 500; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div style="padding: 20px 40px;">
+          <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 35px;" />
+          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER ${order.orderNumber}</span>
+        </div>
+        
+        <div class="content">
+          <h2>Your order is on the way!</h2>
+          <p>Hi ${customerName},</p>
+          <p>Great news! Your order <strong>${order.orderNumber}</strong> has been shipped and is currently on its way to you.</p>
+          <p>It can take up to 24 hours for tracking information to become available.</p>
+          
+          <div style="margin-top: 30px; margin-bottom: 30px;">
+            ${order.trackingUrl ? `<a href="${order.trackingUrl}" class="button">Track Shipment</a>` : ''}
+            <a href="${orderUrl}" class="button-secondary">View Order</a>
+          </div>
+          
+          <div class="details-box">
+            <div class="detail-row">
+              <span class="detail-label">Carrier:</span>
+              <span class="detail-value">${order.trackingCarrier || 'Standard Shipping'}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tracking Number:</span>
+              <span class="detail-value">${order.trackingNumber || 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div style="text-align: center; color: #999; font-size: 12px; margin-top: 30px;">
+          If you have any questions, reply to this email or contact us at <a href="mailto:support@solatide.com" style="color: #00bfef;">support@solatide.com</a>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const fromName = process.env.SMTP_FROM_NAME || 'Solatide Biosciences';
+  const fromEmail = process.env.SMTP_FROM_EMAIL || 'noreply@solatide.com';
+  const customerEmail = order.customerEmail || order.customer?.email;
+
+  if (!customerEmail) {
+    console.error('No customer email found for shipment confirmation:', order.orderNumber);
+    return;
+  }
+
+  const mailOptions = {
+    from: `${fromName} <${fromEmail}>`,
+    to: customerEmail,
+    subject: `Your order ${order.orderNumber} has been shipped`,
+    html,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Shipment confirmation email sent: %s', info.messageId);
+  } catch (error) {
+    console.error('Error sending shipment confirmation email:', error);
+    throw error;
+  }
+};

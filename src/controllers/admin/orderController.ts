@@ -3,6 +3,7 @@ import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
+import { sendShipmentConfirmationEmail } from '../../services/emailService';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 
@@ -225,21 +226,56 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       weightKg
     });
 
+    let { trackingNumber, trackingCarrier, labelUrl } = shippingResult;
+    let shipmentStatus = 'Label Generated';
+    let trackingUrl = '';
+
+    if (!trackingNumber || !labelUrl) {
+      try {
+        let details = await starshipitService.getShipmentDetails(shippingResult.orderId);
+        // Retry once if we still lack both
+        if (!details.trackingNumber && !details.labelUrl) {
+          details = await starshipitService.getShipmentDetails(shippingResult.orderId);
+        }
+        trackingNumber = trackingNumber || details.trackingNumber;
+        trackingCarrier = trackingCarrier || details.trackingCarrier;
+        labelUrl = labelUrl || details.labelUrl;
+        trackingUrl = trackingUrl || details.trackingUrl || '';
+        if (details.shipmentStatus) shipmentStatus = details.shipmentStatus;
+      } catch (detailsError: any) {
+        console.warn('Failed to fetch shipment details, saving orderId only:', detailsError.message);
+      }
+    }
+
+    if (!trackingUrl && trackingCarrier && trackingNumber) {
+      const carrierLower = trackingCarrier.toLowerCase();
+      if (carrierLower.includes('australia post') || carrierLower.includes('auspost') || carrierLower.includes('mypost')) {
+        trackingUrl = `https://auspost.com.au/mypost/track/#/details/${trackingNumber}`;
+      } else {
+        trackingUrl = `https://www.google.com/search?q=${trackingNumber}`;
+      }
+    }
+
     // 2. Update Order
     order.starshipitOrderId = shippingResult.orderId;
+    if (trackingNumber) order.trackingNumber = trackingNumber;
+    if (trackingCarrier) order.trackingCarrier = trackingCarrier;
+    if (labelUrl) order.labelUrl = labelUrl;
+    if (trackingUrl) order.trackingUrl = trackingUrl;
+    order.shipmentStatus = shipmentStatus;
     
-    if (shippingResult.trackingNumber) {
-      order.trackingNumber = shippingResult.trackingNumber;
-    }
-    if (shippingResult.trackingCarrier) {
-      order.trackingCarrier = shippingResult.trackingCarrier;
-    }
-    if (shippingResult.labelUrl) {
-      order.labelUrl = shippingResult.labelUrl;
+    if (trackingNumber) {
+      order.status = 'shipped';
+      order.shippedAt = new Date();
+    } else {
+      order.status = 'processing';
     }
     
-    order.status = 'processing';
     await order.save();
+
+    if (order.trackingNumber) {
+      sendShipmentConfirmationEmail(order).catch(err => console.error('Failed to send shipment email:', err));
+    }
 
     res.status(200).json({
       success: true,

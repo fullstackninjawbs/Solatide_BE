@@ -96,6 +96,9 @@ export interface IOrder extends mongoose.Document {
   trackingNumber?: string;
   trackingCarrier?: string;
   labelUrl?: string;
+  trackingUrl?: string;
+  shipmentStatus?: string;
+  shippedAt?: Date;
   /** @deprecated EasyPost is being replaced by Starshipit */
   easyPostShipmentId?: string;
   starshipitOrderId?: string;
@@ -225,6 +228,9 @@ const orderSchema = new mongoose.Schema<IOrder>(
     trackingNumber: { type: String },
     trackingCarrier: { type: String },
     labelUrl: { type: String },
+    trackingUrl: { type: String },
+    shipmentStatus: { type: String },
+    shippedAt: { type: Date },
     easyPostShipmentId: { type: String },
     starshipitOrderId: { type: String },
 
