@@ -13,6 +13,7 @@ import contentRoutes from './content.routes';
 import growthRoutes from './growth.routes';
 import analyticsRoutes from './analytics.routes';
 import settingsRoutes from './settings.routes';
+import userRoutes from './user.routes';
 
 const router = express.Router();
 
@@ -30,5 +31,6 @@ router.use('/content', contentRoutes);
 router.use('/growth', growthRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/settings', settingsRoutes);
+router.use('/users', userRoutes);
 
 export default router;

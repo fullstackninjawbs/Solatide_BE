@@ -1,6 +1,6 @@
 import express from 'express';
 import { protect } from '../../middleware/auth';
-import { getOrders, getOrderById, updateOrderStatus, updateOrder, createShipment } from '../../controllers/admin/orderController';
+import { getOrders, getOrderById, updateOrderStatus, updateOrder, createShipment, refundOrder } from '../../controllers/admin/orderController';
 
 const router = express.Router();
 
@@ -18,6 +18,9 @@ router.patch('/:id', updateOrder);
 
 // PATCH /api/admin/orders/:id/status   — update status / fulfilmentStatus / adminNotes
 router.patch('/:id/status', updateOrderStatus);
+
+// POST /api/admin/orders/:id/refund      — process refund
+router.post('/:id/refund', refundOrder);
 
 // POST /api/admin/orders/:id/shipment — create shipment
 router.post('/:id/shipment', createShipment);
