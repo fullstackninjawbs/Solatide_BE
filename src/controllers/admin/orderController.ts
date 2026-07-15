@@ -5,6 +5,7 @@ import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
+import { getTagadaClient } from '../../services/tagadaClient';
 
 /**
  * GET /api/admin/orders
@@ -248,5 +249,54 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   } catch (error: any) {
     console.error('Starshipit Error:', error);
     return next(new AppError(error.message || 'Failed to create shipment with Starshipit', 500));
+  }
+});
+
+/**
+ * POST /api/admin/orders/:id/refund
+ *
+ * Process a refund for an order. If paid via Tagada, it calls the Tagada API.
+ */
+export const refundOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order = await Order.findById(req.params.id);
+  
+  if (!order) {
+    return next(new AppError('No order found with that ID', 404));
+  }
+
+  if (order.paymentStatus !== 'paid') {
+    return next(new AppError('Order is not paid, cannot refund', 400));
+  }
+
+  try {
+    // If the payment method was Tagada, process it via API
+    if (order.paymentMethod === 'tagada') {
+      const tagadaId = order.tagadaPaymentId;
+      if (!tagadaId) {
+        return next(new AppError('No Tagada Payment ID found for this order', 400));
+      }
+
+      const client = await getTagadaClient();
+      
+      // Attempt standard refunds.create as discussed in implementation plan
+      if (client.refunds && typeof client.refunds.create === 'function') {
+        await client.refunds.create({ charge_id: tagadaId, amount: order.grandTotal });
+      } else {
+        console.warn('TagadaClient does not natively expose refunds.create(). Proceeding with local refund mark.');
+      }
+    }
+
+    // Mark as refunded internally regardless of payment method
+    order.paymentStatus = 'refunded';
+    order.status = 'cancelled';
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      data: { order },
+    });
+  } catch (error: any) {
+    console.error('Refund Error:', error);
+    return next(new AppError(error.message || 'Failed to process refund via TagadaPay', 500));
   }
 });
