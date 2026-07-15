@@ -79,6 +79,11 @@ export const updateAdminUser = catchAsync(async (req: AuthenticatedRequest, res:
     return next(new AppError('User not found', 404));
   }
 
+  // Prevent admin from modifying super_admin
+  if (req.user?.role !== 'super_admin' && userToUpdate.role === 'super_admin') {
+    return next(new AppError('Admins cannot modify a super_admin account', 403));
+  }
+
   if (email && email !== userToUpdate.email) {
     const existing = await User.findOne({ email });
     if (existing) {
@@ -128,6 +133,11 @@ export const deleteAdminUser = catchAsync(async (req: AuthenticatedRequest, res:
   }
 
   if (userToDelete.role === 'super_admin') {
+    // Prevent admin from deleting super_admin
+    if (req.user?.role !== 'super_admin') {
+      return next(new AppError('Admins cannot delete a super_admin account', 403));
+    }
+
     // Check if it's the last super_admin
     const superAdminCount = await User.countDocuments({ role: 'super_admin' });
     if (superAdminCount <= 1) {
