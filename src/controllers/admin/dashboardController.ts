@@ -106,65 +106,6 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
     { name: 'New Customers', value: currentCustomers.toString(), change: calculateChange(currentCustomers, prevCustomers), id: 'customers' }
   ];
 
-  // Actionable Tasks
-  const tasksList: any[] = [];
-
-  // Pending manual orders
-  const pendingOrders = await Order.find({ paymentStatus: 'pending' })
-    .select('orderNumber tagadaOrderId customer customerName customerEmail totalAmount currency createdAt')
-    .limit(5);
-    
-  pendingOrders.forEach(order => {
-    const hours = Math.floor((now.getTime() - order.createdAt.getTime()) / (1000 * 60 * 60));
-    const identifier = order.orderNumber || order.tagadaOrderId || order._id.toString().substring(0,8).toUpperCase();
-    
-    // Attempt to get customer name
-    let custName = order.customerName || '';
-    if (!custName && order.customer?.firstName) {
-      custName = `${order.customer.firstName} ${order.customer.lastName || ''}`.trim();
-    }
-    if (!custName) custName = order.customerEmail || 'a customer';
-
-    const amount = order.totalAmount ? `(${order.currency || 'AUD'} ${order.totalAmount}) ` : '';
-
-    tasksList.push({
-      id: `order_${order._id}`,
-      type: 'order',
-      message: `Order #${identifier} ${amount}from ${custName} awaiting payment confirmation`,
-      time: hours > 0 ? `${hours} hours ago` : 'Just now',
-      severity: 'warning',
-      link: `/admin/orders/${order._id}`
-    });
-  });
-
-  // Pending COA
-  const pendingCOAs = await COA.find({ status: 'pending' }).select('batchReference createdAt').limit(5);
-  pendingCOAs.forEach(coa => {
-    tasksList.push({
-      id: `coa_${coa._id}`,
-      type: 'coa',
-      message: `Pending COA review for batch ${coa.batchReference}`,
-      time: 'Action required',
-      severity: 'info',
-      link: '/admin/coas'
-    });
-  });
-
-  // Pending Reviews
-  const pendingReviews = await Review.find({ status: 'pending' }).populate('product', 'name').limit(5);
-  pendingReviews.forEach(review => {
-    // @ts-ignore
-    const prodName = review.product?.name || 'product';
-    tasksList.push({
-      id: `review_${review._id}`,
-      type: 'review',
-      message: `New review pending approval for ${prodName}`,
-      time: 'Action required',
-      severity: 'info',
-      link: '/admin/reviews'
-    });
-  });
-
   // Low Stock
   // Use product.stockQuantity, if variants exists we could also check, but for now we'll check base product stockQuantity vs lowStockThreshold
   const lowStockThreshold = 5; // Default if not set on product
@@ -181,34 +122,26 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
     limit: p.lowStockThreshold || lowStockThreshold
   }));
 
-  products.forEach(p => {
-    if (p.stockQuantity <= 0) {
-      tasksList.push({
-        id: `stock_${p._id}`,
-        type: 'stock',
-        message: `${p.name} is out of stock`,
-        time: 'Critical',
-        severity: 'danger',
-        link: `/admin/products/${p._id}`
-      });
-    } else if (p.stockQuantity <= (p.lowStockThreshold || lowStockThreshold)) {
-      tasksList.push({
-        id: `stock_${p._id}`,
-        type: 'stock',
-        message: `${p.name} is running low on stock (${p.stockQuantity} left)`,
-        time: 'Warning',
-        severity: 'warning',
-        link: `/admin/products/${p._id}`
-      });
-    }
-  });
+  // Recent Orders
+  const recentOrders = await Order.find()
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .populate('customer', 'name email')
+    .select('orderNumber createdAt totalAmount currency status paymentStatus customer customerName customerEmail');
+
+  // Recent Customers
+  const recentCustomers = await Customer.find()
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .select('name email createdAt orderCount');
 
   res.json({
     success: true,
     data: {
       stats,
-      tasksList,
-      lowStockProducts
+      lowStockProducts,
+      recentOrders,
+      recentCustomers
     }
   });
 });
