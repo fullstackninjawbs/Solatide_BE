@@ -60,7 +60,6 @@ export const getPublicCoas = catchAsync(async (req: Request, res: Response, next
   // Fetch active batches that have an approved COA document
   const filter: any = {
     status: 'active',
-    coaStatus: 'approved',
     $or: [
       { 'coaFile.url': { $exists: true, $ne: null } },
       { coaUrl: { $exists: true, $ne: null } }
