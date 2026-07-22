@@ -620,6 +620,7 @@ export const tagadaWebhook = catchAsync(async (
               $set: {
                 name: customerName,
                 country: customerCountry,
+                defaultAddress: order.shippingAddressObj || undefined,
               },
               $inc: {
                 orderCount: 1,

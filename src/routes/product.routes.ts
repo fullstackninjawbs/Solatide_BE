@@ -8,6 +8,7 @@ import {
   deleteProduct,
   deleteAllProducts,
   uploadProductImage,
+  getPublicCollections,
 } from '../controllers/product.controller';
 import {
   importProductsPreview,
@@ -26,6 +27,7 @@ const upload = multer({
 });
 
 // Public Routes
+router.get('/collections', getPublicCollections);
 router.get('/', getAllProducts);
 router.get('/:id', getProductById);
 

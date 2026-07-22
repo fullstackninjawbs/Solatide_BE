@@ -4,6 +4,7 @@ import Collection from '../models/collection.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { uploadImageBuffer } from '../utils/cloudinary';
+import { buildQueryFromRules } from '../utils/collectionUtils';
 
 const slugify = (name: string): string =>
   name
@@ -13,6 +14,18 @@ const slugify = (name: string): string =>
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+
+export const getPublicCollections = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const collections = await Collection.find({ status: 'active' })
+    .sort({ sortOrder: 1, createdAt: -1 })
+    .select('name slug description bannerImage');
+  
+  res.status(200).json({
+    success: true,
+    results: collections.length,
+    data: collections,
+  });
+});
 
 
 export const getAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -40,11 +53,33 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
     queryObj.tags = { $in: [req.query.tag] };
   }
 
-  // 5) Collection filter — find product IDs in that collection
+  // 5) Collection filter — find product IDs in that collection or build query if automated
   if (req.query.collection) {
-    const col = await Collection.findById(req.query.collection).select('products');
-    if (col && col.products) {
-      queryObj._id = { $in: col.products };
+    const colSlugOrId = req.query.collection as string;
+    let col;
+    if (colSlugOrId.match(/^[0-9a-fA-F]{24}$/)) {
+        col = await Collection.findById(colSlugOrId).select('products type rules ruleRelation');
+    } else {
+        col = await Collection.findOne({ slug: colSlugOrId }).select('products type rules ruleRelation');
+    }
+    
+    if (col) {
+      if (col.type === 'automated') {
+         const ruleQuery = buildQueryFromRules(col.rules, col.ruleRelation);
+         Object.assign(queryObj, ruleQuery);
+      } else {
+         if (col.products && col.products.length > 0) {
+           // Instead of assigning to _id directly which might override existing,
+           // we should merge with $in if needed, or simply assign if not present
+           queryObj._id = { ...queryObj._id, $in: col.products };
+         } else {
+           // Collection has no products, return empty results
+           queryObj._id = { $in: [] };
+         }
+      }
+    } else {
+      // Collection not found, return empty results
+      queryObj._id = { $in: [] };
     }
   }
 
