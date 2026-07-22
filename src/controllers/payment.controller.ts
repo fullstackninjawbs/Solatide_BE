@@ -272,7 +272,7 @@ async function generateOrderNumber(): Promise<string> {
  * Register it in server.ts BEFORE the global express.json() middleware,
  * or use express.raw() on this route specifically.
  */
-export const tagadaWebhook = async (
+export const tagadaWebhook = catchAsync(async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -646,11 +646,19 @@ export const tagadaWebhook = async (
     // TODO: Trigger refund confirmation email
   }
 
-  await order.save({ validateBeforeSave: false });
+  try {
+    await order.save({ validateBeforeSave: false });
+  } catch (err: any) {
+    if (err.name === 'VersionError') {
+      console.warn(`[TagadaPay Webhook] Version conflict for order ${order._id}. Ignored as another webhook likely processed it.`);
+    } else {
+      throw err; // Let catchAsync handle it and send a 500 so Tagada retries
+    }
+  }
 
   // Always respond 200 to prevent Tagada from retrying
   res.status(200).json({ received: true });
-};
+});
 
 // ─── 3. Test TagadaPay Connection ─────────────────────────────────────────────
 

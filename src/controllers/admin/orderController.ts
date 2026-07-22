@@ -139,24 +139,24 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
  */
 export const updateOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { tags, comments, shippingAddressObj, billingAddressObj, adminNotes } = req.body;
-  
+
   const updateFields: Record<string, any> = {};
   if (tags !== undefined) updateFields.tags = tags;
   if (comments !== undefined) updateFields.comments = comments;
   if (shippingAddressObj !== undefined) updateFields.shippingAddressObj = shippingAddressObj;
   if (billingAddressObj !== undefined) updateFields.billingAddressObj = billingAddressObj;
   if (adminNotes !== undefined) updateFields.adminNotes = adminNotes;
-  
+
   const order = await Order.findByIdAndUpdate(
     req.params.id,
     { $set: updateFields },
     { new: true, runValidators: true }
   ).lean();
-  
+
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
   }
-  
+
   res.status(200).json({
     success: true,
     data: { order },
@@ -215,7 +215,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
 
   // Fallback to 500g if no weight could be calculated
   if (totalWeightGrams === 0) totalWeightGrams = 500;
-  
+
   // Convert to Kilograms for Starshipit
   const weightKg = totalWeightGrams / 1000;
 
@@ -264,14 +264,14 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     if (labelUrl) order.labelUrl = labelUrl;
     if (trackingUrl) order.trackingUrl = trackingUrl;
     order.shipmentStatus = shipmentStatus;
-    
+
     if (trackingNumber) {
       order.status = 'shipped';
       order.shippedAt = new Date();
     } else {
       order.status = 'processing';
     }
-    
+
     await order.save();
 
     if (order.trackingNumber) {
@@ -295,7 +295,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
  */
 export const refundOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const order = await Order.findById(req.params.id);
-  
+
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
   }
@@ -313,7 +313,7 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
       }
 
       const client = await getTagadaClient();
-      
+
       // Attempt standard refunds.create as discussed in implementation plan
       if (client.refunds && typeof client.refunds.create === 'function') {
         await client.refunds.create({ charge_id: tagadaId, amount: order.grandTotal });
