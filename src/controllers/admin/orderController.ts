@@ -65,8 +65,17 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
     results: orders.length,
     total,
     page: pageNum,
+    limit: limitNum,
     pages: Math.ceil(total / limitNum),
-    data: { orders },
+    data: {
+      orders,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum)
+      }
+    },
   });
 });
 

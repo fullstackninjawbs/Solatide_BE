@@ -29,6 +29,10 @@ export const getCustomers = catchAsync(async (req: Request, res: Response, next:
 
   res.status(200).json({
     success: true,
+    total,
+    page,
+    limit,
+    pages: Math.ceil(total / limit),
     data: {
       customers,
       pagination: {

@@ -116,13 +116,14 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
     query = query.sort({ rating: -1 });
   }
 
-  // 8) Limit
-  if (req.query.limit) {
-    const limit = parseInt(req.query.limit as string, 10);
-    if (!isNaN(limit)) {
-      query = query.limit(limit);
-    }
-  }
+  // 8) Pagination & Limit
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 50;
+  const skip = (page - 1) * limit;
+
+  const total = await Product.countDocuments(queryObj);
+
+  query = query.skip(skip).limit(limit);
 
   query = query.populate('reviews');
   const productsResult = await query;
@@ -146,7 +147,18 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   res.status(200).json({
     success: true,
     results: products.length,
-    data: { products },
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+    data: {
+      products,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    },
   });
 });
 

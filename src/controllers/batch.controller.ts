@@ -47,12 +47,46 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   if (req.query.coaStatus) filter.coaStatus = req.query.coaStatus;
   if (req.query.productId) filter.productId = req.query.productId;
 
-  const batches = await Batch.find(filter).populate('productId', 'name slug').sort('-createdAt');
+  if (req.query.search) {
+    const searchRegex = new RegExp(req.query.search as string, 'i');
+    const matchedProducts = await Product.find({ name: searchRegex }).select('_id');
+    const matchedProductIds = matchedProducts.map(p => p._id);
+
+    filter.$or = [
+      { batchId: searchRegex },
+      { displayName: searchRegex },
+      { productId: { $in: matchedProductIds } }
+    ];
+  }
+
+  // Pagination params
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 50;
+  const skip = (page - 1) * limit;
+
+  const total = await Batch.countDocuments(filter);
+  const batches = await Batch.find(filter)
+    .populate('productId', 'name slug')
+    .sort('-createdAt')
+    .skip(skip)
+    .limit(limit);
 
   res.status(200).json({
     success: true,
     results: batches.length,
-    data: { batches }
+    total,
+    page,
+    limit,
+    pages: Math.ceil(total / limit),
+    data: {
+      batches,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    }
   });
 });
 
