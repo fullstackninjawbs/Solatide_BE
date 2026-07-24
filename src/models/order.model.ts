@@ -87,10 +87,11 @@ export interface IOrder extends mongoose.Document {
   fulfilmentStatus: 'unfulfilled' | 'fulfilled' | 'partial';
   paymentMethod?: 'tagada' | 'payid' | 'bank_transfer';
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
-
-  // ── TagadaPay ────────────────────────────────────────────────────────────────
   tagadaPaymentId?: string;
   tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded' | 'succeeded';
+  tagadaEnv?: 'sandbox' | 'prod';
+  refundedAmount: number;
+  refundStatus: 'none' | 'initiated' | 'partially_refunded' | 'refunded';
 
   // ── Shipping Providers ────────────────────────────────────────────────────────
   trackingNumber?: string;
@@ -222,6 +223,20 @@ const orderSchema = new mongoose.Schema<IOrder>(
     tagadaPaymentStatus: {
       type: String,
       enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'succeeded'],
+    },
+    tagadaEnv: {
+      type: String,
+      enum: ['sandbox', 'prod'],
+      default: 'sandbox'
+    },
+    refundedAmount: {
+      type: Number,
+      default: 0
+    },
+    refundStatus: {
+      type: String,
+      enum: ['none', 'initiated', 'partially_refunded', 'refunded'],
+      default: 'none'
     },
 
     // ── Shipping Providers ────────────────────────────────────────────────────────

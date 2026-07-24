@@ -17,6 +17,7 @@ import { tagadaClient, getTagadaClient } from '../services/tagadaClient';
 import Order from '../models/order.model';
 import Customer from '../models/Customer';
 import PaymentSettings from '../models/PaymentSettings';
+import Refund from '../models/Refund';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
@@ -101,6 +102,7 @@ function mapTagadaStatus(tagadaStatus: string): 'pending' | 'paid' | 'failed' | 
     case 'paid':
     case 'authorized':
     case 'captured':
+    case 'partially_refunded':
       return 'paid';
     case 'failed':
     case 'declined':
@@ -213,6 +215,7 @@ export const createTagadaPayment = catchAsync(
     // 6) Persist Tagada session id on the order
     order.tagadaPaymentId = session.id ?? session.redirectUrl ?? 'unknown';
     order.tagadaPaymentStatus = 'initiated';
+    order.tagadaEnv = config.tagadaEnv;
     order.paymentMethod = 'tagada';
     // paymentStatus stays 'pending' — webhook will flip it to 'paid'
     await order.save({ validateBeforeSave: false });
@@ -642,9 +645,44 @@ export const tagadaWebhook = catchAsync(async (
     // TODO: Release reserved stock
   }
 
-  if (newPaymentStatus === 'refunded') {
-    console.log(`[TagadaPay] Order ${order._id} REFUNDED`);
-    // TODO: Trigger refund confirmation email
+  if (newPaymentStatus === 'refunded' || eventType === 'payment/partially_refunded' || eventType.includes('refund')) {
+    console.log(`[TagadaPay] Order ${order._id} REFUND EVENT (${eventType})`);
+    
+    // We assume Tagada webhook provides the refunded amount in `payload.data.amount_refunded` or similar.
+    // If not, we will rely on what was initiated.
+    const refundedAmount = dAny.amount_refunded || dAny.refundedAmount || dAny.amount || 0;
+    
+    // Update the pending Refund record (if any exists for this order)
+    try {
+      const pendingRefund = await Refund.findOne({ order: order._id, status: 'pending' });
+      if (pendingRefund) {
+        pendingRefund.status = 'succeeded';
+        // Tagada's refund ID might be in the payload
+        pendingRefund.tagadaRefundId = dAny.id || dAny.refund_id || pendingRefund.tagadaRefundId;
+        await pendingRefund.save();
+      } else {
+        // If no pending refund is found, it means the refund was initiated directly from Tagada Dashboard
+        await Refund.create({
+          order: order._id,
+          amount: refundedAmount,
+          reason: 'Initiated from Tagada Dashboard',
+          type: newPaymentStatus === 'refunded' ? 'full' : 'partial',
+          status: 'succeeded',
+          tagadaRefundId: dAny.id || dAny.refund_id
+        });
+      }
+    } catch (err) {
+      console.error('[TagadaPay Webhook] Failed to update Refund record:', err);
+    }
+
+    if (newPaymentStatus === 'refunded') {
+      order.refundStatus = 'refunded';
+      order.refundedAmount = order.grandTotal || refundedAmount;
+    } else {
+      order.refundStatus = 'partially_refunded';
+      // accumulate the refunded amount
+      order.refundedAmount = (order.refundedAmount || 0) + refundedAmount;
+    }
   }
 
   try {

@@ -7,6 +7,8 @@ import { sendShipmentConfirmationEmail } from '../../services/emailService';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
+import config from '../../config';
+import Refund from '../../models/Refund';
 
 /**
  * GET /api/admin/orders
@@ -309,9 +311,29 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
     return next(new AppError('No order found with that ID', 404));
   }
 
-  if (order.paymentStatus !== 'paid') {
+  // 1. Test Environment Guard
+  if (config.tagadaEnv !== 'sandbox' || (order.tagadaEnv && order.tagadaEnv !== 'sandbox')) {
+    return next(new AppError('Refunds are only permitted in the TEST (sandbox) environment for this funnel.', 403));
+  }
+
+  if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
     return next(new AppError('Order is not paid, cannot refund', 400));
   }
+
+  if (order.refundStatus === 'refunded') {
+    return next(new AppError('Order is already fully refunded', 400));
+  }
+
+  const { amount, reason = 'Admin initiated refund', type } = req.body;
+  const requestedAmount = amount ? Number(amount) : (order.grandTotal || 0);
+
+  // Validate amount
+  const maxRefundable = (order.grandTotal || 0) - (order.refundedAmount || 0);
+  if (requestedAmount > maxRefundable) {
+    return next(new AppError(`Refund amount (${requestedAmount}) exceeds the maximum refundable amount (${maxRefundable}).`, 400));
+  }
+
+  const refundType = type || (requestedAmount === order.grandTotal ? 'full' : 'partial');
 
   try {
     // If the payment method was Tagada, process it via API
@@ -323,25 +345,63 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
 
       const client = await getTagadaClient();
 
-      // Attempt standard refunds.create as discussed in implementation plan
-      if (client.refunds && typeof client.refunds.create === 'function') {
-        await client.refunds.create({ charge_id: tagadaId, amount: order.grandTotal });
+      if (typeof client.payments?.refund === 'function') {
+        const payload: any = {
+          paymentIds: [tagadaId],
+          metadata: { reason }
+        };
+        // For partial refunds, pass the specific amount. 
+        // For full refunds, omit amount to let Tagada refund the whole remaining balance.
+        if (refundType === 'partial') {
+          payload.amount = requestedAmount;
+          // Note: if Tagada requires cents, we may need to multiply by 100 here.
+        }
+        await client.payments.refund(payload);
       } else {
-        console.warn('TagadaClient does not natively expose refunds.create(). Proceeding with local refund mark.');
+        console.warn('TagadaClient does not natively expose payments.refund(). Cannot process refund.');
+        return next(new AppError('Tagada SDK does not support refunds in this version.', 500));
       }
     }
 
-    // Mark as refunded internally regardless of payment method
-    order.paymentStatus = 'refunded';
-    order.status = 'cancelled';
-    await order.save();
+    // Create refund record directly as succeeded since the API call didn't throw an error
+    const refund = await Refund.create({
+      order: order._id,
+      amount: requestedAmount,
+      reason,
+      type: refundType,
+      status: 'succeeded'
+    });
+
+    // Update order internally
+    order.refundedAmount = (order.refundedAmount || 0) + requestedAmount;
+    if (refundType === 'full' || order.refundedAmount >= (order.grandTotal || 0)) {
+      order.refundStatus = 'refunded';
+    } else {
+      order.refundStatus = 'partially_refunded';
+    }
+    await order.save({ validateBeforeSave: false });
 
     res.status(200).json({
       success: true,
-      data: { order },
+      message: 'Refund initiated successfully',
+      data: { order, refund },
     });
   } catch (error: any) {
     console.error('Refund Error:', error);
-    return next(new AppError(error.message || 'Failed to process refund via TagadaPay', 500));
+    return next(new AppError(error?.response?.data?.message || error.message || 'Failed to process refund via TagadaPay', 500));
   }
+});
+
+/**
+ * GET /api/admin/orders/:id/refunds
+ *
+ * Fetch all refunds for a specific order.
+ */
+export const getOrderRefunds = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const refunds = await Refund.find({ order: req.params.id }).sort('-createdAt');
+
+  res.status(200).json({
+    success: true,
+    data: { refunds },
+  });
 });
