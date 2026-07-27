@@ -4,6 +4,7 @@ import Product from '../models/product.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { generateOrderNumber } from './payment.controller';
 
 /**
  * Place a new Order.
@@ -45,7 +46,9 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
   }
 
   // 2) Create the order document
+  const orderNumber = await generateOrderNumber();
   const newOrder = await Order.create({
+    orderNumber,
     user: req.user?._id,
     products: orderItems,
     totalAmount,

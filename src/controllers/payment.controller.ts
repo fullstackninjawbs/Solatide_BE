@@ -248,13 +248,27 @@ export const createTagadaPayment = catchAsync(
 // ─── 2. TagadaPay Webhook ─────────────────────────────────────────────────────
 
 /**
- * Generate a human-readable order number like SOL-00042.
- * Uses the total count of orders at the time of creation.
+ * Generate a randomized 7-digit order number like SLT1234567B.
+ * Checks for uniqueness in the database before returning.
  */
-async function generateOrderNumber(): Promise<string> {
-  const count = await Order.countDocuments();
-  const padded = String(count + 1).padStart(5, '0');
-  return `SOL-${padded}`;
+export async function generateOrderNumber(): Promise<string> {
+  let isUnique = false;
+  let orderNumber = '';
+
+  while (!isUnique) {
+    // Generate a secure random number between 1 and 9999999
+    const randomInt = crypto.randomInt(1, 10000000);
+    const padded = String(randomInt).padStart(7, '0');
+    orderNumber = `SLT${padded}B`;
+    
+    // Ensure uniqueness
+    const existing = await Order.findOne({ orderNumber }).select('_id').lean();
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+
+  return orderNumber;
 }
 
 /**
