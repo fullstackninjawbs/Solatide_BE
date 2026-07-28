@@ -63,6 +63,7 @@ export interface IProduct extends mongoose.Document {
   isFeatured: boolean;
   isBestSeller: boolean;
   isNewProduct: boolean;
+  showPendingResultsSection?: boolean;
   seo?: IProductSeo;
   /** @deprecated currentBatchId is now per-variant. Kept for migration compatibility. */
   currentBatchId?: mongoose.Types.ObjectId;
@@ -301,6 +302,10 @@ const productSchema = new mongoose.Schema<IProduct>(
     isNewProduct: {
       type: Boolean,
       default: false,
+    },
+    showPendingResultsSection: {
+      type: Boolean,
+      default: true,
     },
     seo: {
       title: { type: String },
