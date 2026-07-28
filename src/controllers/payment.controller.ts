@@ -260,7 +260,7 @@ export async function generateOrderNumber(): Promise<string> {
     const randomInt = crypto.randomInt(1, 10000000);
     const padded = String(randomInt).padStart(7, '0');
     orderNumber = `SLT${padded}B`;
-    
+
     // Ensure uniqueness
     const existing = await Order.findOne({ orderNumber }).select('_id').lean();
     if (!existing) {
@@ -471,6 +471,8 @@ export const tagadaWebhook = catchAsync(async (
         order.customerName;
     }
 
+    console.log(fullOrder)
+
     // ── Shipping address ───────────────────────────────────────────────────────
     const sa = fullOrder.shippingAddress || fullOrder.shipping_address || fullOrder.customer?.shippingAddress;
     if (sa) {
@@ -590,12 +592,21 @@ export const tagadaWebhook = catchAsync(async (
 
     // ── Shipping method ────────────────────────────────────────────────────────
     const firstShipping = fullOrder.shipping_lines?.[0] || fullOrder.shippingLines?.[0];
+    const sdkShippingRate = fullOrder.checkoutSession?.shippingRate || fullOrder.shippingRate || fullOrder.shipping_rate || dAny.shippingRate || dAny.shipping_rate;
+    const sdkShippingName = fullOrder.checkoutSession?.shippingRateName || fullOrder.shippingRateName || fullOrder.shippingMethod || fullOrder.shipping_method || dAny.shippingMethod || dAny.shipping_method;
+
     if (firstShipping) {
       order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
-    } else if (fullOrder.checkoutSession?.shippingRateId) {
-      order.shippingMethodCode = fullOrder.checkoutSession.shippingRateId;
-      order.shippingMethodName = 'Standard Shipping'; // Fallback if Tagada SDK doesn't provide the string
+    } else if (sdkShippingRate && typeof sdkShippingRate === 'object') {
+      order.shippingMethodName = sdkShippingRate.name || sdkShippingRate.title || 'Standard Shipping';
+      order.shippingMethodCode = sdkShippingRate.id || sdkShippingRate.code;
+    } else if (sdkShippingName && typeof sdkShippingName === 'string') {
+      order.shippingMethodName = sdkShippingName;
+      order.shippingMethodCode = fullOrder.checkoutSession?.shippingRateId || undefined;
+    } else if (fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId) {
+      order.shippingMethodCode = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId;
+      order.shippingMethodName = 'Standard Shipping'; // Absolute fallback
     }
 
     // ── Tags (Tagada IDs) ──────────────────────────────────────────────────────
@@ -661,11 +672,11 @@ export const tagadaWebhook = catchAsync(async (
 
   if (newPaymentStatus === 'refunded' || eventType === 'payment/partially_refunded' || eventType.includes('refund')) {
     console.log(`[TagadaPay] Order ${order._id} REFUND EVENT (${eventType})`);
-    
+
     // We assume Tagada webhook provides the refunded amount in `payload.data.amount_refunded` or similar.
     // If not, we will rely on what was initiated.
     const refundedAmount = dAny.amount_refunded || dAny.refundedAmount || dAny.amount || 0;
-    
+
     // Update the pending Refund record (if any exists for this order)
     try {
       const pendingRefund = await Refund.findOne({ order: order._id, status: 'pending' });
