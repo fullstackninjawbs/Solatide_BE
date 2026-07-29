@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import mongoSanitize from 'express-mongo-sanitize';
+import compression from 'compression';
 import config from './config';
 import connectDB from './config/db';
 import apiRoutes from './routes';
@@ -31,6 +32,7 @@ connectDB().then(() => {
 
 // Global Middleware Stack
 app.use(helmet()); // Security headers
+app.use(compression()); // Compress all responses for speed
 
 // CORS configuration matching configured origins
 app.use(
