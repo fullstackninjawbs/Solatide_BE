@@ -249,9 +249,9 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
   const orderUrl = `${clientUrl}/order/${order._id}`;
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
-  
-  const customerName = order.customer?.firstName 
-    ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() 
+
+  const customerName = order.customer?.firstName
+    ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim()
     : (order.customerName || 'Customer');
 
   const html = `

@@ -6,7 +6,7 @@ dotenv.config();
 
 export class StarshipitService {
   private readonly baseUrl = 'https://api.starshipit.com/api';
-  
+
   private get headers() {
     const apiKey = process.env.STARSHIPIT_API_KEY;
     const subscriptionKey = process.env.STARSHIPIT_SUBSCRIPTION_KEY;
@@ -28,9 +28,6 @@ export class StarshipitService {
     trackingCarrier?: string;
     labelUrl?: string;
   }> {
-    // 1. Construct Starshipit order payload
-    // Note: Starshipit expects individual item weights, so we distribute the total weight evenly 
-    // across items as a fallback since the current logic calculates total weight only.
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
 
@@ -38,11 +35,15 @@ export class StarshipitService {
       order_date: new Date().toISOString(),
       order_number: order.orderNumber || order._id?.toString(),
       reference: order.orderNumber || order._id?.toString(),
+      sender_details: {
+        name: 'SB Fulfilment',
+        company: 'SB Fulfilment'
+      },
       destination: {
         name: order.shippingAddressObj?.name || (order.customer?.firstName ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() : 'Customer'),
         company: order.shippingAddressObj?.company,
         street: order.shippingAddressObj?.street1,
-        suburb: order.shippingAddressObj?.city, // Mapping city to suburb if needed
+        suburb: order.shippingAddressObj?.city,
         city: order.shippingAddressObj?.city,
         state: order.shippingAddressObj?.state,
         post_code: order.shippingAddressObj?.zip,
@@ -50,55 +51,63 @@ export class StarshipitService {
         phone: order.customer?.phone || '',
         email: order.customer?.email || order.customerEmail || ''
       },
-      items: (order.lineItems && order.lineItems.length > 0) 
+      items: (order.lineItems && order.lineItems.length > 0)
         ? order.lineItems.map(item => ({
-            description: item.title,
-            sku: item.sku || 'UNKNOWN',
-            quantity: item.quantity,
-            weight: weightPerItem,
-            value: item.unitPrice
-          }))
+          description: item.title,
+          sku: item.sku || 'UNKNOWN',
+          quantity: item.quantity,
+          weight: weightPerItem,
+          value: item.unitPrice
+        }))
         : [{
-            description: 'Order Items',
-            sku: 'MIXED',
-            quantity: 1,
-            weight: weightKg,
-            value: order.subtotal || 0
-          }]
+          description: 'Order Items',
+          sku: 'MIXED',
+          quantity: 1,
+          weight: weightKg,
+          value: order.subtotal || 0
+        }]
     };
 
-    // 2. Call Starshipit API
     try {
+      console.log('Sending payload to Starshipit /orders:', JSON.stringify(payload, null, 2));
       const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, { headers: this.headers });
-      console.log('Starshipit Orders Response:', JSON.stringify(response.data, null, 2));
       
+      console.log('Starshipit POST /orders HTTP Status:', response.status);
+      console.log('Starshipit POST /orders Response Data:', JSON.stringify(response.data, null, 2));
+
+      // Handle soft failures (HTTP 200 but success = false)
+      if (response.data && response.data.success === false) {
+        console.error('Starshipit returned soft failure. Validation errors:', response.data.validation_errors);
+        const errMsg = response.data.message || (response.data.validation_errors ? JSON.stringify(response.data.validation_errors) : 'Starshipit API returned success=false');
+        throw new Error(errMsg);
+      }
+
       const starshipitOrder = response.data?.order;
       if (!starshipitOrder || !starshipitOrder.order_id) {
-        console.error('Starshipit Failed Response:', JSON.stringify(response.data, null, 2));
-        if (response.data && response.data.success === false) {
-           throw new Error(response.data.message || 'Starshipit API returned failure');
-        }
-        throw new Error('Invalid response from Starshipit API');
+        throw new Error('Invalid response from Starshipit API: Missing order_id');
       }
 
       let trackingNumber = starshipitOrder.tracking_number || '';
       let trackingCarrier = starshipitOrder.carrier || '';
       let labelUrl = '';
 
-      // 3. Generate Label & Get Tracking
-      // In Starshipit, you typically call /orders/shipment to assign a courier and generate the label
       try {
-        const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, { 
-          order_id: starshipitOrder.order_id 
+        console.log(`Calling POST /orders/shipment for order_id: ${starshipitOrder.order_id}`);
+        const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, {
+          order_id: starshipitOrder.order_id
         }, { headers: this.headers });
-        console.log('Starshipit Label Response:', JSON.stringify(labelResponse.data, null, 2));
         
-        // The response structure varies, but usually contains order details with tracking
+        console.log('Starshipit POST /orders/shipment HTTP Status:', labelResponse.status);
+        console.log('Starshipit POST /orders/shipment Response Data:', JSON.stringify(labelResponse.data, null, 2));
+
+        if (labelResponse.data && labelResponse.data.success === false) {
+          throw new Error(labelResponse.data.message || 'Label generation failed in Starshipit');
+        }
+
         const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];
         if (shippedOrder) {
           trackingNumber = trackingNumber || shippedOrder.tracking_number || '';
           trackingCarrier = trackingCarrier || shippedOrder.carrier || '';
-          // Some configurations return labels directly or via tracking url
           labelUrl = shippedOrder.label_url || shippedOrder.pdf_url || shippedOrder.tracking_url || labelUrl;
         } else if (labelResponse.data && labelResponse.data.labels && labelResponse.data.labels.length > 0) {
           const labelData = labelResponse.data.labels[0];
@@ -106,19 +115,25 @@ export class StarshipitService {
           trackingNumber = trackingNumber || labelData.tracking_number || '';
           trackingCarrier = trackingCarrier || labelData.carrier || '';
         }
+
+        if (!labelUrl) {
+           console.warn('Starshipit returned success but no label URL was found in the response.');
+        }
+
       } catch (labelError: any) {
-        console.warn('Could not automatically dispatch/generate label. Order created but requires manual dispatch:', labelError.response?.data || labelError.message);
+        console.error('Starshipit POST /orders/shipment Error Details:', labelError.response?.data || labelError.message);
+        throw new Error(labelError.response?.data?.message || labelError.message || 'Failed to dispatch shipment / generate label');
       }
 
       return {
         orderId: starshipitOrder.order_id.toString(),
         trackingNumber,
         trackingCarrier,
-        labelUrl 
+        labelUrl
       };
     } catch (error: any) {
       console.error('Starshipit API Error:', error.response?.data || error.message);
-      throw new Error(error.response?.data?.message || 'Failed to create shipment with Starshipit');
+      throw new Error(error.response?.data?.message || error.message || 'Failed to create shipment with Starshipit');
     }
   }
 
@@ -133,7 +148,7 @@ export class StarshipitService {
       const response = await axios.get(`${this.baseUrl}/orders?order_id=${orderId}`, { headers: this.headers });
       console.log('Starshipit GetShipmentDetails Response:', JSON.stringify(response.data, null, 2));
       const order = response.data?.order || (response.data?.orders && response.data.orders[0]);
-      
+
       if (!order) {
         throw new Error('Order not found in Starshipit');
       }
@@ -148,7 +163,7 @@ export class StarshipitService {
         const pkg = order.packages[0];
         trackingNumber = trackingNumber || pkg.tracking_number || '';
         trackingUrl = trackingUrl || pkg.tracking_url || '';
-        
+
         if (pkg.labels && pkg.labels.length > 0) {
           labelUrl = labelUrl || pkg.labels[0].label_url || '';
         }
