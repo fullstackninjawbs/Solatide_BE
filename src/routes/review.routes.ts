@@ -8,6 +8,7 @@ import {
   getAllReviewsAdmin,
   verifyEmail,
   resendVerificationEmailController,
+  importReviews,
 } from '../controllers/review.controller';
 import { protect, restrictTo } from '../middleware/auth';
 
@@ -51,6 +52,9 @@ router.use(restrictTo('super_admin', 'operations', 'admin'));
 
 // Get all reviews (Admin)
 router.get('/', getAllReviewsAdmin);
+
+// Import reviews from XLSX/CSV
+router.post('/import', upload.single('file'), importReviews);
 
 // Delete a review
 router.delete('/:id', deleteReview);

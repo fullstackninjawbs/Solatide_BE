@@ -7,13 +7,14 @@ import { uploadImageBuffer, deleteImageByUrl } from '../utils/cloudinary';
 import { sendVerificationEmail } from '../services/emailService';
 import crypto from 'crypto';
 import Product from '../models/product.model';
+import * as xlsx from 'xlsx';
 
 // @desc    Create a new review
 // @route   POST /api/v1/products/:productId/reviews
 // @access  Public (or protected depending on auth requirements)
 export const createReview = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const productId = req.params.productId || req.body.productId;
-  
+
   if (!productId) {
     return next(new AppError('Please provide a product ID', 400));
   }
@@ -101,7 +102,7 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
   const limit = parseInt(req.query.limit as string, 10) || 10;
   const skip = (page - 1) * limit;
   const sortParam = req.query.sort as string || 'newest';
-  
+
   let sortObj: any = { createdAt: -1 };
   if (sortParam === 'oldest') sortObj = { createdAt: 1 };
   if (sortParam === 'highest') sortObj = { rating: -1, createdAt: -1 };
@@ -240,6 +241,7 @@ export const updateReviewStatus = catchAsync(async (req: Request, res: Response,
 // @route   GET /api/v1/reviews
 // @access  Private/Admin
 export const getAllReviewsAdmin = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+
   const page = parseInt(req.query.page as string, 10) || 1;
   const limit = parseInt(req.query.limit as string, 10) || 20;
   const skip = (page - 1) * limit;
@@ -293,7 +295,7 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response, next: 
   review.verificationToken = undefined;
   review.verificationExpires = undefined;
   // Keep status = "pending", do NOT auto approve
-  
+
   await review.save({ validateBeforeSave: false });
 
   res.status(200).json({
@@ -307,7 +309,7 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response, next: 
 // @access  Private/Admin
 export const resendVerificationEmailController = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const review = await Review.findById(req.params.id).populate('product', 'name images');
-  
+
   if (!review) {
     return next(new AppError('Review not found', 404));
   }
@@ -349,5 +351,102 @@ export const resendVerificationEmailController = catchAsync(async (req: Request,
   res.status(200).json({
     success: true,
     message: 'Verification email resent successfully',
+  });
+});
+
+// @desc    Import reviews from XLSX or CSV
+// @route   POST /api/v1/reviews/import
+// @access  Private/Admin
+export const importReviews = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.file) {
+    return next(new AppError('Please upload an XLSX or CSV file.', 400));
+  }
+
+  // Parse workbook from buffer
+  const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  const data: any[] = xlsx.utils.sheet_to_json(worksheet);
+
+  if (!data || data.length === 0) {
+    return next(new AppError('No data found in the uploaded file.', 400));
+  }
+
+  let importedCount = 0;
+  let skippedCount = 0;
+  const errors: string[] = [];
+
+  for (const [index, row] of data.entries()) {
+    try {
+      const rowNum = index + 2; // Assuming header is row 1
+      const productHandle = row.product_handle;
+
+      if (!productHandle) {
+        errors.push(`Row ${rowNum}: Missing product_handle.`);
+        skippedCount++;
+        continue;
+      }
+
+      const product = await Product.findOne({ slug: productHandle });
+      if (!product) {
+        errors.push(`Row ${rowNum}: Product with handle '${productHandle}' not found.`);
+        skippedCount++;
+        continue;
+      }
+
+      // Check for valid rating
+      const rating = parseFloat(row.rating);
+      if (isNaN(rating) || rating < 1 || rating > 5) {
+        errors.push(`Row ${rowNum}: Invalid rating '${row.rating}'.`);
+        skippedCount++;
+        continue;
+      }
+
+      const displayName = row.reviewer_name || 'Anonymous Customer';
+
+      // Prevent duplicates by checking if a review with same content, product, and displayName exists
+      const existingReview = await Review.findOne({
+        product: product._id,
+        content: row.body || '',
+        displayName: displayName
+      });
+
+      if (existingReview) {
+        errors.push(`Row ${rowNum}: Duplicate review skipped.`);
+        skippedCount++;
+        continue;
+      }
+
+      await Review.create({
+        product: product._id,
+        rating,
+        title: row.title || '',
+        content: row.body || '',
+        displayName: displayName,
+        email: row.reviewer_email || '',
+        anonymous: !row.reviewer_name || row.reviewer_name.toLowerCase() === 'anon',
+        images: [], // Can map picture_urls later if needed
+        status: 'approved', // Pre-approve imported reviews
+        emailVerified: true,
+        isVerifiedPurchase: true, // Assuming imported reviews are from real buyers
+        createdAt: row.review_date ? new Date(row.review_date) : new Date(),
+        updatedAt: row.review_date ? new Date(row.review_date) : new Date(),
+      });
+
+      importedCount++;
+    } catch (err: any) {
+      skippedCount++;
+      errors.push(`Row ${index + 2}: ${err.message}`);
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Import complete. Imported ${importedCount} reviews, skipped ${skippedCount}.`,
+    stats: {
+      imported: importedCount,
+      skipped: skippedCount,
+      errors
+    }
   });
 });
