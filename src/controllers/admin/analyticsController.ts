@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import Order from '../../models/order.model';
+import AnalyticsEvent from '../../models/analyticsEvent.model';
 import catchAsync from '../../utils/catchAsync';
 
 const buildMatchFilter = (req: Request) => {
@@ -164,4 +165,83 @@ export const getTopCustomers = catchAsync(async (req: Request, res: Response) =>
 
   const data = await Order.aggregate(pipeline);
   res.json({ success: true, data });
+});
+
+// ─── Live / Session Overview ──────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/analytics/overview?from=<ISO>&to=<ISO>
+ * Returns live visitors, sessions, orders, abandoned carts, sessions by country.
+ */
+export const getOverview = catchAsync(async (req: Request, res: Response) => {
+  const now = new Date();
+
+  // Date range for period metrics (default: last 7 days)
+  const to = req.query.to ? new Date(req.query.to as string) : now;
+  const from = req.query.from
+    ? new Date(req.query.from as string)
+    : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  // 1. Live visitors — distinct sessions with any event in last 5 minutes
+  const liveWindow = new Date(now.getTime() - 5 * 60 * 1000);
+  const liveResult = await AnalyticsEvent.aggregate([
+    { $match: { timestamp: { $gte: liveWindow } } },
+    { $group: { _id: '$sessionId' } },
+    { $count: 'count' },
+  ]);
+  const liveVisitors = liveResult[0]?.count ?? 0;
+
+  // 2. Sessions in period
+  const sessionsResult = await AnalyticsEvent.aggregate([
+    { $match: { timestamp: { $gte: from, $lte: to } } },
+    { $group: { _id: '$sessionId' } },
+    { $count: 'count' },
+  ]);
+  const sessions = sessionsResult[0]?.count ?? 0;
+
+  // 3. Orders in period (from existing Order model)
+  const orders = await Order.countDocuments({ createdAt: { $gte: from, $lte: to } });
+
+  // 4. Abandoned carts
+  // Sessions that fired begin_checkout but never fired purchase in the same period
+  const checkoutSessions = await AnalyticsEvent.distinct('sessionId', {
+    eventType: 'begin_checkout',
+    timestamp: { $gte: from, $lte: to },
+  });
+
+  let abandonedCarts = 0;
+  if (checkoutSessions.length > 0) {
+    const purchaseSessions = await AnalyticsEvent.distinct('sessionId', {
+      eventType: 'purchase',
+      sessionId: { $in: checkoutSessions },
+      timestamp: { $gte: from, $lte: new Date(to.getTime() + 24 * 60 * 60 * 1000) },
+    });
+    abandonedCarts = checkoutSessions.length - purchaseSessions.length;
+  }
+
+  // 5. Sessions by country
+  const countryResult = await AnalyticsEvent.aggregate([
+    {
+      $match: {
+        timestamp: { $gte: from, $lte: to },
+        country: { $exists: true, $nin: [null, ''] },
+      },
+    },
+    { $group: { _id: { country: '$country', session: '$sessionId' } } },
+    { $group: { _id: '$_id.country', sessions: { $sum: 1 } } },
+    { $sort: { sessions: -1 } as any },
+    { $limit: 20 },
+    { $project: { _id: 0, country: '$_id', sessions: 1 } },
+  ]);
+
+  res.json({
+    success: true,
+    data: {
+      liveVisitors,
+      sessions,
+      orders,
+      abandonedCarts,
+      sessionsByCountry: countryResult,
+    },
+  });
 });

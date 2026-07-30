@@ -114,7 +114,7 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
   const matchStage: any = {
     product: new mongoose.Types.ObjectId(productId),
     status: 'approved',
-    emailVerified: true,
+    // emailVerified is not required — admin approval is the final gate
   };
 
   if (ratingFilter) {
@@ -129,7 +129,7 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
         // Global stats pipeline (ignores ratingFilter to give true global stats if we wanted, 
         // but normally stats are for all approved)
         stats: [
-          { $match: { product: new mongoose.Types.ObjectId(productId), status: 'approved', emailVerified: true } },
+          { $match: { product: new mongoose.Types.ObjectId(productId), status: 'approved' } },
           {
             $group: {
               _id: null,
@@ -140,7 +140,7 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
         ],
         // Distribution pipeline
         distribution: [
-          { $match: { product: new mongoose.Types.ObjectId(productId), status: 'approved', emailVerified: true } },
+          { $match: { product: new mongoose.Types.ObjectId(productId), status: 'approved' } },
           {
             $group: {
               _id: '$rating',

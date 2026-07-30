@@ -12,6 +12,7 @@ import adminRoutes from './routes/admin';
 import paymentRoutes from './routes/payment.routes';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
+import analyticsRoutes from './routes/analytics.routes';
 
 // Handle uncaught exceptions before any other code executes
 process.on('uncaughtException', (err: Error) => {
@@ -74,6 +75,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/analytics', analyticsRoutes); // Public storefront event tracking
 
 // Catch-all: 404 Route handler for unregistered paths
 app.all('*', (req: Request, res: Response, next: NextFunction) => {
