@@ -84,8 +84,8 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   const currentRevenue = await getRevenue(startDate, endDate);
   const prevRevenue = await getRevenue(prevStartDate, prevEndDate);
 
-  const currentOrders = await Order.countDocuments({ createdAt: { $gte: startDate, $lte: endDate } });
-  const prevOrders = await Order.countDocuments({ createdAt: { $gte: prevStartDate, $lte: prevEndDate } });
+  const currentOrders = await Order.countDocuments({ createdAt: { $gte: startDate, $lte: endDate }, paymentStatus: 'paid' });
+  const prevOrders = await Order.countDocuments({ createdAt: { $gte: prevStartDate, $lte: prevEndDate }, paymentStatus: 'paid' });
 
   const currentAOV = currentOrders > 0 ? currentRevenue / currentOrders : 0;
   const prevAOV = prevOrders > 0 ? prevRevenue / prevOrders : 0;

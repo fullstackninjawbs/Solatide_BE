@@ -176,50 +176,113 @@ export const getTopCustomers = catchAsync(async (req: Request, res: Response) =>
 export const getOverview = catchAsync(async (req: Request, res: Response) => {
   const now = new Date();
 
-  // Date range for period metrics (default: last 7 days)
+  // Date range for period metrics (default: last 24 hours for live view style)
   const to = req.query.to ? new Date(req.query.to as string) : now;
   const from = req.query.from
     ? new Date(req.query.from as string)
-    : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    : new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-  // 1. Live visitors — distinct sessions with any event in last 5 minutes
+  const durationMs = Math.max(to.getTime() - from.getTime(), 60000);
+  const prevFrom = new Date(from.getTime() - durationMs);
+  const prevTo = new Date(from.getTime());
+
+  // 1. Visitors right now — distinct sessions in last 5 minutes
   const liveWindow = new Date(now.getTime() - 5 * 60 * 1000);
   const liveResult = await AnalyticsEvent.aggregate([
     { $match: { timestamp: { $gte: liveWindow } } },
     { $group: { _id: '$sessionId' } },
     { $count: 'count' },
   ]);
-  const liveVisitors = liveResult[0]?.count ?? 0;
+  const visitorsRightNow = liveResult[0]?.count ?? 0;
 
-  // 2. Sessions in period
-  const sessionsResult = await AnalyticsEvent.aggregate([
-    { $match: { timestamp: { $gte: from, $lte: to } } },
-    { $group: { _id: '$sessionId' } },
-    { $count: 'count' },
+  // 2. Current period sales & previous period sales (ONLY paid orders count as completed sales)
+  const currentSalesAgg = await Order.aggregate([
+    { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid' } },
+    { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
   ]);
-  const sessions = sessionsResult[0]?.count ?? 0;
+  const totalSales = currentSalesAgg[0]?.total ?? 0;
 
-  // 3. Orders in period (from existing Order model)
-  const orders = await Order.countDocuments({ createdAt: { $gte: from, $lte: to } });
+  const prevSalesAgg = await Order.aggregate([
+    { $match: { createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid' } },
+    { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
+  ]);
+  const prevTotalSales = prevSalesAgg[0]?.total ?? 0;
+  const totalSalesChangePct = prevTotalSales > 0 
+    ? Math.round(((totalSales - prevTotalSales) / prevTotalSales) * 100)
+    : totalSales > 0 ? 100 : 0;
 
-  // 4. Abandoned carts
-  // Sessions that fired begin_checkout but never fired purchase in the same period
+  // 3. Current period sessions & previous period sessions
+  const currentSessionsList = await AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: from, $lte: to } });
+  const sessions = currentSessionsList.length;
+
+  const prevSessionsList = await AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: prevFrom, $lte: prevTo } });
+  const prevSessions = prevSessionsList.length;
+  const sessionsChangePct = prevSessions > 0
+    ? Math.round(((sessions - prevSessions) / prevSessions) * 100)
+    : sessions > 0 ? 100 : 0;
+
+  // 4. Current period orders & previous period orders (ONLY paid orders)
+  const orders = await Order.countDocuments({ createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid' });
+  const prevOrders = await Order.countDocuments({ createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid' });
+  const ordersChangePct = prevOrders > 0
+    ? Math.round(((orders - prevOrders) / prevOrders) * 100)
+    : orders > 0 ? 100 : 0;
+
+  // 5. Customer Behavior
+  // Active carts: sessions with add_to_cart in period that haven't checked out or purchased
+  const cartSessions = await AnalyticsEvent.distinct('sessionId', {
+    eventType: 'add_to_cart',
+    timestamp: { $gte: from, $lte: to },
+  });
   const checkoutSessions = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'begin_checkout',
     timestamp: { $gte: from, $lte: to },
   });
+  const purchaseSessions = await AnalyticsEvent.distinct('sessionId', {
+    eventType: 'purchase',
+    timestamp: { $gte: from, $lte: to },
+  });
 
-  let abandonedCarts = 0;
-  if (checkoutSessions.length > 0) {
-    const purchaseSessions = await AnalyticsEvent.distinct('sessionId', {
-      eventType: 'purchase',
-      sessionId: { $in: checkoutSessions },
-      timestamp: { $gte: from, $lte: new Date(to.getTime() + 24 * 60 * 60 * 1000) },
+  // Pending/Unpaid orders count as checkout started, not purchased
+  const pendingOrdersCount = await Order.countDocuments({
+    createdAt: { $gte: from, $lte: to },
+    paymentStatus: { $ne: 'paid' },
+  });
+
+  const checkoutSet = new Set(checkoutSessions);
+  const purchaseSet = new Set(purchaseSessions);
+
+  const activeCartsCount = cartSessions.filter(s => !checkoutSet.has(s) && !purchaseSet.has(s)).length;
+  const checkingOutCount = Math.max(
+    checkoutSessions.filter(s => !purchaseSet.has(s)).length,
+    pendingOrdersCount
+  );
+  const purchasedCount = orders;
+
+  // 6. Sparkline trends (12 intervals) — strictly paid orders
+  const numBuckets = 12;
+  const intervalMs = durationMs / numBuckets;
+  const sparklines = [];
+
+  for (let i = 0; i < numBuckets; i++) {
+    const bFrom = new Date(from.getTime() + i * intervalMs);
+    const bTo = new Date(from.getTime() + (i + 1) * intervalMs);
+
+    const bSalesAgg = await Order.aggregate([
+      { $match: { createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid' } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
+    ]);
+    const bSessionsList = await AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: bFrom, $lt: bTo } });
+    const bOrdersCount = await Order.countDocuments({ createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid' });
+
+    sparklines.push({
+      sales: bSalesAgg[0]?.total ?? 0,
+      sessions: bSessionsList.length,
+      orders: bOrdersCount,
     });
-    abandonedCarts = checkoutSessions.length - purchaseSessions.length;
   }
 
-  // 5. Sessions by country
+  // 7. Sessions by country
   const countryResult = await AnalyticsEvent.aggregate([
     {
       $match: {
@@ -237,11 +300,23 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   res.json({
     success: true,
     data: {
-      liveVisitors,
+      visitorsRightNow,
+      liveVisitors: visitorsRightNow, // backward compatibility
+      totalSales,
+      totalSalesChangePct,
       sessions,
+      sessionsChangePct,
       orders,
-      abandonedCarts,
+      ordersChangePct,
+      abandonedCarts: checkingOutCount,
+      customerBehavior: {
+        activeCarts: activeCartsCount,
+        checkingOut: checkingOutCount,
+        purchased: purchasedCount,
+      },
+      sparklines,
       sessionsByCountry: countryResult,
     },
   });
 });
+

@@ -93,6 +93,8 @@ export interface IProduct extends mongoose.Document {
   chemicalGrade?: string;
   chemicalPurity?: string;
   chemicalColor?: string;
+  inventoryPolicy?: 'deny' | 'continue';
+  continueSellingWhenOutOfStock?: boolean;
 
   createdAt: Date;
   updatedAt: Date;
@@ -244,6 +246,15 @@ const productSchema = new mongoose.Schema<IProduct>(
     lowStockThreshold: {
       type: Number,
       default: 5,
+    },
+    inventoryPolicy: {
+      type: String,
+      enum: ['deny', 'continue'],
+      default: 'deny',
+    },
+    continueSellingWhenOutOfStock: {
+      type: Boolean,
+      default: false,
     },
     molecularFormula: {
       type: String,

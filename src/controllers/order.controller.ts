@@ -30,7 +30,10 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
       return next(new AppError(`Product with ID ${item.product} not found.`, 404));
     }
 
-    if (!dbProduct.inStock) {
+    const canContinueSelling = dbProduct.inventoryPolicy === 'continue' || dbProduct.continueSellingWhenOutOfStock === true;
+    const hasStock = dbProduct.inStock !== false && (dbProduct.stockQuantity > 0 || (dbProduct as any).stockQty > 0 || canContinueSelling);
+
+    if (!hasStock && !canContinueSelling) {
       return next(new AppError(`Product '${dbProduct.name}' is out of stock.`, 400));
     }
 
