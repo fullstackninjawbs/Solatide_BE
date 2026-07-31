@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import AnalyticsEvent from '../models/analyticsEvent.model';
 
 const VALID_EVENT_TYPES = ['page_view', 'product_view', 'add_to_cart', 'begin_checkout', 'purchase'];
@@ -14,21 +14,31 @@ export const logEvent = async (req: Request, res: Response): Promise<void> => {
   res.status(200).json({ success: true });
 
   try {
-    const { sessionId, eventType, timestamp, productId, orderId, country, cartValue, page } = req.body;
+    const { sessionId, eventType, timestamp, productId, orderId, country, cartValue, page, productName, path } = req.body;
 
     // Basic validation — silently ignore invalid events
     if (!sessionId || typeof sessionId !== 'string') return;
     if (!eventType || !VALID_EVENT_TYPES.includes(eventType)) return;
 
+    // Auto-detect country from Cloudflare / IP headers or default to Australia (AU)
+    const detectedCountry = country ||
+      (req.headers['cf-ipcountry'] as string) ||
+      (req.headers['x-country'] as string) ||
+      'Australia';
+
+    const eventPath = path || page || '/';
+
     await AnalyticsEvent.create({
-      sessionId: sessionId.slice(0, 128), // cap length
+      sessionId: sessionId.slice(0, 128),
       eventType,
       timestamp: timestamp ? new Date(timestamp) : new Date(),
-      country: country || undefined,
+      country: detectedCountry,
       productId: productId || undefined,
+      productName: productName ? String(productName).slice(0, 256) : undefined,
       orderId: orderId || undefined,
       cartValue: typeof cartValue === 'number' ? cartValue : undefined,
-      page: page ? String(page).slice(0, 512) : undefined,
+      page: eventPath.slice(0, 512),
+      path: eventPath.slice(0, 512),
     });
   } catch (err) {
     // Silently swallow errors — analytics must never break the storefront

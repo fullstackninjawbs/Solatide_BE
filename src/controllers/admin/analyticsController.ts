@@ -249,6 +249,12 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     paymentStatus: { $ne: 'paid' },
   });
 
+  const pendingOrdersValueAgg = await Order.aggregate([
+    { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: { $ne: 'paid' } } },
+    { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } }
+  ]);
+  const abandonedCartValue = pendingOrdersValueAgg[0]?.total ?? 0;
+
   const checkoutSet = new Set(checkoutSessions);
   const purchaseSet = new Set(purchaseSessions);
 
@@ -258,6 +264,21 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     pendingOrdersCount
   );
   const purchasedCount = orders;
+
+  // Conversion rate & Funnel
+  const conversionRate = sessions > 0 ? Number(((orders / sessions) * 100).toFixed(1)) : 0;
+  const funnel = {
+    sessions,
+    activeCarts: activeCartsCount + checkingOutCount + purchasedCount,
+    checkingOut: checkingOutCount + purchasedCount,
+    purchased: purchasedCount,
+    cartDropOffPct: (sessions > 0 && (activeCartsCount + checkingOutCount + purchasedCount) < sessions)
+      ? Math.round(((sessions - (activeCartsCount + checkingOutCount + purchasedCount)) / sessions) * 100)
+      : 0,
+    checkoutDropOffPct: ((activeCartsCount + checkingOutCount + purchasedCount) > 0)
+      ? Math.round(((activeCartsCount) / (activeCartsCount + checkingOutCount + purchasedCount)) * 100)
+      : 0
+  };
 
   // 6. Sparkline trends (12 intervals) — strictly paid orders
   const numBuckets = 12;
@@ -282,8 +303,8 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     });
   }
 
-  // 7. Sessions by country
-  const countryResult = await AnalyticsEvent.aggregate([
+  // 7. Sessions by country (merge AnalyticsEvent country data and Order shipping country data)
+  let countryResult = await AnalyticsEvent.aggregate([
     {
       $match: {
         timestamp: { $gte: from, $lte: to },
@@ -297,6 +318,30 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     { $project: { _id: 0, country: '$_id', sessions: 1 } },
   ]);
 
+  if (countryResult.length === 0) {
+    const orderCountries = await Order.aggregate([
+      { $match: { createdAt: { $gte: from, $lte: to }, 'shippingAddressObj.country': { $exists: true, $nin: [null, ''] } } },
+      { $group: { _id: '$shippingAddressObj.country', sessions: { $sum: 1 } } },
+      { $project: { _id: 0, country: '$_id', sessions: 1 } }
+    ]);
+    if (orderCountries.length > 0) {
+      countryResult = orderCountries;
+    }
+  }
+
+  // 8. Recent Live Activity Events (last 15 events with clean fallback fields)
+  const rawEvents = await AnalyticsEvent.find({})
+    .sort({ timestamp: -1 })
+    .limit(15)
+    .lean();
+
+  const recentEvents = rawEvents.map((evt: any) => ({
+    ...evt,
+    country: evt.country && evt.country !== 'undefined' ? evt.country : 'India',
+    path: evt.path || evt.page || '/',
+    productName: evt.productName || (evt.page && evt.page.includes('/product/') ? evt.page.split('/product/')[1]?.replace(/-/g, ' ') : undefined)
+  }));
+
   res.json({
     success: true,
     data: {
@@ -309,6 +354,9 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       orders,
       ordersChangePct,
       abandonedCarts: checkingOutCount,
+      abandonedCartValue,
+      conversionRate,
+      funnel,
       customerBehavior: {
         activeCarts: activeCartsCount,
         checkingOut: checkingOutCount,
@@ -316,6 +364,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       },
       sparklines,
       sessionsByCountry: countryResult,
+      recentEvents,
     },
   });
 });

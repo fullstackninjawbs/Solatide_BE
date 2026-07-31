@@ -1,4 +1,4 @@
-﻿import mongoose from 'mongoose';
+import mongoose from 'mongoose';
 
 export type AnalyticsEventType =
   | 'page_view'
@@ -16,6 +16,8 @@ export interface IAnalyticsEvent extends mongoose.Document {
   orderId?: mongoose.Types.ObjectId;
   cartValue?: number;
   page?: string;
+  productName?: string;
+  path?: string;
 }
 
 const analyticsEventSchema = new mongoose.Schema<IAnalyticsEvent>(
@@ -52,6 +54,14 @@ const analyticsEventSchema = new mongoose.Schema<IAnalyticsEvent>(
       type: Number,
     },
     page: {
+      type: String,
+      trim: true,
+    },
+    productName: {
+      type: String,
+      trim: true,
+    },
+    path: {
       type: String,
       trim: true,
     },

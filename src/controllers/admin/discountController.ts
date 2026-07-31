@@ -29,6 +29,10 @@ export const getDiscounts = catchAsync(async (req: Request, res: Response, next:
 
   const total = await Discount.countDocuments(filter);
 
+  const orgId = config.tagadaOrgId || 'gracie-collins-1779009767064524065';
+  const storeId = (config.tagadaStoreId || 'store_6b8fa1a123cf').trim();
+  const tagadaPortalUrl = `https://app.tagada.io/org/${orgId}/stores/${storeId}/general/promotions/discounts`;
+
   res.status(200).json({
     success: true,
     total,
@@ -37,6 +41,7 @@ export const getDiscounts = catchAsync(async (req: Request, res: Response, next:
     pages: Math.ceil(total / limit),
     data: {
       discounts,
+      tagadaPortalUrl,
       pagination: {
         page,
         limit,

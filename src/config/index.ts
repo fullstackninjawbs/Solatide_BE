@@ -19,6 +19,7 @@ interface Config {
   tagadaDefaultCurrency: string;
   tagadaStoreId: string;
   tagadaAccountId: string;
+  tagadaOrgId: string;
   tagadaCheckoutUrl: string;
   // Cloudinary
   cloudinary: {
@@ -52,6 +53,7 @@ export const config: Config = {
   tagadaDefaultCurrency: process.env.TAGADA_DEFAULT_CURRENCY || 'AUD',
   tagadaStoreId: process.env.TAGADA_STORE_ID || '',
   tagadaAccountId: process.env.TAGADA_ACCOUNT_ID || '',
+  tagadaOrgId: process.env.TAGADA_ORG_ID || 'gracie-collins-1779009767064524065',
   tagadaCheckoutUrl: process.env.TAGADA_CHECKOUT_URL || '',
   // Cloudinary
   cloudinary: {
