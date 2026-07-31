@@ -23,6 +23,7 @@ import Refund from '../../models/Refund';
  *   limit             - results per page (default: 50)
  */
 export const getOrders = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+
   const {
     status,
     paymentStatus,
@@ -238,8 +239,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       weightKg
     });
 
-    let { trackingNumber, trackingCarrier, labelUrl } = shippingResult;
-    let shipmentStatus = 'Label Generated';
+    let { trackingNumber, trackingCarrier, labelUrl, warning } = shippingResult as any;
+    let shipmentStatus = trackingNumber ? 'Label Generated' : (warning ? 'Order Created in Starshipit (Label Pending)' : 'Order Created in Starshipit');
     let trackingUrl = '';
 
     if (!trackingNumber || !labelUrl) {
@@ -291,6 +292,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
 
     res.status(200).json({
       success: true,
+      message: warning ? `Order imported to Starshipit (ID: ${shippingResult.orderId}). Note: ${warning}` : 'Shipment created successfully',
       data: { order },
     });
   } catch (error: any) {

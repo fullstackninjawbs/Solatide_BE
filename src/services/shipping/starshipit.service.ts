@@ -4,6 +4,45 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+function parseStarshipitError(data: any, fallback: string): string {
+  if (!data) return fallback;
+  let rawMsg = fallback;
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    const errs = data.errors.map((e: any) => {
+      if (typeof e === 'string') return e;
+      if (e && typeof e === 'object') {
+        return e.details || e.message || JSON.stringify(e);
+      }
+      return String(e);
+    }).filter(Boolean);
+    if (errs.length > 0) rawMsg = errs.join('; ');
+  } else if (data.validation_errors) {
+    if (Array.isArray(data.validation_errors) && data.validation_errors.length > 0) {
+      const errs = data.validation_errors.map((ve: any) => {
+        if (typeof ve === 'string') return ve;
+        return ve.details || ve.message || ve.error || (ve.field ? `${ve.field}: ${ve.message || ve.error}` : JSON.stringify(ve));
+      }).filter(Boolean);
+      if (errs.length > 0) rawMsg = errs.join('; ');
+    } else {
+      rawMsg = typeof data.validation_errors === 'string' ? data.validation_errors : JSON.stringify(data.validation_errors);
+    }
+  } else if (typeof data.details === 'string' && data.details.trim()) {
+    rawMsg = data.details;
+  } else if (typeof data.message === 'string' && data.message.trim()) {
+    rawMsg = data.message;
+  } else if (typeof data.error === 'string' && data.error.trim()) {
+    rawMsg = data.error;
+  } else if (typeof data.error_message === 'string' && data.error_message.trim()) {
+    rawMsg = data.error_message;
+  }
+
+  if (rawMsg.includes('Unable to get order details from order_id') || rawMsg.includes('Unable to get order details')) {
+    return 'Destination address or country is unconfigured in Starshipit. Update shipping address or enable international courier in Starshipit.';
+  }
+
+  return rawMsg;
+}
+
 export class StarshipitService {
   private readonly baseUrl = 'https://api.starshipit.com/api';
 
@@ -27,9 +66,17 @@ export class StarshipitService {
     trackingNumber?: string;
     trackingCarrier?: string;
     labelUrl?: string;
+    warning?: string;
   }> {
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
+
+    const street = order.shippingAddressObj?.street1 || (typeof order.shippingAddress === 'string' ? order.shippingAddress : undefined);
+    const suburb = order.shippingAddressObj?.city || order.shippingAddressObj?.street2;
+    const city = order.shippingAddressObj?.city;
+    const state = order.shippingAddressObj?.state;
+    const postCode = order.shippingAddressObj?.zip;
+    const country = order.shippingAddressObj?.country || 'AU';
 
     const payload = {
       order_date: new Date().toISOString(),
@@ -42,12 +89,12 @@ export class StarshipitService {
       destination: {
         name: order.shippingAddressObj?.name || (order.customer?.firstName ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() : 'Customer'),
         company: order.shippingAddressObj?.company,
-        street: order.shippingAddressObj?.street1,
-        suburb: order.shippingAddressObj?.city,
-        city: order.shippingAddressObj?.city,
-        state: order.shippingAddressObj?.state,
-        post_code: order.shippingAddressObj?.zip,
-        country: order.shippingAddressObj?.country || 'AU',
+        street: street,
+        suburb: suburb,
+        city: city,
+        state: state,
+        post_code: postCode,
+        country: country,
         phone: order.customer?.phone || '',
         email: order.customer?.email || order.customerEmail || ''
       },
@@ -77,8 +124,8 @@ export class StarshipitService {
 
       // Handle soft failures (HTTP 200 but success = false)
       if (response.data && response.data.success === false) {
-        console.error('Starshipit returned soft failure. Validation errors:', response.data.validation_errors);
-        const errMsg = response.data.message || (response.data.validation_errors ? JSON.stringify(response.data.validation_errors) : 'Starshipit API returned success=false');
+        const errMsg = parseStarshipitError(response.data, 'Starshipit API returned success=false');
+        console.error('Starshipit returned soft failure. Detail:', errMsg);
         throw new Error(errMsg);
       }
 
@@ -101,7 +148,8 @@ export class StarshipitService {
         console.log('Starshipit POST /orders/shipment Response Data:', JSON.stringify(labelResponse.data, null, 2));
 
         if (labelResponse.data && labelResponse.data.success === false) {
-          throw new Error(labelResponse.data.message || 'Label generation failed in Starshipit');
+          const labelErrMsg = parseStarshipitError(labelResponse.data, 'Label generation failed in Starshipit');
+          throw new Error(labelErrMsg);
         }
 
         const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];
@@ -121,8 +169,15 @@ export class StarshipitService {
         }
 
       } catch (labelError: any) {
-        console.error('Starshipit POST /orders/shipment Error Details:', labelError.response?.data || labelError.message);
-        throw new Error(labelError.response?.data?.message || labelError.message || 'Failed to dispatch shipment / generate label');
+        console.warn('Starshipit POST /orders/shipment Warning:', labelError.response?.data || labelError.message);
+        const warning = parseStarshipitError(labelError.response?.data, labelError.message || 'Auto-label generation pending in Starshipit dashboard');
+        return {
+          orderId: starshipitOrder.order_id.toString(),
+          trackingNumber,
+          trackingCarrier,
+          labelUrl,
+          warning
+        };
       }
 
       return {
@@ -133,7 +188,8 @@ export class StarshipitService {
       };
     } catch (error: any) {
       console.error('Starshipit API Error:', error.response?.data || error.message);
-      throw new Error(error.response?.data?.message || error.message || 'Failed to create shipment with Starshipit');
+      const errMsg = parseStarshipitError(error.response?.data, error.message || 'Failed to create shipment with Starshipit');
+      throw new Error(errMsg);
     }
   }
 
