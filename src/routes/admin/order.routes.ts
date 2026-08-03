@@ -1,6 +1,16 @@
 import express from 'express';
 import { protect } from '../../middleware/auth';
-import { getOrders, getOrderById, updateOrderStatus, updateOrder, createShipment, refundOrder, getOrderRefunds } from '../../controllers/admin/orderController';
+import {
+  getOrders,
+  getOrderById,
+  updateOrderStatus,
+  updateOrder,
+  createShipment,
+  refundOrder,
+  getOrderRefunds,
+  createAdminOrder,
+  getNewOrderConfig
+} from '../../controllers/admin/orderController';
 
 const router = express.Router();
 
@@ -9,6 +19,12 @@ router.use(protect);
 
 // GET  /api/admin/orders               — paginated, filterable list
 router.get('/', getOrders);
+
+// GET  /api/admin/orders/new-config     — form config options
+router.get('/new-config', getNewOrderConfig);
+
+// POST /api/admin/orders               — create manual order
+router.post('/', createAdminOrder);
 
 // GET  /api/admin/orders/:id           — full order detail
 router.get('/:id', getOrderById);

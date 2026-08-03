@@ -9,6 +9,8 @@ import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
 import config from '../../config';
 import Refund from '../../models/Refund';
+import Customer from '../../models/Customer';
+import { generateOrderNumber } from '../payment.controller';
 
 /**
  * GET /api/admin/orders
@@ -405,5 +407,222 @@ export const getOrderRefunds = catchAsync(async (req: Request, res: Response, ne
   res.status(200).json({
     success: true,
     data: { refunds },
+  });
+});
+
+/**
+ * POST /api/admin/orders
+ *
+ * Creates a new manual order from the admin panel.
+ * - Resolves or creates a Customer profile
+ * - Decrements stock for products/variants
+ * - Calculates subtotal, discounts, shipping, and grand total
+ * - Generates SLT#######B order number
+ * - Saves order with source = 'admin_manual'
+ */
+export const createAdminOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const {
+    customerId,
+    customer,
+    shippingAddressObj,
+    billingAddressObj,
+    lineItems,
+    shippingMethod,
+    shippingCost = 0,
+    discountTotal = 0,
+    notes = '',
+    paymentStatus = 'pending',
+  } = req.body;
+
+  // 1. Basic validation
+  if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
+    return next(new AppError('At least one line item is required to create an order.', 400));
+  }
+
+  const email = customer?.email?.trim();
+  if (!email) {
+    return next(new AppError('Customer email is required.', 400));
+  }
+
+  // 2. Resolve or create Customer record
+  let customerDoc: any = null;
+  if (customerId) {
+    customerDoc = await Customer.findById(customerId);
+  }
+  if (!customerDoc) {
+    customerDoc = await Customer.findOne({ email: email.toLowerCase() });
+  }
+
+  const customerName = `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim() || 'Guest Customer';
+
+  if (!customerDoc) {
+    customerDoc = await Customer.create({
+      name: customerName,
+      email: email.toLowerCase(),
+      phone: customer?.phone || '',
+      defaultAddress: shippingAddressObj || billingAddressObj || {},
+      country: shippingAddressObj?.country || 'AU',
+      orderCount: 0,
+      totalSpent: 0,
+    });
+  }
+
+  // 3. Process line items & stock decrement
+  const processedLineItems = [];
+  let calculatedSubtotal = 0;
+
+  for (const item of lineItems) {
+    if (!item.productId && !item.title) {
+      return next(new AppError('Line item must include a valid product or title.', 400));
+    }
+
+    let productDoc: any = null;
+    if (item.productId) {
+      productDoc = await Product.findById(item.productId);
+    }
+
+    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    let unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice || '0');
+    let title = item.title || productDoc?.name || 'Item';
+    let variantTitle = item.variantTitle || '';
+    let sku = item.sku || productDoc?.sku || '';
+    let productImageUrl = item.productImageUrl || productDoc?.images?.[0] || productDoc?.image || '';
+
+    // Handle stock & pricing from product if available
+    if (productDoc) {
+      title = productDoc.name;
+
+      if (item.variantId && Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
+        const variant = productDoc.variants.find((v: any) => v._id?.toString() === item.variantId || v.sku === item.variantId);
+        if (variant) {
+          variantTitle = variant.name || variantTitle;
+          sku = variant.sku || sku;
+          if (unitPrice === 0 && variant.price) {
+            unitPrice = typeof variant.price === 'string' ? parseFloat(variant.price.replace(/[^0-9.]/g, '')) : variant.price;
+          }
+
+          // Decrement variant stock
+          if (typeof variant.stockQty === 'number') {
+            variant.stockQty = Math.max(0, variant.stockQty - qty);
+          }
+        }
+      }
+
+      if (unitPrice === 0 && productDoc.price) {
+        unitPrice = typeof productDoc.price === 'string' ? parseFloat(productDoc.price.replace(/[^0-9.]/g, '')) : productDoc.price;
+      }
+
+      // Decrement product overall stock quantity
+      if (Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
+        productDoc.stockQuantity = productDoc.variants.reduce((sum: number, v: any) => sum + (v.stockQty || 0), 0);
+      } else if (typeof productDoc.stockQuantity === 'number') {
+        productDoc.stockQuantity = Math.max(0, productDoc.stockQuantity - qty);
+      }
+      productDoc.inStock = (productDoc.stockQuantity || 0) > 0;
+      await productDoc.save({ validateBeforeSave: false });
+    }
+
+    const lineDiscount = Math.max(0, parseFloat(item.discountAmount || 0));
+    const lineSubtotal = Math.max(0, (unitPrice * qty) - lineDiscount);
+
+    calculatedSubtotal += lineSubtotal;
+
+    processedLineItems.push({
+      title,
+      variantTitle,
+      sku,
+      quantity: qty,
+      unitPrice,
+      subtotal: lineSubtotal,
+      productImageUrl,
+    });
+  }
+
+  // 4. Financial calculations
+  const parsedShippingCost = Math.max(0, parseFloat(shippingCost) || 0);
+  const parsedDiscountTotal = Math.max(0, parseFloat(discountTotal) || 0);
+  const grandTotal = Math.max(0, calculatedSubtotal - parsedDiscountTotal + parsedShippingCost);
+
+  // 5. Generate Order Number
+  const orderNumber = await generateOrderNumber();
+
+  // 6. Admin user credentials (audit log)
+  const adminUser = (req as any).admin;
+  const createdByAdmin = adminUser ? {
+    id: adminUser._id?.toString() || adminUser.id,
+    email: adminUser.email,
+    name: adminUser.name || adminUser.email
+  } : undefined;
+
+  // 7. Create Order document
+  const isPaid = paymentStatus === 'paid';
+  const order = await Order.create({
+    orderNumber,
+    customer: {
+      firstName: customer?.firstName || customerDoc.name?.split(' ')[0] || '',
+      lastName: customer?.lastName || customerDoc.name?.split(' ').slice(1).join(' ') || '',
+      email: email.toLowerCase(),
+      phone: customer?.phone || customerDoc.phone || '',
+    },
+    customerEmail: email.toLowerCase(),
+    customerName,
+    shippingAddressObj: shippingAddressObj || billingAddressObj || {},
+    billingAddressObj: billingAddressObj || shippingAddressObj || {},
+    shippingAddress: shippingAddressObj ? `${shippingAddressObj.street1 || ''}, ${shippingAddressObj.city || ''} ${shippingAddressObj.state || ''} ${shippingAddressObj.zip || ''} ${shippingAddressObj.country || ''}` : '',
+    lineItems: processedLineItems,
+    subtotal: calculatedSubtotal,
+    discountAmount: parsedDiscountTotal,
+    shippingAmount: parsedShippingCost,
+    grandTotal,
+    totalAmount: grandTotal,
+    currency: 'AUD',
+    shippingMethodName: shippingMethod || 'Australia Post Express Shipping',
+    status: isPaid ? 'processing' : 'pending',
+    fulfilmentStatus: 'unfulfilled',
+    paymentMethod: 'manual_offline',
+    paymentStatus: isPaid ? 'paid' : 'pending',
+    source: 'admin_manual',
+    createdByAdmin,
+    adminNotes: notes,
+    comments: [{
+      text: `Order created manually by admin (${adminUser?.email || 'admin'}). Payment status: ${isPaid ? 'Paid (manual)' : 'Pending'}.`,
+      createdAt: new Date(),
+    }],
+  });
+
+  // 8. Update Customer lifetime statistics
+  customerDoc.orderCount = (customerDoc.orderCount || 0) + 1;
+  if (isPaid) {
+    customerDoc.totalSpent = (customerDoc.totalSpent || 0) + grandTotal;
+  }
+  await customerDoc.save({ validateBeforeSave: false });
+
+  res.status(201).json({
+    success: true,
+    message: 'Manual order created successfully',
+    data: { order },
+  });
+});
+
+/**
+ * GET /api/admin/orders/new-config
+ *
+ * Config presets for building the manual order creation form.
+ */
+export const getNewOrderConfig = catchAsync(async (req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    data: {
+      shippingMethods: [
+        { code: 'AUS_POST_EXPRESS', name: 'Australia Post Express Shipping', defaultCost: 15.00 },
+        { code: 'AUS_POST_STANDARD', name: 'Australia Post Standard Shipping', defaultCost: 10.00 },
+        { code: 'CUSTOM_SHIPPING', name: 'Custom / Direct Shipping', defaultCost: 0.00 },
+      ],
+      paymentStatuses: [
+        { code: 'pending', label: 'Pending Payment' },
+        { code: 'paid', label: 'Paid (Manual / Offline)' },
+      ],
+      currency: 'AUD',
+    },
   });
 });

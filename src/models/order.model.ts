@@ -85,8 +85,14 @@ export interface IOrder extends mongoose.Document {
   // ── Status ───────────────────────────────────────────────────────────────────
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   fulfilmentStatus: 'unfulfilled' | 'fulfilled' | 'partial';
-  paymentMethod?: 'tagada' | 'payid' | 'bank_transfer';
+  paymentMethod?: 'tagada' | 'payid' | 'bank_transfer' | 'manual_offline';
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
+  source?: 'storefront' | 'admin_manual' | 'web';
+  createdByAdmin?: {
+    id: string;
+    email: string;
+    name?: string;
+  };
   tagadaPaymentId?: string;
   tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded' | 'succeeded';
   tagadaEnv?: 'sandbox' | 'prod';
@@ -210,12 +216,22 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
     paymentMethod: {
       type: String,
-      enum: ['tagada', 'payid', 'bank_transfer'],
+      enum: ['tagada', 'payid', 'bank_transfer', 'manual_offline'],
     },
     paymentStatus: {
       type: String,
       enum: ['pending', 'paid', 'failed', 'refunded'],
       default: 'pending',
+    },
+    source: {
+      type: String,
+      enum: ['storefront', 'admin_manual', 'web'],
+      default: 'storefront',
+    },
+    createdByAdmin: {
+      id: { type: String },
+      email: { type: String },
+      name: { type: String }
     },
 
     // ── TagadaPay ────────────────────────────────────────────────────────────────
