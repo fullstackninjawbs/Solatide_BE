@@ -25,7 +25,6 @@ import { generateOrderNumber } from '../payment.controller';
  *   limit             - results per page (default: 50)
  */
 export const getOrders = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-
   const {
     status,
     paymentStatus,
@@ -186,10 +185,6 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   const order = await Order.findById(req.params.id);
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
-  }
-
-  if (order.paymentStatus !== 'paid') {
-    return next(new AppError('Cannot create shipment for unpaid order', 400));
   }
 
   if (order.easyPostShipmentId || order.starshipitOrderId) {
