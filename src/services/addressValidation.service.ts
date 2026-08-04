@@ -53,6 +53,9 @@ export class AddressValidationService {
         }
       };
 
+
+      console.log(payload)
+
       console.log(`[AddressValidationService] Validating address for Order ${orderId}...`);
 
       const response = await axios.post(
@@ -67,57 +70,84 @@ export class AddressValidationService {
 
       // Determine validation status based on verdict
       const verdict = result.verdict;
-      
+
       let isValid = true;
       let needsReview = false;
       let reasons: string[] = [];
 
-      // 1. Unconfirmed components
-      if (verdict.hasUnconfirmedComponents) {
-        needsReview = true;
-        isValid = false;
-        reasons.push('Unconfirmed address components found');
-      }
-
-      // 2. Granularity / Not fully confirmed
-      if (verdict.validationGranularity === 'OTHER' || verdict.geocodeGranularity === 'OTHER') {
-        needsReview = true;
-        isValid = false;
-        reasons.push('Address granularity is poor (not fully confirmed)');
-      }
+      // 1. (Removed: Unconfirmed components check)
+      // 2. (Removed: Granularity / Not fully confirmed check)
 
       // 3. Inspect individual components for serious replacements/inferences (ignore benign formatting)
+      const unexpectedComponents: string[] = [];
+      const suspiciousComponents: string[] = [];
+      let postcodeReplaced = false;
+
       if (result.address && result.address.addressComponents) {
         for (const comp of result.address.addressComponents) {
           const type = comp.componentType;
-          
+          const text = comp.componentName?.text;
+          if (!text || text.toLowerCase() === 'undefined') continue;
+
           if (comp.unexpected) {
-             needsReview = true;
-             isValid = false;
-             reasons.push(`Unexpected component found: ${comp.componentName?.text}`);
-          }
-          
-          if (comp.confirmationLevel === 'UNCONFIRMED_BUT_PLAUSIBLE' || comp.confirmationLevel === 'UNCONFIRMED_AND_SUSPICIOUS') {
-             needsReview = true;
-             isValid = false;
-             reasons.push(`Component '${comp.componentName?.text}' could not be confirmed`);
+            needsReview = true;
+            isValid = false;
+            unexpectedComponents.push(text);
           }
 
-          // Flag if postcode was inferred or replaced (City/State/Postcode mismatch)
-          if (type === 'postal_code' && (comp.replaced || comp.inferred)) {
-             needsReview = true;
-             isValid = false;
-             reasons.push(`Postcode was ${comp.replaced ? 'replaced' : 'inferred'}: ${comp.componentName?.text}`);
+          if (comp.confirmationLevel === 'UNCONFIRMED_AND_SUSPICIOUS') {
+            needsReview = true;
+            isValid = false;
+            suspiciousComponents.push(text);
+          }
+
+          // Flag if postcode was replaced by a completely different one (ignore inferred as it's a helpful correction)
+          if (type === 'postal_code' && comp.replaced) {
+            needsReview = true;
+            isValid = false;
+            postcodeReplaced = true;
           }
         }
       }
 
       // 4. Missing required components
+      const missingComponents: string[] = [];
+      const missingComponentsMap: Record<string, string> = {
+        street_number: 'house/street number',
+        route: 'street name',
+        locality: 'city/suburb',
+        administrative_area_level_1: 'state/province',
+        postal_code: 'ZIP/postal code',
+        country: 'country'
+      };
+
       if (result.address && result.address.missingComponentTypes && result.address.missingComponentTypes.length > 0) {
         needsReview = true;
         isValid = false;
-        reasons.push(`Missing required components: ${result.address.missingComponentTypes.join(', ')}`);
+        for (const t of result.address.missingComponentTypes) {
+          const mapped = missingComponentsMap[t];
+          if (mapped) missingComponents.push(mapped);
+        }
       }
+
+      // Build clean user-centric validation message
+      const messages: string[] = [];
+      if (unexpectedComponents.length > 0) {
+        const uniqueUnexpected = Array.from(new Set(unexpectedComponents));
+        messages.push(`The following details seem incorrect or out of place: "${uniqueUnexpected.join(', ')}".`);
+      }
+      if (suspiciousComponents.length > 0) {
+        const uniqueSuspicious = Array.from(new Set(suspiciousComponents));
+        messages.push(`Could not verify: "${uniqueSuspicious.join(', ')}".`);
+      }
+      if (postcodeReplaced) {
+        messages.push('The postal code was incorrect and has been updated.');
+      }
+      if (missingComponents.length > 0) {
+        messages.push(`Please add the missing ${missingComponents.join(', ')}.`);
+      }
+
+      const validationMessage = messages.join(' ') || 'Address is valid';
 
       // Format suggested address from google response
       let suggestedAddress: any = null;
@@ -138,25 +168,25 @@ export class AddressValidationService {
       console.log(`- Original Address: ${JSON.stringify(address)}`);
       console.log(`- Google Formatted Address: ${result.address?.postalAddress?.addressLines?.join(', ') || 'N/A'}`);
       console.log(`- Google Verdict: ${JSON.stringify(verdict)}`);
-      console.log(`- needsReview evaluated to: ${needsReview}. Reasons: ${reasons.length > 0 ? reasons.join('; ') : 'None'}\n`);
+      console.log(`- needsReview evaluated to: ${needsReview}. Reasons: ${validationMessage}\n`);
 
       // Update order
       order.addressValidation = {
         isValid,
         needsReview,
-        validationMessage: reasons.join('; ') || 'Address is valid',
+        validationMessage,
         suggestedAddress, // Always save for reference
         googleResponse: result,
         checkedAt: new Date()
       };
 
       await order.save({ validateBeforeSave: false });
-      
+
       console.log(`[AddressValidationService] Validation complete for Order ${orderId}. Needs Review: ${needsReview}`);
 
     } catch (error: any) {
       console.error(`[AddressValidationService] Error validating address for Order ${orderId}:`, error?.response?.data || error.message);
-      
+
       const isBadRequest = error?.response?.status === 400;
       const errorMessage = error?.response?.data?.error?.message || 'Validation API failed or was unreachable';
 

@@ -90,15 +90,29 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
  * Full order detail — returns all fields.
  */
 export const getOrderById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const order = await Order.findById(req.params.id).lean();
+  let order = await Order.findById(req.params.id);
 
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
   }
 
+  // Automatically trigger address validation on first view if not yet checked
+  if (!order.addressValidation?.checkedAt && order.shippingAddressObj && order.shippingAddressObj.street1) {
+    try {
+      await AddressValidationService.validateOrderAddress(order._id);
+      // Re-fetch the updated order document
+      const updatedOrder = await Order.findById(req.params.id);
+      if (updatedOrder) {
+        order = updatedOrder;
+      }
+    } catch (err) {
+      console.error(`[getOrderById] Failed to validate order address for ${order._id}:`, err);
+    }
+  }
+
   res.status(200).json({
     success: true,
-    data: { order },
+    data: { order: order.toObject ? order.toObject() : order },
   });
 });
 
@@ -421,6 +435,7 @@ export const getOrderRefunds = catchAsync(async (req: Request, res: Response, ne
  * - Saves order with source = 'admin_manual'
  */
 export const createAdminOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+
   const {
     customerId,
     customer,
@@ -631,5 +646,31 @@ export const getNewOrderConfig = catchAsync(async (req: Request, res: Response) 
       ],
       currency: 'AUD',
     },
+  });
+});
+
+/**
+ * POST /api/admin/orders/:id/revalidate-address
+ *
+ * Clears cached address validation and re-runs it from scratch.
+ */
+export const revalidateOrderAddress = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order = await Order.findById(req.params.id);
+  if (!order) {
+    return next(new AppError('No order found with that ID', 404));
+  }
+
+  // Clear old cached result so the service will re-run
+  order.addressValidation = undefined as any;
+  await order.save({ validateBeforeSave: false });
+
+  // Trigger fresh validation asynchronously
+  AddressValidationService.validateOrderAddress(order._id).catch(err => {
+    console.error('[Admin Order] Re-validation Error:', err);
+  });
+
+  res.status(200).json({
+    success: true,
+    message: 'Address re-validation triggered. Refresh the order shortly to see updated results.',
   });
 });

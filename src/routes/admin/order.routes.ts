@@ -9,7 +9,8 @@ import {
   refundOrder,
   getOrderRefunds,
   createAdminOrder,
-  getNewOrderConfig
+  getNewOrderConfig,
+  revalidateOrderAddress
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -43,5 +44,8 @@ router.get('/:id/refunds', getOrderRefunds);
 
 // POST /api/admin/orders/:id/shipment — create shipment
 router.post('/:id/shipment', createShipment);
+
+// POST /api/admin/orders/:id/revalidate-address — force re-run address validation
+router.post('/:id/revalidate-address', revalidateOrderAddress);
 
 export default router;
