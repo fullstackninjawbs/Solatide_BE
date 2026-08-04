@@ -23,6 +23,7 @@ import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
 import config from '../config';
 import { sendOrderConfirmationEmail } from '../services/emailService';
+import AddressValidationService from '../services/addressValidation.service';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -712,6 +713,13 @@ export const tagadaWebhook = catchAsync(async (
 
   try {
     await order.save({ validateBeforeSave: false });
+    
+    // Trigger Google Address Validation asynchronously
+    if (newPaymentStatus === 'paid' && order.shippingAddressObj) {
+      AddressValidationService.validateOrderAddress(order._id).catch(err => {
+        console.error('[TagadaPay Webhook] Address Validation Error:', err);
+      });
+    }
   } catch (err: any) {
     if (err.name === 'VersionError') {
       console.warn(`[TagadaPay Webhook] Version conflict for order ${order._id}. Ignored as another webhook likely processed it.`);

@@ -115,6 +115,16 @@ export interface IOrder extends mongoose.Document {
   adminNotes?: string;
   comments?: { text: string; createdAt: Date }[];
 
+  // ── Validation ───────────────────────────────────────────────────────────────
+  addressValidation?: {
+    isValid: boolean;
+    needsReview: boolean;
+    validationMessage?: string;
+    suggestedAddress?: any;
+    googleResponse?: any;
+    checkedAt?: Date;
+  };
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -272,6 +282,16 @@ const orderSchema = new mongoose.Schema<IOrder>(
       text: { type: String, required: true },
       createdAt: { type: Date, default: Date.now }
     }],
+    
+    // ── Validation ───────────────────────────────────────────────────────────────
+    addressValidation: {
+      isValid: { type: Boolean },
+      needsReview: { type: Boolean },
+      validationMessage: { type: String },
+      suggestedAddress: { type: mongoose.Schema.Types.Mixed },
+      googleResponse: { type: mongoose.Schema.Types.Mixed },
+      checkedAt: { type: Date }
+    },
   },
   { timestamps: true }
 );

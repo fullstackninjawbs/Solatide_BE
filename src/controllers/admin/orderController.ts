@@ -11,6 +11,7 @@ import config from '../../config';
 import Refund from '../../models/Refund';
 import Customer from '../../models/Customer';
 import { generateOrderNumber } from '../payment.controller';
+import AddressValidationService from '../../services/addressValidation.service';
 
 /**
  * GET /api/admin/orders
@@ -156,7 +157,11 @@ export const updateOrder = catchAsync(async (req: Request, res: Response, next: 
   const updateFields: Record<string, any> = {};
   if (tags !== undefined) updateFields.tags = tags;
   if (comments !== undefined) updateFields.comments = comments;
-  if (shippingAddressObj !== undefined) updateFields.shippingAddressObj = shippingAddressObj;
+  if (shippingAddressObj !== undefined) {
+    updateFields.shippingAddressObj = shippingAddressObj;
+    // Clear the address validation warning when admin manually updates shipping address
+    updateFields['addressValidation.needsReview'] = false;
+  }
   if (billingAddressObj !== undefined) updateFields.billingAddressObj = billingAddressObj;
   if (adminNotes !== undefined) updateFields.adminNotes = adminNotes;
 
@@ -591,6 +596,13 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     customerDoc.totalSpent = (customerDoc.totalSpent || 0) + grandTotal;
   }
   await customerDoc.save({ validateBeforeSave: false });
+
+  // 9. Trigger Google Address Validation asynchronously
+  if (order.shippingAddressObj) {
+    AddressValidationService.validateOrderAddress(order._id).catch(err => {
+      console.error('[Admin Order] Address Validation Error:', err);
+    });
+  }
 
   res.status(201).json({
     success: true,
