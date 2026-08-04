@@ -337,3 +337,70 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
     throw error;
   }
 };
+
+export const sendResetPasswordEmail = async (email: string, resetToken: string, name: string) => {
+  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+  const resetUrl = `${clientUrl}/admin/reset-password/${resetToken}`;
+  const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Reset Your Password</title>
+      <style>
+        body { font-family: sans-serif; background-color: #f6f6f6; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; padding: 40px 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { max-height: 40px; }
+        h2 { color: #333; font-size: 24px; margin-bottom: 20px; text-align: center; }
+        p { color: #555; font-size: 15px; line-height: 1.6; margin-bottom: 20px; }
+        .button-container { text-align: center; margin: 30px 0; }
+        .button { background-color: #214A9E; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block; }
+        .footer { text-align: center; margin-top: 40px; color: #9ca3af; font-size: 12px; border-top: 1px solid #f3f4f6; padding-top: 20px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <img src="${companyLogo}" alt="Solatide Biosciences" class="logo" />
+        </div>
+        
+        <h2>Password Reset Request</h2>
+        <p>Hi ${name},</p>
+        <p>You requested to reset your password for the Solatide Biosciences Admin Portal. Click the button below to set a new password. This link is only valid for 10 minutes.</p>
+
+        <div class="button-container">
+          <a href="${resetUrl}" class="button" style="color: #ffffff;">Reset Password</a>
+        </div>
+
+        <p>If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
+
+        <div class="footer">
+          Solatide Biosciences Admin Portal &copy; ${new Date().getFullYear()}
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const fromName = process.env.SMTP_FROM_NAME || 'Solatide Biosciences';
+  const fromEmail = process.env.SMTP_FROM_EMAIL || 'noreply@solatide.com';
+
+  const mailOptions = {
+    from: `${fromName} <${fromEmail}>`,
+    to: email,
+    subject: `Password Reset Link - Solatide Biosciences`,
+    html,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Password reset email sent to ${email}`);
+  } catch (error) {
+    console.error('Error sending reset email:', error);
+    throw error;
+  }
+};

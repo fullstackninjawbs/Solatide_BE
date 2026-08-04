@@ -6,6 +6,8 @@ export interface IUser extends mongoose.Document {
   email: string;
   password?: string;
   role: 'super_admin' | 'operations' | 'content_manager' | 'support' | 'user' | 'admin';
+  passwordResetToken?: string;
+  passwordResetExpires?: Date;
   createdAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
@@ -40,6 +42,8 @@ const userSchema = new mongoose.Schema<IUser>(
       enum: ['super_admin', 'operations', 'content_manager', 'support', 'user', 'admin'],
       default: 'user',
     },
+    passwordResetToken: String,
+    passwordResetExpires: Date,
   },
   {
     timestamps: true,

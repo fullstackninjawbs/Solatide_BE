@@ -14,7 +14,7 @@ export const logEvent = async (req: Request, res: Response): Promise<void> => {
   res.status(200).json({ success: true });
 
   try {
-    const { sessionId, eventType, timestamp, productId, orderId, country, cartValue, page, productName, path } = req.body;
+    const { sessionId, eventType, timestamp, productId, orderId, country, region, city, cartValue, page, productName, path } = req.body;
 
     // Basic validation — silently ignore invalid events
     if (!sessionId || typeof sessionId !== 'string') return;
@@ -26,6 +26,14 @@ export const logEvent = async (req: Request, res: Response): Promise<void> => {
       (req.headers['x-country'] as string) ||
       'Australia';
 
+    const detectedRegion = region ||
+      (req.headers['cf-region'] as string) ||
+      undefined;
+
+    const detectedCity = city ||
+      (req.headers['cf-ipcity'] as string) ||
+      undefined;
+
     const eventPath = path || page || '/';
 
     await AnalyticsEvent.create({
@@ -33,6 +41,8 @@ export const logEvent = async (req: Request, res: Response): Promise<void> => {
       eventType,
       timestamp: timestamp ? new Date(timestamp) : new Date(),
       country: detectedCountry,
+      region: detectedRegion,
+      city: detectedCity,
       productId: productId || undefined,
       productName: productName ? String(productName).slice(0, 256) : undefined,
       orderId: orderId || undefined,

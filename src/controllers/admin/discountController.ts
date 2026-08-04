@@ -8,6 +8,7 @@ import config from '../../config';
 
 // GET /api/admin/discount
 export const getDiscounts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 50;
   const skip = (page - 1) * limit;
@@ -57,20 +58,20 @@ export const syncFromTagada = catchAsync(async (req: Request, res: Response, nex
   const client = await getTagadaClient();
   const settings = await PaymentSettings.findOne();
   const storeId = config.tagadaStoreId || (settings as any)?.tagadaStoreId;
-  
+
   if (!storeId) {
     return next(new AppError('Tagada Pay Store ID is not configured.', 400));
   }
-  
+
   let tagadaPromotions = [];
   let tagadaCodes = [];
-  
+
   try {
     const promoData = await client.promotions.list({ storeId });
     console.log('--- RAW TAGADA PROMOTIONS RESPONSE ---');
     console.log(JSON.stringify(promoData, null, 2));
     tagadaPromotions = Array.isArray(promoData) ? promoData : (promoData.items || promoData.data || promoData.promotions || []);
-    
+
     const codeData = await client.promotionCodes.list({ storeId });
     console.log('--- RAW TAGADA PROMOTION CODES RESPONSE ---');
     console.log(JSON.stringify(codeData, null, 2));
@@ -79,16 +80,16 @@ export const syncFromTagada = catchAsync(async (req: Request, res: Response, nex
     console.error('[TagadaPay] Failed to fetch existing promotions:', err?.response?.data || err.message);
     return next(new AppError('Failed to fetch from Tagada Pay.', 502));
   }
-  
+
   let imported = 0;
-  
+
   for (const promo of tagadaPromotions) {
     // Find associated code if any
     const codeObj = tagadaCodes.find((c: any) => c.promotionId === promo.id);
-    
+
     // Tagada's actual code string might be in codeObj.code, promo.code, or promo.name
     const actualCode = codeObj?.code || promo.code || promo.name;
-    
+
     if (!actualCode) continue;
 
     // Check if it already exists in our DB
@@ -106,7 +107,7 @@ export const syncFromTagada = catchAsync(async (req: Request, res: Response, nex
       imported++;
     }
   }
-  
+
   res.status(200).json({ success: true, message: `Successfully imported ${imported} coupons from Tagada Pay.` });
 });
 
@@ -136,17 +137,17 @@ export const createDiscount = catchAsync(async (req: Request, res: Response, nex
       discountValue: discount.value,
       active: discount.status === 'active'
     });
-    
+
     let promoCode;
     try {
       promoCode = await client.promotionCodes.create({
         promotion: promo.id,
         code: discount.code
       });
-    } catch(err: any) {
+    } catch (err: any) {
       console.error('[TagadaPay] Failed to create promotion code:', err?.response?.data || err.message);
     }
-    
+
     discount.tagadaPromotionId = promo.id;
     if (promoCode) {
       discount.tagadaPromotionCodeId = promoCode.id;
@@ -199,8 +200,8 @@ export const updateDiscount = catchAsync(async (req: Request, res: Response, nex
           promotion: promo.id,
           code: discount.code
         });
-      } catch(err: any) {}
-      
+      } catch (err: any) { }
+
       discount.tagadaPromotionId = promo.id;
       if (promoCode) discount.tagadaPromotionCodeId = promoCode.id;
       await discount.save({ validateBeforeSave: false });

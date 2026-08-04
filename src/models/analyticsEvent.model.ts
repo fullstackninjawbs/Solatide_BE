@@ -12,6 +12,8 @@ export interface IAnalyticsEvent extends mongoose.Document {
   eventType: AnalyticsEventType;
   timestamp: Date;
   country?: string;
+  region?: string;
+  city?: string;
   productId?: mongoose.Types.ObjectId;
   orderId?: mongoose.Types.ObjectId;
   cartValue?: number;
@@ -39,6 +41,14 @@ const analyticsEventSchema = new mongoose.Schema<IAnalyticsEvent>(
       index: true,
     },
     country: {
+      type: String,
+      trim: true,
+    },
+    region: {
+      type: String,
+      trim: true,
+    },
+    city: {
       type: String,
       trim: true,
     },
