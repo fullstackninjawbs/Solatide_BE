@@ -15,6 +15,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { tagadaClient, getTagadaClient } from '../services/tagadaClient';
 import Order from '../models/order.model';
+import Product from '../models/product.model';
 import Customer from '../models/Customer';
 import PaymentSettings from '../models/PaymentSettings';
 import Refund from '../models/Refund';
@@ -270,6 +271,75 @@ export async function generateOrderNumber(): Promise<string> {
   }
 
   return orderNumber;
+}
+
+/**
+ * Decrements stock in the database for each line item paid via Tagada
+ */
+async function decrementTagadaInventory(lineItems: any[]) {
+  for (const item of lineItems) {
+    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    const tagadaVarId = item.variantId;
+    const sku = item.sku;
+
+    if (!tagadaVarId && !sku) continue;
+
+    // Try to find the product by tagadaVariantId or SKU
+    const queryConditions: any[] = [];
+    if (tagadaVarId) {
+      queryConditions.push({ tagadaVariantId: tagadaVarId });
+      queryConditions.push({ 'variants.tagadaVariantId': tagadaVarId });
+    }
+    if (sku) {
+      queryConditions.push({ sku: sku });
+      queryConditions.push({ 'variants.sku': sku });
+    }
+
+    const productDoc = await Product.findOne({ $or: queryConditions });
+
+    if (!productDoc) {
+      console.warn(`[Inventory] No product found with tagadaVariantId=${tagadaVarId} or sku=${sku}`);
+      continue;
+    }
+
+    let updated = false;
+
+    // Check if it matches a variant
+    if (Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
+      const variant = productDoc.variants.find((v: any) => 
+        (tagadaVarId && v.tagadaVariantId === tagadaVarId) || (sku && v.sku === sku)
+      );
+      if (variant) {
+        if (typeof variant.stockQty === 'number') {
+          variant.stockQty = Math.max(0, variant.stockQty - qty);
+          updated = true;
+        }
+      }
+    }
+
+    // Check if it matches the base product directly (and we didn't update a variant)
+    if (!updated) {
+      const isBaseProductMatch = 
+        (tagadaVarId && productDoc.tagadaVariantId === tagadaVarId) || 
+        (sku && productDoc.sku === sku);
+      
+      if (isBaseProductMatch && typeof productDoc.stockQuantity === 'number') {
+        productDoc.stockQuantity = Math.max(0, productDoc.stockQuantity - qty);
+        updated = true;
+      }
+    }
+
+    // If we updated a variant, recalculate base product's total stock quantity
+    if (updated && Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
+      productDoc.stockQuantity = productDoc.variants.reduce((sum: number, v: any) => sum + (v.stockQty || 0), 0);
+    }
+
+    if (updated) {
+      productDoc.inStock = (productDoc.stockQuantity || 0) > 0;
+      await productDoc.save({ validateBeforeSave: false });
+      console.log(`[Inventory] Decremented stock for product ${productDoc.name} (SKU: ${sku}) by ${qty}. New stock: ${productDoc.stockQuantity}`);
+    }
+  }
 }
 
 /**
@@ -635,6 +705,15 @@ export const tagadaWebhook = catchAsync(async (
         console.log(`[Email] Order confirmation sent for ${order.orderNumber}`);
       } catch (error) {
         console.error(`[Email] Failed to send order confirmation for ${order.orderNumber}:`, error);
+      }
+
+      // Decrement Inventory for paid order items
+      if (lineItems && lineItems.length > 0) {
+        try {
+          await decrementTagadaInventory(lineItems);
+        } catch (error) {
+          console.error('[Inventory] Failed to decrement stock for paid storefront order:', error);
+        }
       }
 
       // Upsert Customer Record
