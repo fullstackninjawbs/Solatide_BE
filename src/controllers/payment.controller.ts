@@ -699,116 +699,133 @@ export const tagadaWebhook = catchAsync(async (
       `[TagadaPay] Order ${order._id} PAID → orderNumber=${order.orderNumber}, status=processing`
     );
 
-    if (!wasAlreadyPaid) {
-      try {
-        await sendOrderConfirmationEmail(order);
-        console.log(`[Email] Order confirmation sent for ${order.orderNumber}`);
-      } catch (error) {
-        console.error(`[Email] Failed to send order confirmation for ${order.orderNumber}:`, error);
-      }
-
-      // Decrement Inventory for paid order items
-      if (lineItems && lineItems.length > 0) {
-        try {
-          await decrementTagadaInventory(lineItems);
-        } catch (error) {
-          console.error('[Inventory] Failed to decrement stock for paid storefront order:', error);
-        }
-      }
-
-      // Upsert Customer Record
-      if (order.customerEmail) {
-        try {
-          const customerName = order.customerName || (order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : 'Unknown Customer');
-          const customerCountry = order.shippingAddressObj?.country || order.billingAddressObj?.country || '';
-
-          await Customer.findOneAndUpdate(
-            { email: order.customerEmail },
-            {
-              $set: {
-                name: customerName,
-                country: customerCountry,
-                defaultAddress: order.shippingAddressObj || undefined,
-              },
-              $inc: {
-                orderCount: 1,
-                totalSpent: order.grandTotal || 0,
-              }
-            },
-            { upsert: true, new: true }
-          );
-          console.log(`[Customer] Upserted CRM record for ${order.customerEmail}`);
-        } catch (error) {
-          console.error(`[Customer] Failed to upsert CRM record:`, error);
-        }
-      }
-    }
-  }
-
-  if (newPaymentStatus === 'failed') {
-    console.log(`[TagadaPay] Order ${order._id} FAILED`);
-    // TODO: Release reserved stock
-  }
-
-  if (newPaymentStatus === 'refunded' || eventType === 'payment/partially_refunded' || eventType.includes('refund')) {
-    console.log(`[TagadaPay] Order ${order._id} REFUND EVENT (${eventType})`);
-
-    // We assume Tagada webhook provides the refunded amount in `payload.data.amount_refunded` or similar.
-    // If not, we will rely on what was initiated.
-    const refundedAmount = dAny.amount_refunded || dAny.refundedAmount || dAny.amount || 0;
-
-    // Update the pending Refund record (if any exists for this order)
+    // Save the order to DB immediately to release the API caller/client
     try {
-      const pendingRefund = await Refund.findOne({ order: order._id, status: 'pending' });
-      if (pendingRefund) {
-        pendingRefund.status = 'succeeded';
-        // Tagada's refund ID might be in the payload
-        pendingRefund.tagadaRefundId = dAny.id || dAny.refund_id || pendingRefund.tagadaRefundId;
-        await pendingRefund.save();
+      await order.save({ validateBeforeSave: false });
+    } catch (err: any) {
+      if (err.name === 'VersionError') {
+        console.warn(`[TagadaPay Webhook] Version conflict for order ${order._id}. Ignored as another webhook likely processed it.`);
+        res.status(200).json({ received: true });
+        return;
       } else {
-        // If no pending refund is found, it means the refund was initiated directly from Tagada Dashboard
-        await Refund.create({
-          order: order._id,
-          amount: refundedAmount,
-          reason: 'Initiated from Tagada Dashboard',
-          type: newPaymentStatus === 'refunded' ? 'full' : 'partial',
-          status: 'succeeded',
-          tagadaRefundId: dAny.id || dAny.refund_id
-        });
+        throw err;
       }
-    } catch (err) {
-      console.error('[TagadaPay Webhook] Failed to update Refund record:', err);
     }
 
-    if (newPaymentStatus === 'refunded') {
-      order.refundStatus = 'refunded';
-      order.refundedAmount = order.grandTotal || refundedAmount;
-    } else {
-      order.refundStatus = 'partially_refunded';
-      // accumulate the refunded amount
-      order.refundedAmount = (order.refundedAmount || 0) + refundedAmount;
-    }
-  }
+    // Respond 200 to Tagada immediately to prevent timeout or frontend polling delays
+    res.status(200).json({ received: true });
 
-  try {
-    await order.save({ validateBeforeSave: false });
-    
-    // Trigger Google Address Validation asynchronously
-    if (newPaymentStatus === 'paid' && order.shippingAddressObj) {
-      AddressValidationService.validateOrderAddress(order._id).catch(err => {
-        console.error('[TagadaPay Webhook] Address Validation Error:', err);
+    // Run remaining post-payment side-effects asynchronously in the background
+    if (newPaymentStatus === 'paid' && !wasAlreadyPaid) {
+      (async () => {
+        // 1) Send order confirmation email
+        try {
+          await sendOrderConfirmationEmail(order);
+          console.log(`[Email] Order confirmation sent for ${order.orderNumber}`);
+        } catch (error) {
+          console.error(`[Email] Failed to send order confirmation for ${order.orderNumber}:`, error);
+        }
+
+        // 2) Decrement Inventory for paid order items
+        if (lineItems && lineItems.length > 0) {
+          try {
+            await decrementTagadaInventory(lineItems);
+          } catch (error) {
+            console.error('[Inventory] Failed to decrement stock for paid storefront order:', error);
+          }
+        }
+
+        // 3) Upsert Customer CRM Record
+        if (order.customerEmail) {
+          try {
+            const customerName = order.customerName || (order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : 'Unknown Customer');
+            const customerCountry = order.shippingAddressObj?.country || order.billingAddressObj?.country || '';
+
+            await Customer.findOneAndUpdate(
+              { email: order.customerEmail },
+              {
+                $set: {
+                  name: customerName,
+                  country: customerCountry,
+                  defaultAddress: order.shippingAddressObj || undefined,
+                },
+                $inc: {
+                  orderCount: 1,
+                  totalSpent: order.grandTotal || 0,
+                }
+              },
+              { upsert: true, new: true }
+            );
+            console.log(`[Customer] Upserted CRM record for ${order.customerEmail}`);
+          } catch (error) {
+            console.error(`[Customer] Failed to upsert CRM record:`, error);
+          }
+        }
+
+        // 4) Trigger Google Address Validation
+        if (order.shippingAddressObj) {
+          try {
+            await AddressValidationService.validateOrderAddress(order._id);
+            console.log(`[Address Validation] Validated shipping address for order ${order.orderNumber}`);
+          } catch (err) {
+            console.error('[TagadaPay Webhook] Address Validation Error:', err);
+          }
+        }
+      })().catch(err => {
+        console.error('[TagadaPay Webhook] Background tasks error:', err);
       });
     }
-  } catch (err: any) {
-    if (err.name === 'VersionError') {
-      console.warn(`[TagadaPay Webhook] Version conflict for order ${order._id}. Ignored as another webhook likely processed it.`);
-    } else {
-      throw err; // Let catchAsync handle it and send a 500 so Tagada retries
+  } else {
+    // If not a 'paid' transition (e.g. failed or refunded), save and respond normally
+    if (newPaymentStatus === 'failed') {
+      console.log(`[TagadaPay] Order ${order._id} FAILED`);
     }
-  }
 
-  // Always respond 200 to prevent Tagada from retrying
-  res.status(200).json({ received: true });
+    if (newPaymentStatus === 'refunded' || eventType === 'payment/partially_refunded' || eventType.includes('refund')) {
+      console.log(`[TagadaPay] Order ${order._id} REFUND EVENT (${eventType})`);
+      const refundedAmount = dAny.amount_refunded || dAny.refundedAmount || dAny.amount || 0;
+
+      try {
+        const pendingRefund = await Refund.findOne({ order: order._id, status: 'pending' });
+        if (pendingRefund) {
+          pendingRefund.status = 'succeeded';
+          pendingRefund.tagadaRefundId = dAny.id || dAny.refund_id || pendingRefund.tagadaRefundId;
+          await pendingRefund.save();
+        } else {
+          await Refund.create({
+            order: order._id,
+            amount: refundedAmount,
+            reason: 'Initiated from Tagada Dashboard',
+            type: newPaymentStatus === 'refunded' ? 'full' : 'partial',
+            status: 'succeeded',
+            tagadaRefundId: dAny.id || dAny.refund_id
+          });
+        }
+      } catch (err) {
+        console.error('[TagadaPay Webhook] Failed to update Refund record:', err);
+      }
+
+      if (newPaymentStatus === 'refunded') {
+        order.refundStatus = 'refunded';
+        order.refundedAmount = order.grandTotal || refundedAmount;
+      } else {
+        order.refundStatus = 'partially_refunded';
+        order.refundedAmount = (order.refundedAmount || 0) + refundedAmount;
+      }
+    }
+
+    try {
+      await order.save({ validateBeforeSave: false });
+    } catch (err: any) {
+      if (err.name === 'VersionError') {
+        console.warn(`[TagadaPay Webhook] Version conflict for order ${order._id}. Ignored as another webhook likely processed it.`);
+      } else {
+        throw err;
+      }
+    }
+
+    res.status(200).json({ received: true });
+  }
 });
 
 // ─── 3. Test TagadaPay Connection ─────────────────────────────────────────────
