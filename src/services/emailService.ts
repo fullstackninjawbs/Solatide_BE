@@ -103,6 +103,13 @@ export const sendOrderConfirmationEmail = async (order: any) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
   };
 
+  const country = order.shippingAddressObj?.country || order.shippingAddress?.country || '';
+  const isDomesticAU = country.toLowerCase() === 'australia' || country.toUpperCase() === 'AU';
+  const displayShippingMethod = isDomesticAU
+    ? 'Australia Post Express Shipping'
+    : (order.shippingMethodName || 'Standard Shipping');
+
+
   const lineItemsHtml = (order.lineItems || []).map((item: any) => `
     <tr>
       <td style="padding: 15px 0; border-bottom: 1px solid #e5e5e5; width: 60px;">
@@ -206,7 +213,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
               </tr>
               <tr>
                 <td style="padding: 15px 20px; width: 25%; color: #737373; font-size: 13px;">Method</td>
-                <td style="padding: 15px 20px; color: #333; font-size: 14px;">${order.shippingMethodName || 'Standard Shipping'}</td>
+                <td style="padding: 15px 20px; color: #333; font-size: 14px;">${displayShippingMethod}</td>
               </tr>
             </table>
           </div>
