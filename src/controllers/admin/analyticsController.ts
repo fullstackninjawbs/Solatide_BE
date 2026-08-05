@@ -229,18 +229,19 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     : orders > 0 ? 100 : 0;
 
   // 5. Customer Behavior
-  // Active carts: sessions with add_to_cart in period that haven't checked out or purchased
+  // Active carts & checking out: scoped to last 5 minutes (real-time intent indicators)
+  // Purchased: full reporting period (cumulative)
   const cartSessions = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'add_to_cart',
-    timestamp: { $gte: from, $lte: to },
+    timestamp: { $gte: liveWindow }, // last 5 min
   });
   const checkoutSessions = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'begin_checkout',
-    timestamp: { $gte: from, $lte: to },
+    timestamp: { $gte: liveWindow }, // last 5 min
   });
   const purchaseSessions = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'purchase',
-    timestamp: { $gte: from, $lte: to },
+    timestamp: { $gte: from, $lte: to }, // full period
   });
 
   // Pending/Unpaid orders count as checkout started, not purchased
