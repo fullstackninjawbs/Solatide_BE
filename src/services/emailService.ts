@@ -105,9 +105,9 @@ export const sendOrderConfirmationEmail = async (order: any) => {
 
   const country = order.shippingAddressObj?.country || order.shippingAddress?.country || '';
   const isDomesticAU = country.toLowerCase() === 'australia' || country.toUpperCase() === 'AU';
-  const displayShippingMethod = isDomesticAU
+  const displayShippingMethod = order.shippingMethodName || (isDomesticAU
     ? 'Australia Post Express Shipping'
-    : (order.shippingMethodName || 'Standard Shipping');
+    : 'Standard Shipping');
 
 
   const lineItemsHtml = (order.lineItems || []).map((item: any) => `

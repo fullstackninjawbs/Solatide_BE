@@ -666,6 +666,15 @@ export const tagadaWebhook = catchAsync(async (
     const sdkShippingRate = fullOrder.checkoutSession?.shippingRate || fullOrder.shippingRate || fullOrder.shipping_rate || dAny.shippingRate || dAny.shipping_rate;
     const sdkShippingName = fullOrder.checkoutSession?.shippingRateName || fullOrder.shippingRateName || fullOrder.shippingMethod || fullOrder.shipping_method || dAny.shippingMethod || dAny.shipping_method;
 
+    // Map Tagada shipping rate IDs to human-readable names
+    const shippingRateNames: Record<string, string> = {
+      'sr_d7fdaca30b2a': 'Australia Post Express Shipping',
+      'sr_c4d51e4a64cf': 'International Express Shipping',
+      'sr_efbcf45029af': 'International Express Shipping',
+      'express_post': 'Australia Post Express Shipping',
+      'std_shipping': 'Australia Post Standard Shipping',
+    };
+
     if (firstShipping) {
       order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
@@ -676,8 +685,9 @@ export const tagadaWebhook = catchAsync(async (
       order.shippingMethodName = sdkShippingName;
       order.shippingMethodCode = fullOrder.checkoutSession?.shippingRateId || undefined;
     } else if (fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId) {
-      order.shippingMethodCode = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId;
-      order.shippingMethodName = 'Standard Shipping'; // Absolute fallback
+      const code = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId;
+      order.shippingMethodCode = code;
+      order.shippingMethodName = shippingRateNames[code] || 'Standard Shipping'; // Fallback
     }
 
     // ── Tags (Tagada IDs) ──────────────────────────────────────────────────────
