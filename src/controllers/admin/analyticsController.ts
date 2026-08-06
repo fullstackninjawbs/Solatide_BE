@@ -229,55 +229,71 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     : orders > 0 ? 100 : 0;
 
   // 5. Customer Behavior
-  // Active carts & checking out: scoped to last 5 minutes (real-time intent indicators)
-  // Purchased: full reporting period (cumulative)
-  const cartSessions = await AnalyticsEvent.distinct('sessionId', {
+  // Real-time (last 5 min) session metrics for active shopper indicators
+  const cartSessions5m = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'add_to_cart',
-    timestamp: { $gte: liveWindow }, // last 5 min
+    timestamp: { $gte: liveWindow },
   });
-  const checkoutSessions = await AnalyticsEvent.distinct('sessionId', {
+  const checkoutSessions5m = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'begin_checkout',
-    timestamp: { $gte: liveWindow }, // last 5 min
+    timestamp: { $gte: liveWindow },
   });
-  const purchaseSessions = await AnalyticsEvent.distinct('sessionId', {
+  const purchaseSessions5m = await AnalyticsEvent.distinct('sessionId', {
     eventType: 'purchase',
-    timestamp: { $gte: from, $lte: to }, // full period
+    timestamp: { $gte: liveWindow },
   });
-
-  // Pending/Unpaid orders count as checkout started, not purchased
-  const pendingOrdersCount = await Order.countDocuments({
-    createdAt: { $gte: from, $lte: to },
+  const pendingOrdersCount5m = await Order.countDocuments({
+    createdAt: { $gte: liveWindow },
     paymentStatus: { $ne: 'paid' },
   });
 
+  const checkoutSet5m = new Set(checkoutSessions5m);
+  const purchaseSet5m = new Set(purchaseSessions5m);
+
+  const activeCartsCount = cartSessions5m.filter(s => !checkoutSet5m.has(s) && !purchaseSet5m.has(s)).length;
+  const checkingOutCount = Math.max(
+    checkoutSessions5m.filter(s => !purchaseSet5m.has(s)).length,
+    pendingOrdersCount5m
+  );
+
+  // Full-period conversion funnel sessions
+  const cartSessionsFull = await AnalyticsEvent.distinct('sessionId', {
+    eventType: 'add_to_cart',
+    timestamp: { $gte: from, $lte: to },
+  });
+  const checkoutSessionsFull = await AnalyticsEvent.distinct('sessionId', {
+    eventType: 'begin_checkout',
+    timestamp: { $gte: from, $lte: to },
+  });
+  const purchaseSessionsFull = await AnalyticsEvent.distinct('sessionId', {
+    eventType: 'purchase',
+    timestamp: { $gte: from, $lte: to },
+  });
+
+  const funnelActiveCarts = new Set([...cartSessionsFull, ...checkoutSessionsFull, ...purchaseSessionsFull]).size;
+  const funnelCheckingOut = new Set([...checkoutSessionsFull, ...purchaseSessionsFull]).size;
+  const funnelPurchased = orders; // Completed paid orders count
+
+  // Abandoned cart values and purchased count fallbacks for response output
   const pendingOrdersValueAgg = await Order.aggregate([
     { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: { $ne: 'paid' } } },
     { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } }
   ]);
   const abandonedCartValue = pendingOrdersValueAgg[0]?.total ?? 0;
-
-  const checkoutSet = new Set(checkoutSessions);
-  const purchaseSet = new Set(purchaseSessions);
-
-  const activeCartsCount = cartSessions.filter(s => !checkoutSet.has(s) && !purchaseSet.has(s)).length;
-  const checkingOutCount = Math.max(
-    checkoutSessions.filter(s => !purchaseSet.has(s)).length,
-    pendingOrdersCount
-  );
   const purchasedCount = orders;
 
   // Conversion rate & Funnel
   const conversionRate = sessions > 0 ? Number(((orders / sessions) * 100).toFixed(1)) : 0;
   const funnel = {
     sessions,
-    activeCarts: activeCartsCount + checkingOutCount + purchasedCount,
-    checkingOut: checkingOutCount + purchasedCount,
-    purchased: purchasedCount,
-    cartDropOffPct: (sessions > 0 && (activeCartsCount + checkingOutCount + purchasedCount) < sessions)
-      ? Math.round(((sessions - (activeCartsCount + checkingOutCount + purchasedCount)) / sessions) * 100)
+    activeCarts: funnelActiveCarts,
+    checkingOut: funnelCheckingOut,
+    purchased: funnelPurchased,
+    cartDropOffPct: (sessions > 0 && funnelActiveCarts < sessions)
+      ? Math.round(((sessions - funnelActiveCarts) / sessions) * 100)
       : 0,
-    checkoutDropOffPct: ((activeCartsCount + checkingOutCount + purchasedCount) > 0)
-      ? Math.round(((activeCartsCount) / (activeCartsCount + checkingOutCount + purchasedCount)) * 100)
+    checkoutDropOffPct: (funnelActiveCarts > 0)
+      ? Math.round(((funnelActiveCarts - funnelCheckingOut) / funnelActiveCarts) * 100)
       : 0
   };
 
