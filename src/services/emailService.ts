@@ -159,7 +159,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
       <div class="container">
         <div style="padding: 20px 40px;">
           <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 35px;" />
-          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER ${order.orderNumber}</span>
+          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${order.orderNumber}</span>
         </div>
         
         <div class="content">
@@ -239,7 +239,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
   const mailOptions = {
     from: `${fromName} <${fromEmail}>`,
     to: customerEmail,
-    subject: `Order ${order.orderNumber} confirmed`,
+    subject: `Order #${order.orderNumber} confirmed`,
     html,
   };
 
@@ -286,13 +286,13 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
       <div class="container">
         <div style="padding: 20px 40px;">
           <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 35px;" />
-          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER ${order.orderNumber}</span>
+          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${order.orderNumber}</span>
         </div>
         
         <div class="content">
           <h2>Your order is on the way!</h2>
           <p>Hi ${customerName},</p>
-          <p>Great news! Your order <strong>${order.orderNumber}</strong> has been shipped and is currently on its way to you.</p>
+          <p>Great news! Your order <strong>#${order.orderNumber}</strong> has been shipped and is currently on its way to you.</p>
           <p>It can take up to 24 hours for tracking information to become available.</p>
           
           <div style="margin-top: 30px; margin-bottom: 30px;">
@@ -332,7 +332,7 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
   const mailOptions = {
     from: `${fromName} <${fromEmail}>`,
     to: customerEmail,
-    subject: `Your order ${order.orderNumber} has been shipped`,
+    subject: `Your order #${order.orderNumber} has been shipped`,
     html,
   };
 
