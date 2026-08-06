@@ -129,6 +129,9 @@ export const createTagadaPayment = catchAsync(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const { orderId } = req.body;
 
+    // Log checkout initiation domain + referer
+    console.log(`[Checkout Initiation] Host: ${req.headers.host}, Referer: ${req.headers.referer}, Order ID: ${orderId}`);
+
     if (!orderId) {
       return next(new AppError('orderId is required', 400));
     }
@@ -675,7 +678,12 @@ export const tagadaWebhook = catchAsync(async (
       'std_shipping': 'Australia Post Standard Shipping',
     };
 
-    if (firstShipping) {
+    const code = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId || firstShipping?.code || (sdkShippingRate && typeof sdkShippingRate === 'object' ? (sdkShippingRate.id || sdkShippingRate.code) : undefined);
+
+    if (code && shippingRateNames[code]) {
+      order.shippingMethodCode = code;
+      order.shippingMethodName = shippingRateNames[code];
+    } else if (firstShipping) {
       order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
     } else if (sdkShippingRate && typeof sdkShippingRate === 'object') {
@@ -683,11 +691,10 @@ export const tagadaWebhook = catchAsync(async (
       order.shippingMethodCode = sdkShippingRate.id || sdkShippingRate.code;
     } else if (sdkShippingName && typeof sdkShippingName === 'string') {
       order.shippingMethodName = sdkShippingName;
-      order.shippingMethodCode = fullOrder.checkoutSession?.shippingRateId || undefined;
-    } else if (fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId) {
-      const code = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId;
+      order.shippingMethodCode = code || undefined;
+    } else if (code) {
       order.shippingMethodCode = code;
-      order.shippingMethodName = shippingRateNames[code] || 'Standard Shipping'; // Fallback
+      order.shippingMethodName = 'Standard Shipping'; // Fallback
     }
 
     // ── Tags (Tagada IDs) ──────────────────────────────────────────────────────
