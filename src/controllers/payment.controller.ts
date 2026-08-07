@@ -700,21 +700,9 @@ export const tagadaWebhook = catchAsync(async (
     const sdkShippingRate = fullOrder.checkoutSession?.shippingRate || fullOrder.shippingRate || fullOrder.shipping_rate || dAny.shippingRate || dAny.shipping_rate;
     const sdkShippingName = fullOrder.checkoutSession?.shippingRateName || fullOrder.shippingRateName || fullOrder.shippingMethod || fullOrder.shipping_method || dAny.shippingMethod || dAny.shipping_method;
 
-    // Map Tagada shipping rate IDs to human-readable names
-    const shippingRateNames: Record<string, string> = {
-      'sr_d7fdaca30b2a': 'Australia Post Express Shipping',
-      'sr_c4d51e4a64cf': 'International Express Shipping',
-      'sr_efbcf45029af': 'International Express Shipping',
-      'express_post': 'Australia Post Express Shipping',
-      'std_shipping': 'Australia Post Standard Shipping',
-    };
-
     const code = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || dAny.shippingRateId || firstShipping?.code || (sdkShippingRate && typeof sdkShippingRate === 'object' ? (sdkShippingRate.id || sdkShippingRate.code) : undefined);
 
-    if (code && shippingRateNames[code]) {
-      order.shippingMethodCode = code;
-      order.shippingMethodName = shippingRateNames[code];
-    } else if (firstShipping) {
+    if (firstShipping) {
       order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
     } else if (sdkShippingRate && typeof sdkShippingRate === 'object') {
@@ -994,6 +982,27 @@ export const syncTagadaOrder = catchAsync(
         order.shippingAddressObj.city, order.shippingAddressObj.state,
         order.shippingAddressObj.zip, order.shippingAddressObj.country
       ].filter(Boolean).join(', ');
+    }
+
+    // ── Shipping method ────────────────────────────────────────────────────────
+    const firstShipping = fullOrder.shipping_lines?.[0] || fullOrder.shippingLines?.[0];
+    const sdkShippingRate = fullOrder.checkoutSession?.shippingRate || fullOrder.shippingRate || fullOrder.shipping_rate;
+    const sdkShippingName = fullOrder.checkoutSession?.shippingRateName || fullOrder.shippingRateName || fullOrder.shippingMethod || fullOrder.shipping_method;
+
+    const code = fullOrder.checkoutSession?.shippingRateId || fullOrder.shippingRateId || firstShipping?.code || (sdkShippingRate && typeof sdkShippingRate === 'object' ? (sdkShippingRate.id || sdkShippingRate.code) : undefined);
+
+    if (firstShipping) {
+      order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
+      order.shippingMethodCode = firstShipping.code ?? undefined;
+    } else if (sdkShippingRate && typeof sdkShippingRate === 'object') {
+      order.shippingMethodName = sdkShippingRate.name || sdkShippingRate.title || 'Standard Shipping';
+      order.shippingMethodCode = sdkShippingRate.id || sdkShippingRate.code;
+    } else if (sdkShippingName && typeof sdkShippingName === 'string') {
+      order.shippingMethodName = sdkShippingName;
+      order.shippingMethodCode = code || undefined;
+    } else if (code) {
+      order.shippingMethodCode = code;
+      order.shippingMethodName = 'Standard Shipping'; // Fallback
     }
 
     await order.save();
