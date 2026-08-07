@@ -706,7 +706,7 @@ export const tagadaWebhook = catchAsync(async (
       order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
     } else if (sdkShippingRate && typeof sdkShippingRate === 'object') {
-      order.shippingMethodName = sdkShippingRate.name || sdkShippingRate.title || 'Standard Shipping';
+      order.shippingMethodName = sdkShippingRate.shippingRateName || sdkShippingRate.name || sdkShippingRate.title || 'Standard Shipping';
       order.shippingMethodCode = sdkShippingRate.id || sdkShippingRate.code;
     } else if (sdkShippingName && typeof sdkShippingName === 'string') {
       order.shippingMethodName = sdkShippingName;
@@ -995,7 +995,7 @@ export const syncTagadaOrder = catchAsync(
       order.shippingMethodName = firstShipping.title ?? firstShipping.name ?? undefined;
       order.shippingMethodCode = firstShipping.code ?? undefined;
     } else if (sdkShippingRate && typeof sdkShippingRate === 'object') {
-      order.shippingMethodName = sdkShippingRate.name || sdkShippingRate.title || 'Standard Shipping';
+      order.shippingMethodName = sdkShippingRate.shippingRateName || sdkShippingRate.name || sdkShippingRate.title || 'Standard Shipping';
       order.shippingMethodCode = sdkShippingRate.id || sdkShippingRate.code;
     } else if (sdkShippingName && typeof sdkShippingName === 'string') {
       order.shippingMethodName = sdkShippingName;
