@@ -913,3 +913,95 @@ export const testTagadaConnection = catchAsync(
     }
   }
 );
+
+/**
+ * POST /api/payments/tagada/sync/:orderId
+ * 
+ * Fetches the latest session/order details directly from TagadaPay
+ * and updates the Solatide order (bypassing webhooks).
+ */
+export const syncTagadaOrder = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { orderId } = req.params;
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    if (order.paymentMethod !== 'tagada') {
+      return next(new AppError('Order was not paid using Tagada', 400));
+    }
+
+    const targetTagadaId = order.tagadaOrderId || order.tagadaSessionId || order.tagadaPaymentId;
+    if (!targetTagadaId) {
+      return next(new AppError('No Tagada session/order ID found on this order', 400));
+    }
+
+    const client = await getTagadaClient();
+    let tagadaData: any = null;
+
+    try {
+      if (targetTagadaId.startsWith('cs_')) {
+         tagadaData = await client.checkout.retrieveSession(targetTagadaId);
+      } else {
+         tagadaData = await client.orders.retrieve(targetTagadaId);
+      }
+    } catch (err: any) {
+      console.error('[TagadaPay Sync] Failed to fetch details:', err);
+      return next(new AppError('Failed to fetch details from Tagada', 502));
+    }
+
+    const fullOrder = tagadaData.order || tagadaData.session || tagadaData;
+
+    // Determine status (if Tagada says it's succeeded or paid)
+    const rawStatus = fullOrder.status || 'unknown';
+    const isPaid = ['succeeded', 'paid', 'captured'].includes(rawStatus.toLowerCase());
+
+    if (isPaid && order.paymentStatus !== 'paid') {
+      order.paymentStatus = 'paid';
+      order.status = 'processing';
+      order.fulfilmentStatus = 'unfulfilled';
+    }
+
+    // Update Customer
+    const cust = fullOrder.customer || fullOrder.user_data;
+    if (cust) {
+      order.customer = {
+        firstName: cust.firstName ?? cust.first_name ?? '',
+        lastName: cust.lastName ?? cust.last_name ?? '',
+        email: cust.email ?? '',
+        phone: cust.phone ?? undefined,
+      };
+      order.customerEmail = order.customer.email;
+      order.customerName = [order.customer.firstName, order.customer.lastName].filter(Boolean).join(' ');
+    }
+
+    // Update Shipping
+    const sa = fullOrder.shippingAddress || fullOrder.shipping_address || fullOrder.customer?.shippingAddress;
+    if (sa) {
+      order.shippingAddressObj = {
+        name: sa.name ?? (`${sa.firstName || ''} ${sa.lastName || ''}`.trim() || undefined),
+        company: sa.company ?? undefined,
+        street1: sa.address1 ?? sa.line1 ?? undefined,
+        street2: sa.address2 ?? sa.line2 ?? undefined,
+        city: sa.city ?? undefined,
+        state: sa.province ?? sa.state ?? undefined,
+        zip: sa.zip ?? sa.postalCode ?? sa.postal ?? undefined,
+        country: sa.country ?? undefined,
+      };
+      order.shippingAddress = [
+        order.shippingAddressObj.street1, order.shippingAddressObj.street2,
+        order.shippingAddressObj.city, order.shippingAddressObj.state,
+        order.shippingAddressObj.zip, order.shippingAddressObj.country
+      ].filter(Boolean).join(', ');
+    }
+
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Order synced with Tagada successfully',
+      data: { order }
+    });
+  }
+);

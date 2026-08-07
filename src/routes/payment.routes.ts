@@ -15,6 +15,7 @@ import express from 'express';
 import {
   createTagadaPayment,
   tagadaWebhook,
+  syncTagadaOrder,
 } from '../controllers/payment.controller';
 import { protect, optionalAuth } from '../middleware/auth';
 
@@ -23,6 +24,10 @@ const router = Router();
 // ── POST /api/payments/tagada/create ──────────────────────────────────────────
 // Public: guest or authenticated (populates user if logged in)
 router.post('/tagada/create', optionalAuth, createTagadaPayment);
+
+// ── POST /api/payments/tagada/sync/:orderId ───────────────────────────────────
+// Public: called by frontend CheckoutSuccess to auto-sync Tagada status
+router.post('/tagada/sync/:orderId', syncTagadaOrder);
 
 // ── POST /api/payments/tagada/webhook ─────────────────────────────────────────
 // Public (no auth): Tagada calls this endpoint directly.
