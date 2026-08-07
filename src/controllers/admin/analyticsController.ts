@@ -280,7 +280,10 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } }
   ]);
   const abandonedCartValue = pendingOrdersValueAgg[0]?.total ?? 0;
-  const purchasedCount = orders;
+  const purchasedCount = await Order.countDocuments({
+    createdAt: { $gte: liveWindow },
+    paymentStatus: 'paid'
+  });
 
   // Conversion rate & Funnel
   const conversionRate = sessions > 0 ? Number(((orders / sessions) * 100).toFixed(1)) : 0;

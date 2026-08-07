@@ -516,27 +516,58 @@ export const tagadaWebhook = catchAsync(async (
     order.fulfilmentStatus = 'unfulfilled';
 
     let fullOrder: any = data; // fallback to data if fetch fails or data IS the order
-    if (tagadaOrderId) {
+    
+    const targetTagadaId = tagadaOrderId || order.tagadaOrderId || tagadaSessionId || order.tagadaSessionId || order.tagadaPaymentId;
+    
+    if (targetTagadaId) {
       try {
         const client = await getTagadaClient();
-        const res = await client.orders.retrieve(tagadaOrderId);
-        fullOrder = res.order || res; // Tagada SDK returns { order: { ... } }
-        console.log('\n\n======================================================');
-        console.log(`[TagadaPay] Fetched full order details for Tagada Order: ${tagadaOrderId}`);
-        console.log('======================================================\n\n');
+        let res: any = null;
+        let retries = 3;
+        
+        while (retries > 0) {
+          try {
+            // Some Tagada IDs are checkout sessions, others are order IDs
+            if (targetTagadaId.startsWith('cs_')) {
+               res = await client.checkout.retrieveSession(targetTagadaId);
+            } else {
+               res = await client.orders.retrieve(targetTagadaId);
+            }
+
+            const testOrder = res.order || res.session || res;
+            if (testOrder && (testOrder.customer || testOrder.shippingAddress || testOrder.shipping_address || testOrder.billingAddress)) {
+              break; // Success! Data is fully populated
+            }
+            throw new Error("Customer details not yet populated by Tagada API");
+          } catch (err: any) {
+            console.log(`[TagadaPay] Fetching details for ${targetTagadaId}... Retrying (${4 - retries}/3) due to async timing delay.`);
+          }
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2s
+          }
+        }
+
+        if (res) {
+          fullOrder = res.order || res.session || res; // Tagada SDK returns { order: { ... } } or { session: { ... } }
+          console.log('\n\n======================================================');
+          console.log(`[TagadaPay] Fetched full details for Tagada ID: ${targetTagadaId}`);
+          console.log('======================================================\n\n');
+        }
       } catch (err) {
         console.error('[TagadaPay] Failed to fetch full order details:', err);
       }
     }
 
     // ── Customer snapshot ──────────────────────────────────────────────────────
-    if (fullOrder.customer || dAny.user_data) {
-      const cust = fullOrder.customer || {};
+    // ── Customer snapshot ──────────────────────────────────────────────────────
+    if (fullOrder.customer || dAny.customer || dAny.user_data) {
+      const cust = fullOrder.customer || dAny.customer || dAny.user_data || {};
       order.customer = {
         firstName: cust.firstName ?? cust.first_name ?? '',
         lastName: cust.lastName ?? cust.last_name ?? '',
-        email: cust.email ?? dAny.user_data?.email ?? '',
-        phone: cust.phone ?? undefined,
+        email: cust.email ?? dAny.email ?? dAny.user_data?.email ?? '',
+        phone: cust.phone ?? dAny.phone ?? undefined,
       };
       // Backfill legacy fields for any code still reading them
       order.customerEmail = order.customer.email ?? order.customerEmail;
@@ -548,7 +579,7 @@ export const tagadaWebhook = catchAsync(async (
     console.log(fullOrder)
 
     // ── Shipping address ───────────────────────────────────────────────────────
-    const sa = fullOrder.shippingAddress || fullOrder.shipping_address || fullOrder.customer?.shippingAddress;
+    const sa = fullOrder.shippingAddress || fullOrder.shipping_address || fullOrder.customer?.shippingAddress || dAny.shippingAddress || dAny.shipping_address || dAny.customer?.shippingAddress;
     if (sa) {
       const saName = sa.name ?? (`${sa.firstName || ''} ${sa.lastName || ''}`.trim() || undefined);
       const saZip = sa.zip ?? sa.postalCode ?? sa.postal ?? undefined;
@@ -571,7 +602,7 @@ export const tagadaWebhook = catchAsync(async (
     }
 
     // ── Billing address ────────────────────────────────────────────────────────
-    const ba = fullOrder.billingAddress || fullOrder.billing_address || fullOrder.customer?.billingAddress;
+    const ba = fullOrder.billingAddress || fullOrder.billing_address || fullOrder.customer?.billingAddress || dAny.billingAddress || dAny.billing_address || dAny.customer?.billingAddress;
     if (ba) {
       const baName = ba.name ?? (`${ba.firstName || ''} ${ba.lastName || ''}`.trim() || undefined);
       const baZip = ba.zip ?? ba.postalCode ?? ba.postal ?? undefined;
