@@ -127,7 +127,7 @@ function mapTagadaStatus(tagadaStatus: string): 'pending' | 'paid' | 'failed' | 
  */
 export const createTagadaPayment = catchAsync(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const { orderId } = req.body;
+    const { orderId, attribution } = req.body;
 
     // Log checkout initiation domain + referer
     console.log(`[Checkout Initiation] Host: ${req.headers.host}, Referer: ${req.headers.referer}, Order ID: ${orderId}`);
@@ -143,6 +143,31 @@ export const createTagadaPayment = catchAsync(
 
     if (!order) {
       return next(new AppError(`No order found with id ${orderId}`, 404));
+    }
+
+    // Process Attribution
+    if (attribution && typeof attribution === 'object') {
+      if (!order.attribution) {
+        order.attribution = {};
+      }
+      
+      // Preserve first touch if it already exists on the order
+      if (attribution.firstTouch && !order.attribution.firstTouch?.source) {
+        order.attribution.firstTouch = {
+          ...attribution.firstTouch,
+          source: attribution.firstTouch.source?.substring(0, 255),
+          channel: attribution.firstTouch.channel?.substring(0, 255)
+        };
+      }
+      
+      // Update last touch if meaningful
+      if (attribution.lastTouch) {
+        order.attribution.lastTouch = {
+          ...attribution.lastTouch,
+          source: attribution.lastTouch.source?.substring(0, 255),
+          channel: attribution.lastTouch.channel?.substring(0, 255)
+        };
+      }
     }
 
     // 2) Guard: only initiate payment on pending orders
@@ -204,7 +229,10 @@ export const createTagadaPayment = catchAsync(
         customerFirstName: customerName.split(' ')[0] || undefined,
         customerLastName: customerName.split(' ').slice(1).join(' ') || undefined,
         metadata: {
-          order_id: order._id.toString()
+          order_id: order._id.toString(),
+          attribution_source: order.attribution?.firstTouch?.source || 'Direct / Unknown',
+          attribution_channel: order.attribution?.firstTouch?.channel || 'direct',
+          utm_campaign: order.attribution?.firstTouch?.utmCampaign || ''
         }
       };
 

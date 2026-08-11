@@ -9,5 +9,6 @@ router.get('/orders/by-status', analyticsController.getOrdersByStatus);
 router.get('/revenue/by-product', analyticsController.getRevenueByProduct);
 router.get('/customers/top', analyticsController.getTopCustomers);
 router.get('/overview', analyticsController.getOverview);
+router.get('/attribution', analyticsController.getAttributionStats);
 
 export default router;

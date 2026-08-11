@@ -10,7 +10,8 @@ import {
   getOrderRefunds,
   createAdminOrder,
   getNewOrderConfig,
-  revalidateOrderAddress
+  revalidateOrderAddress,
+  exportOrdersCsv
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -20,6 +21,9 @@ router.use(protect);
 
 // GET  /api/admin/orders               — paginated, filterable list
 router.get('/', getOrders);
+
+// GET  /api/admin/orders/export/csv    — export orders to CSV
+router.get('/export/csv', exportOrdersCsv);
 
 // GET  /api/admin/orders/new-config     — form config options
 router.get('/new-config', getNewOrderConfig);

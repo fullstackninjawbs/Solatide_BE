@@ -389,3 +389,36 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+export const getAttributionStats = catchAsync(async (req: Request, res: Response) => {
+  const match = buildMatchFilter(req);
+  
+  // Only include paid orders for attribution revenue
+  match.paymentStatus = { $in: ['paid', 'succeeded'] };
+  
+  const pipeline = [
+    { $match: match },
+    {
+      $group: {
+        _id: {
+          source: "$attribution.firstTouch.source",
+          channel: "$attribution.firstTouch.channel"
+        },
+        ordersCount: { $sum: 1 },
+        revenue: { $sum: { $ifNull: ["$grandTotal", "$totalAmount"] } }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        source: { $ifNull: ["$_id.source", "Direct / Unknown"] },
+        channel: { $ifNull: ["$_id.channel", "direct"] },
+        ordersCount: 1,
+        revenue: 1
+      }
+    },
+    { $sort: { revenue: -1 } as any }
+  ];
+
+  const data = await Order.aggregate(pipeline);
+  res.json({ success: true, data });
+});
