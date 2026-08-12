@@ -379,6 +379,12 @@ orderSchema.index({ createdAt: -1 });
 orderSchema.index({ 'attribution.firstTouch.source': 1 });
 orderSchema.index({ 'attribution.firstTouch.channel': 1 });
 orderSchema.index({ 'attribution.firstTouch.utmCampaign': 1 });
+// Compound indexes for common admin filter + sort combinations
+orderSchema.index({ paymentStatus: 1, createdAt: -1 });
+orderSchema.index({ fulfilmentStatus: 1, createdAt: -1 });
+orderSchema.index({ 'customer.email': 1, createdAt: -1 });
+orderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
+orderSchema.index({ source: 1, createdAt: -1 });
 
 export const Order = mongoose.model<IOrder>('Order', orderSchema);
 export default Order;
