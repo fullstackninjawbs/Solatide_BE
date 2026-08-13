@@ -5,6 +5,7 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { uploadImageBuffer } from '../utils/cloudinary';
 import { buildQueryFromRules } from '../utils/collectionUtils';
+import { cacheGet, cacheSet, cacheKey, TTL } from '../utils/cache';
 
 const slugify = (name: string): string =>
   name
@@ -29,6 +30,13 @@ export const getPublicCollections = catchAsync(async (req: Request, res: Respons
 
 
 export const getAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  // Build cache key from all query params
+  const key = cacheKey('products:list', req.query as Record<string, unknown>);
+  const cached = await cacheGet(key);
+  if (cached) {
+    return res.status(200).json(cached);
+  }
+
   const queryObj: any = {};
 
   if (req.query.category && req.query.category !== 'All Products') {
@@ -144,7 +152,7 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
     return p;
   });
 
-  res.status(200).json({
+  const payload = {
     success: true,
     results: products.length,
     total,
@@ -159,11 +167,24 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
         pages: Math.ceil(total / limit)
       }
     },
-  });
+  };
+
+  // Cache the response
+  await cacheSet(key, payload, TTL.PRODUCTS_LIST);
+
+  res.status(200).json(payload);
 });
 
 export const getProductById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const idOrSlug = req.params.id;
+
+  // Check cache first
+  const key = `products:detail:${idOrSlug}`;
+  const cached = await cacheGet(key);
+  if (cached) {
+    return res.status(200).json(cached);
+  }
+
   let product: any;
 
   // Try ObjectId first
@@ -234,10 +255,15 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
   }
   delete productObj.reviews;
 
-  res.status(200).json({
+  const payload = {
     success: true,
     data: { product: productObj },
-  });
+  };
+
+  // Cache the detail response
+  await cacheSet(key, payload, TTL.PRODUCT_DETAIL);
+
+  res.status(200).json(payload);
 });
 
 
@@ -286,6 +312,10 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
       { $addToSet: { products: newProduct._id } }
     );
   }
+
+  // Invalidate product list cache
+  const { cacheDel } = await import('../utils/cache');
+  await cacheDel('products:list*');
 
   res.status(201).json({
     success: true,
@@ -346,6 +376,14 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
     );
   }
 
+  // Invalidate caches for this product and all lists
+  const { cacheDel } = await import('../utils/cache');
+  await Promise.all([
+    cacheDel(`products:detail:${req.params.id}`),
+    cacheDel(`products:detail:${updatedProduct.slug}`),
+    cacheDel('products:list*'),
+  ]);
+
   res.status(200).json({
     success: true,
     data: { product: updatedProduct },
@@ -359,6 +397,13 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
   if (!deletedProduct) {
     return next(new AppError('No product found with that ID', 404));
   }
+
+  // Invalidate caches
+  const { cacheDel } = await import('../utils/cache');
+  await Promise.all([
+    cacheDel(`products:detail:${req.params.id}`),
+    cacheDel('products:list*'),
+  ]);
 
   res.status(204).json({ success: true, data: null });
 });

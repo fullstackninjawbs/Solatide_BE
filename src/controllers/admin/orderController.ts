@@ -674,3 +674,62 @@ export const revalidateOrderAddress = catchAsync(async (req: Request, res: Respo
     message: 'Address re-validation triggered. Refresh the order shortly to see updated results.',
   });
 });
+
+/**
+ * GET /api/admin/orders/export/csv
+ * Export orders to CSV including attribution fields
+ */
+export const exportOrdersCsv = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const orders = await Order.find().sort({ createdAt: -1 }).lean();
+
+  const headers = [
+    'Order Number',
+    'Date',
+    'Customer Name',
+    'Customer Email',
+    'Payment Status',
+    'Fulfilment Status',
+    'Total Amount',
+    'First Touch Source',
+    'First Touch Channel',
+    'Source Domain',
+    'UTM Source',
+    'UTM Medium',
+    'UTM Campaign',
+    'Landing Page',
+    'Referrer URL'
+  ];
+
+  const rows = orders.map((o: any) => {
+    const custName = [o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(' ') || o.customerName || '';
+    const custEmail = o.customer?.email || o.customerEmail || '';
+    const total = o.grandTotal ?? o.totalAmount ?? 0;
+    
+    return [
+      o.orderNumber || String(o._id).slice(-6),
+      new Date(o.createdAt).toISOString(),
+      `"${custName.replace(/"/g, '""')}"`,
+      `"${custEmail.replace(/"/g, '""')}"`,
+      o.paymentStatus || '',
+      o.fulfilmentStatus || '',
+      total,
+      `"${(o.attribution?.firstTouch?.source || 'Direct / Unknown').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.channel || 'direct').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.sourceDomain || '').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.utmSource || '').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.utmMedium || '').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.utmCampaign || '').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.landingPage || '').replace(/"/g, '""')}"`,
+      `"${(o.attribution?.firstTouch?.referrerUrl || '').replace(/"/g, '""')}"`
+    ];
+  });
+
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(row => row.join(','))
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=orders_export.csv');
+  res.status(200).send(csvContent);
+});

@@ -38,6 +38,31 @@ export interface IOrderItem {
   price: number;
 }
 
+// ─── Attribution ───────────────────────────────────────────────────────────────
+
+export interface IAttributionTouch {
+  source?: string;
+  channel?: string;
+  sourceDomain?: string;
+  referrerUrl?: string;
+  landingPage?: string;
+
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  utmId?: string;
+
+  gclid?: string;
+  fbclid?: string;
+  ttclid?: string;
+  msclkid?: string;
+
+  sessionId?: string;
+  capturedAt?: Date;
+}
+
 // ─── Main Order interface ──────────────────────────────────────────────────────
 
 export interface IOrder extends mongoose.Document {
@@ -123,6 +148,12 @@ export interface IOrder extends mongoose.Document {
     suggestedAddress?: any;
     googleResponse?: any;
     checkedAt?: Date;
+  };
+
+  // ── Attribution ──────────────────────────────────────────────────────────────
+  attribution?: {
+    firstTouch?: IAttributionTouch;
+    lastTouch?: IAttributionTouch;
   };
 
   createdAt: Date;
@@ -292,6 +323,48 @@ const orderSchema = new mongoose.Schema<IOrder>(
       googleResponse: { type: mongoose.Schema.Types.Mixed },
       checkedAt: { type: Date }
     },
+
+    // ── Attribution ──────────────────────────────────────────────────────────────
+    attribution: {
+      firstTouch: {
+        source: { type: String, trim: true },
+        channel: { type: String, trim: true },
+        sourceDomain: { type: String, trim: true },
+        referrerUrl: { type: String, trim: true },
+        landingPage: { type: String, trim: true },
+        utmSource: { type: String, trim: true },
+        utmMedium: { type: String, trim: true },
+        utmCampaign: { type: String, trim: true },
+        utmContent: { type: String, trim: true },
+        utmTerm: { type: String, trim: true },
+        utmId: { type: String, trim: true },
+        gclid: { type: String, trim: true },
+        fbclid: { type: String, trim: true },
+        ttclid: { type: String, trim: true },
+        msclkid: { type: String, trim: true },
+        sessionId: { type: String, trim: true },
+        capturedAt: { type: Date }
+      },
+      lastTouch: {
+        source: { type: String, trim: true },
+        channel: { type: String, trim: true },
+        sourceDomain: { type: String, trim: true },
+        referrerUrl: { type: String, trim: true },
+        landingPage: { type: String, trim: true },
+        utmSource: { type: String, trim: true },
+        utmMedium: { type: String, trim: true },
+        utmCampaign: { type: String, trim: true },
+        utmContent: { type: String, trim: true },
+        utmTerm: { type: String, trim: true },
+        utmId: { type: String, trim: true },
+        gclid: { type: String, trim: true },
+        fbclid: { type: String, trim: true },
+        ttclid: { type: String, trim: true },
+        msclkid: { type: String, trim: true },
+        sessionId: { type: String, trim: true },
+        capturedAt: { type: Date }
+      }
+    }
   },
   { timestamps: true }
 );
@@ -303,6 +376,15 @@ orderSchema.index({ status: 1 });
 orderSchema.index({ tagadaPaymentId: 1 });
 orderSchema.index({ 'customer.email': 1 });
 orderSchema.index({ createdAt: -1 });
+orderSchema.index({ 'attribution.firstTouch.source': 1 });
+orderSchema.index({ 'attribution.firstTouch.channel': 1 });
+orderSchema.index({ 'attribution.firstTouch.utmCampaign': 1 });
+// Compound indexes for common admin filter + sort combinations
+orderSchema.index({ paymentStatus: 1, createdAt: -1 });
+orderSchema.index({ fulfilmentStatus: 1, createdAt: -1 });
+orderSchema.index({ 'customer.email': 1, createdAt: -1 });
+orderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
+orderSchema.index({ source: 1, createdAt: -1 });
 
 export const Order = mongoose.model<IOrder>('Order', orderSchema);
 export default Order;

@@ -405,6 +405,12 @@ productSchema.index({ category: 1 });
 productSchema.index({ price: 1 });
 productSchema.index({ tags: 1 });
 productSchema.index({ publishStatus: 1 });
+// Performance indexes
+productSchema.index({ slug: 1 }, { unique: true, sparse: true });
+productSchema.index({ isActive: 1, createdAt: -1 });
+productSchema.index({ publishStatus: 1, isActive: 1 });
+productSchema.index({ category: 1, isActive: 1 });
+productSchema.index({ name: 'text' }, { weights: { name: 10 } });
 
 export const Product = mongoose.model<IProduct>('Product', productSchema);
 export default Product;
