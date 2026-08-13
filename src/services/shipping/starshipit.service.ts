@@ -43,6 +43,27 @@ function parseStarshipitError(data: any, fallback: string): string {
   return rawMsg;
 }
 
+function getNormalizedShippingMethod(order: IOrder): string {
+  const methodName = order.shippingMethodName;
+  if (!methodName) {
+    console.warn(`WARNING: Order ${order.orderNumber || order._id} is missing shippingMethodName. Returning empty string instead of blind fallback.`);
+    return '';
+  }
+
+  const country = order.shippingAddressObj?.country?.toUpperCase() || 'AU';
+  
+  if (country !== 'AU') {
+    if (methodName.startsWith('Standard - $')) {
+      return 'Standard';
+    }
+    if (methodName.startsWith('Express - $')) {
+      return 'Express';
+    }
+  }
+
+  return methodName;
+}
+
 export class StarshipitService {
   private readonly baseUrl = 'https://api.starshipit.com/api';
 
@@ -82,6 +103,7 @@ export class StarshipitService {
       order_date: new Date().toISOString(),
       order_number: order.orderNumber || order._id?.toString(),
       reference: order.orderNumber || order._id?.toString(),
+      shipping_method: getNormalizedShippingMethod(order),
       sender_details: {
         name: 'SB Fulfilment',
         company: 'SB Fulfilment'
@@ -118,7 +140,7 @@ export class StarshipitService {
     try {
       console.log('Sending payload to Starshipit /orders:', JSON.stringify(payload, null, 2));
       const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, { headers: this.headers });
-      
+
       console.log('Starshipit POST /orders HTTP Status:', response.status);
       console.log('Starshipit POST /orders Response Data:', JSON.stringify(response.data, null, 2));
 
@@ -143,7 +165,7 @@ export class StarshipitService {
         const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, {
           order_id: starshipitOrder.order_id
         }, { headers: this.headers });
-        
+
         console.log('Starshipit POST /orders/shipment HTTP Status:', labelResponse.status);
         console.log('Starshipit POST /orders/shipment Response Data:', JSON.stringify(labelResponse.data, null, 2));
 
@@ -165,7 +187,7 @@ export class StarshipitService {
         }
 
         if (!labelUrl) {
-           console.warn('Starshipit returned success but no label URL was found in the response.');
+          console.warn('Starshipit returned success but no label URL was found in the response.');
         }
 
       } catch (labelError: any) {
