@@ -3,6 +3,7 @@ import Collection from '../../models/collection.model';
 import Product from '../../models/product.model';
 import catchAsync from '../../utils/catchAsync';
 import AppError from '../../utils/appError';
+import { cacheDel } from '../../utils/cache';
 import { buildQueryFromRules } from '../../utils/collectionUtils';
 
 const slugify = (text: string) => {
@@ -118,6 +119,9 @@ export const createCollection = catchAsync(async (req: Request, res: Response, n
     products: products || [],
   });
 
+  await cacheDel('products:list*');
+  await cacheDel('products:detail*');
+
   res.status(201).json({
     success: true,
     data: newCol,
@@ -173,6 +177,9 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
 
   await col.save();
 
+  await cacheDel('products:list*');
+  await cacheDel('products:detail*');
+
   res.status(200).json({
     success: true,
     data: col,
@@ -187,6 +194,9 @@ export const deleteCollection = catchAsync(async (req: Request, res: Response, n
   if (!col) {
     return next(new AppError('No collection found with that ID', 404));
   }
+
+  await cacheDel('products:list*');
+  await cacheDel('products:detail*');
 
   res.status(204).json({
     success: true,

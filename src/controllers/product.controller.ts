@@ -196,9 +196,10 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
   }
 
   // Try numeric id
-  if (!product) {
-    const numericId = parseInt(idOrSlug, 10);
-    if (!isNaN(numericId)) {
+  if (!idOrSlug.match(/^[a-fA-F0-9]{24}$/)) {
+    // Only parse as numeric ID if the entire string is digits
+    if (/^\d+$/.test(idOrSlug)) {
+      const numericId = parseInt(idOrSlug, 10);
       product = await Product.findOne({ id: numericId })
         .populate('currentBatchId')
         .populate('variants.currentBatchId')

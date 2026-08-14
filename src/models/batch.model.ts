@@ -4,7 +4,8 @@ export interface IBatch extends Document {
   batchId: string;
   vendorLotNumber?: string;
   displayName?: string;
-  productId: mongoose.Types.ObjectId;
+  productId?: mongoose.Types.ObjectId; // Kept for backward compatibility
+  products: mongoose.Types.ObjectId[];
   variantSku?: string;
   variantId?: mongoose.Types.ObjectId; // Per-variant ObjectId reference
 
@@ -72,7 +73,8 @@ const batchSchema = new Schema<IBatch>({
   batchId: { type: String, required: true },
   vendorLotNumber: { type: String, trim: true },
   displayName: { type: String },
-  productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
+  productId: { type: Schema.Types.ObjectId, ref: 'Product' }, // Kept for backward compatibility
+  products: [{ type: Schema.Types.ObjectId, ref: 'Product' }],
   variantSku: { type: String, required: false },
   variantId: { type: Schema.Types.ObjectId, ref: 'ProductVariant', default: null },
 

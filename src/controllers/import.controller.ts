@@ -142,6 +142,11 @@ export const importProductsCommit = catchAsync(async (req: Request, res: Respons
 
   // Combine parser warnings and database writing conflicts
   const allErrors = [...parseResult.errors, ...commitErrors];
+  
+  // Invalidate product caches globally after a bulk import
+  const { cacheDel } = await import('../utils/cache');
+  await cacheDel('products:list*');
+  await cacheDel('products:detail*');
 
   res.status(200).json({
     success: true,

@@ -8,6 +8,7 @@ import { sendVerificationEmail } from '../services/emailService';
 import crypto from 'crypto';
 import Product from '../models/product.model';
 import * as xlsx from 'xlsx';
+import { cacheDel } from '../utils/cache';
 
 // @desc    Create a new review
 // @route   POST /api/v1/products/:productId/reviews
@@ -204,6 +205,17 @@ export const deleteReview = catchAsync(async (req: Request, res: Response, next:
   }
 
   await review.deleteOne();
+  
+  // Invalidate product cache
+  if (review.product) {
+    const product = await Product.findById(review.product).select('slug');
+    if (product) {
+      await cacheDel(`products:detail:${product.slug}`);
+      await cacheDel(`products:detail:${product.id}`);
+      await cacheDel(`products:detail:${product._id}`);
+      await cacheDel('products:list*');
+    }
+  }
 
   res.status(200).json({
     success: true,
@@ -229,6 +241,17 @@ export const updateReviewStatus = catchAsync(async (req: Request, res: Response,
 
   if (!review) {
     return next(new AppError('Review not found', 404));
+  }
+
+  // Invalidate product cache
+  if (review.product) {
+    const product = await Product.findById(review.product).select('slug');
+    if (product) {
+      await cacheDel(`products:detail:${product.slug}`);
+      await cacheDel(`products:detail:${product.id}`);
+      await cacheDel(`products:detail:${product._id}`);
+      await cacheDel('products:list*');
+    }
   }
 
   res.status(200).json({

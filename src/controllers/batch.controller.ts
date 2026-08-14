@@ -4,6 +4,7 @@ import Product from '../models/product.model';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
 import { uploadImageBuffer } from '../utils/cloudinary';
+import { cacheDel } from '../utils/cache';
 
 const computeQcLevel = (tests: any) => {
   if (!tests) return 'none';
@@ -45,7 +46,12 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   // Optional filters
   if (req.query.status) filter.status = req.query.status;
   if (req.query.coaStatus) filter.coaStatus = req.query.coaStatus;
-  if (req.query.productId) filter.productId = req.query.productId;
+  if (req.query.productId) {
+    filter.$or = [
+      { productId: req.query.productId },
+      { products: req.query.productId }
+    ];
+  }
 
   if (req.query.search) {
     const searchRegex = new RegExp(req.query.search as string, 'i');
@@ -55,7 +61,8 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
     filter.$or = [
       { batchId: searchRegex },
       { displayName: searchRegex },
-      { productId: { $in: matchedProductIds } }
+      { productId: { $in: matchedProductIds } },
+      { products: { $in: matchedProductIds } }
     ];
   }
 
@@ -67,6 +74,7 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   const total = await Batch.countDocuments(filter);
   const batches = await Batch.find(filter)
     .populate('productId', 'name slug')
+    .populate('products', 'name slug')
     .sort('-createdAt')
     .skip(skip)
     .limit(limit);
@@ -168,13 +176,14 @@ const setCurrentBatchOnVariant = async (
   // Also keep root-level currentBatchId in sync (backward compat)
   (product as any).currentBatchId = batchId;
 
+  product.markModified('variants');
   await product.save();
 };
 
 export const createBatch = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { setAsCurrent, ...batchData } = req.body;
 
-  if (!batchData.productId) return next(new AppError('Product ID is required', 400));
+  if (!batchData.productId && (!batchData.products || batchData.products.length === 0)) return next(new AppError('Product ID is required', 400));
   if (!batchData.batchId) return next(new AppError('Batch ID is required', 400));
 
 
@@ -186,10 +195,21 @@ export const createBatch = catchAsync(async (req: Request, res: Response, next: 
 
   const newBatch = await Batch.create(batchData);
 
-  // If requested, set as current batch for the variant (or product default)
-  if (setAsCurrent && newBatch.productId) {
-    await setCurrentBatchOnVariant(newBatch.productId, newBatch._id, newBatch.variantId);
+  // Always set as current batch for the variant (or product default)
+  const pIds = newBatch.products && newBatch.products.length > 0 ? newBatch.products : (newBatch.productId ? [newBatch.productId] : []);
+  for (const pId of pIds) {
+    await setCurrentBatchOnVariant(pId, newBatch._id, newBatch.variantId);
+    
+    // Invalidate product cache
+    const product = await Product.findById(pId).select('slug');
+    if (product) {
+      await cacheDel(`products:detail:${product.slug}`);
+      await cacheDel(`products:detail:${product.id}`);
+      await cacheDel(`products:detail:${product._id}`);
+    }
   }
+  
+  await cacheDel('products:list*');
 
   res.status(201).json({
     success: true,
@@ -200,7 +220,7 @@ export const createBatch = catchAsync(async (req: Request, res: Response, next: 
 export const updateBatch = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { setAsCurrent, ...batchData } = req.body;
 
-  if (batchData.productId === '') return next(new AppError('Product ID is required', 400));
+  if (batchData.productId === '' && (!batchData.products || batchData.products.length === 0)) return next(new AppError('Product ID is required', 400));
   if (batchData.batchId === '') return next(new AppError('Batch ID is required', 400));
 
 
@@ -221,35 +241,24 @@ export const updateBatch = catchAsync(async (req: Request, res: Response, next: 
     return next(new AppError('No batch record found with that ID', 404));
   }
 
-  // If requested, set as current batch for the variant
-  if (setAsCurrent && batch.productId) {
-    await setCurrentBatchOnVariant(batch.productId, batch._id, batch.variantId);
-  } else if (setAsCurrent === false && batch.productId) {
-    // Explicitly unchecked — remove this batch as current if it was set
-    const product = await Product.findById(batch.productId);
-    if (product) {
-      let changed = false;
-
-      // Clear root-level reference if it points to this batch
-      if ((product as any).currentBatchId?.toString() === batch._id.toString()) {
-        (product as any).currentBatchId = undefined;
-        changed = true;
+  // Always set as current batch for the variant
+  const pIds = batch.products && batch.products.length > 0 ? batch.products : (batch.productId ? [batch.productId] : []);
+  if (pIds.length > 0) {
+    for (const pId of pIds) {
+      await setCurrentBatchOnVariant(pId, batch._id, batch.variantId);
+      
+      // Invalidate product cache
+      const product = await Product.findById(pId).select('slug');
+      if (product) {
+        await cacheDel(`products:detail:${product.slug}`);
+        await cacheDel(`products:detail:${product.id}`);
+        await cacheDel(`products:detail:${product._id}`);
       }
-
-      // Clear variant-level reference if it points to this batch
-      if (product.variants) {
-        product.variants.forEach(v => {
-          if ((v as any).currentBatchId?.toString() === batch._id.toString()) {
-            (v as any).currentBatchId = undefined;
-            changed = true;
-          }
-        });
-      }
-
-      if (changed) await product.save();
     }
   }
-
+  
+  await cacheDel('products:list*');
+  
   res.status(200).json({
     success: true,
     data: { batch }
@@ -264,22 +273,34 @@ export const deleteBatch = catchAsync(async (req: Request, res: Response, next: 
   }
 
   // Clean up root-level and variant-level currentBatchId references
-  if (batch.productId) {
-    const product = await Product.findById(batch.productId);
+  const pIds = batch.products && batch.products.length > 0 ? batch.products : (batch.productId ? [batch.productId] : []);
+  for (const pId of pIds) {
+    const product = await Product.findById(pId);
     if (product) {
+      let changed = false;
       if ((product as any).currentBatchId?.toString() === batch._id.toString()) {
         (product as any).currentBatchId = undefined;
+        changed = true;
       }
       if (product.variants) {
         product.variants.forEach(v => {
           if ((v as any).currentBatchId?.toString() === batch._id.toString()) {
             (v as any).currentBatchId = undefined;
+            changed = true;
           }
         });
       }
-      await product.save();
+      if (changed) {
+        product.markModified('variants');
+        await product.save();
+        await cacheDel(`products:detail:${product.slug}`);
+        await cacheDel(`products:detail:${product.id}`);
+        await cacheDel(`products:detail:${product._id}`);
+      }
     }
   }
+
+  await cacheDel('products:list*');
 
   res.status(204).json({ success: true, data: null });
 });
