@@ -26,7 +26,7 @@ export const getSyncPreview = catchAsync(async (req: Request, res: Response, nex
 // @access  Private/Admin
 export const runFullSync = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   // Pass the user ID to record who initiated it
-  const adminUserId = req.user?.id;
+  const adminUserId = (req as any).user?.id;
   
   const log = await syncAllTagadaProducts(adminUserId);
   

@@ -5,7 +5,6 @@ import {
   syncSingleProduct,
   getSyncHistory
 } from '../../controllers/admin/tagadaProductSync.controller';
-import { restrictTo } from '../../controllers/admin/authController'; // Assuming typical auth middleware
 
 const router = express.Router();
 
