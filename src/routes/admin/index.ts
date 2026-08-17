@@ -14,6 +14,7 @@ import growthRoutes from './growth.routes';
 import analyticsRoutes from './analytics.routes';
 import settingsRoutes from './settings.routes';
 import userRoutes from './user.routes';
+import tagadaProductSyncRoutes from './tagadaProductSync.routes';
 
 const router = express.Router();
 
@@ -32,5 +33,6 @@ router.use('/growth', growthRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/users', userRoutes);
+router.use('/tagada', tagadaProductSyncRoutes);
 
 export default router;

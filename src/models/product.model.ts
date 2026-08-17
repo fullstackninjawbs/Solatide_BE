@@ -23,6 +23,7 @@ export interface IProductVariant {
   taxable: boolean;
   weightGrams?: number;
   tagadaVariantId?: string;
+  tagadaUpdatedAt?: Date;
   currentBatchId?: mongoose.Types.ObjectId; // Per-variant batch reference
 }
 
@@ -46,7 +47,16 @@ export interface IProduct extends mongoose.Document {
   reviewsCount?: number;
   imageUrl?: string;
   sku?: string;
+  tagadaProductId?: string;
+  tagadaStoreId?: string;
   tagadaVariantId?: string;
+  tagadaSync?: {
+    lastSyncedAt?: Date;
+    tagadaUpdatedAt?: Date;
+    syncStatus?: 'synced' | 'pending' | 'failed' | 'manual_override';
+    lastSyncError?: string;
+  };
+  source?: 'tagada' | 'manual';
   compareAtPrice?: number;
   stockQuantity: number;
   lowStockThreshold: number;
@@ -141,7 +151,10 @@ const variantSchema = new mongoose.Schema<IProductVariant>({
   },
   tagadaVariantId: {
     type: String,
-    sparse: true,
+    index: true,
+  },
+  tagadaUpdatedAt: {
+    type: Date,
   },
   currentBatchId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -232,9 +245,33 @@ const productSchema = new mongoose.Schema<IProduct>(
       type: String,
       sparse: true,
     },
+    tagadaProductId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    tagadaStoreId: {
+      type: String,
+    },
     tagadaVariantId: {
       type: String,
       trim: true,
+    },
+    tagadaSync: {
+      lastSyncedAt: Date,
+      tagadaUpdatedAt: Date,
+      syncStatus: {
+        type: String,
+        enum: ['synced', 'pending', 'failed', 'manual_override'],
+        default: 'pending'
+      },
+      lastSyncError: String
+    },
+    source: {
+      type: String,
+      enum: ['tagada', 'manual'],
+      default: 'manual'
     },
     compareAtPrice: {
       type: Number,
