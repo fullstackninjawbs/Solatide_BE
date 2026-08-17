@@ -110,7 +110,8 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
 
   // If not found by ID, try matching by Exact Name (case-insensitive) to link existing products
   if (!localProduct && normalized.name) {
-    const nameRegex = new RegExp(`^${normalized.name}$`, 'i');
+    const escapedName = normalized.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nameRegex = new RegExp(`^${escapedName}$`, 'i');
     localProduct = await Product.findOne({ name: nameRegex });
     if (localProduct) {
       // Link the ID so we know it's the same product in the future
