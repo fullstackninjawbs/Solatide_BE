@@ -1,9 +1,21 @@
 import mongoose from 'mongoose';
 
 export interface IProductImage {
-  url: string;
-  alt?: string;
+  url: string; // The primary secure_url or legacy URL
+  secureUrl?: string;
+  publicId?: string;
+  assetId?: string;
+  altText?: string;
   position?: number;
+  isPrimary?: boolean;
+  width?: number;
+  height?: number;
+  format?: string;
+  cloudinarySync?: {
+    altTextSyncedAt?: Date;
+    lastSyncError?: string;
+  };
+  alt?: string; // Kept for legacy migration compatibility
 }
 
 export interface IProductSeo {
@@ -335,8 +347,20 @@ const productSchema = new mongoose.Schema<IProduct>(
     images: [
       {
         url: { type: String, required: true },
-        alt: { type: String },
-        position: { type: Number },
+        secureUrl: { type: String },
+        publicId: { type: String },
+        assetId: { type: String },
+        altText: { type: String, trim: true, maxlength: 160, default: '' },
+        position: { type: Number, default: 0 },
+        isPrimary: { type: Boolean, default: false },
+        width: { type: Number },
+        height: { type: Number },
+        format: { type: String },
+        cloudinarySync: {
+          altTextSyncedAt: { type: Date },
+          lastSyncError: { type: String }
+        },
+        alt: { type: String } // Kept for legacy migration
       },
     ],
     isFeatured: {

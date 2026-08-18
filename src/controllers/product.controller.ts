@@ -3,7 +3,7 @@ import Product from '../models/product.model';
 import Collection from '../models/collection.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
-import { uploadImageBuffer } from '../utils/cloudinary';
+import { uploadImageBuffer, updateImageAltText } from '../utils/cloudinary';
 import { buildQueryFromRules } from '../utils/collectionUtils';
 import { cacheGet, cacheSet, cacheKey, TTL } from '../utils/cache';
 
@@ -428,7 +428,64 @@ export const uploadProductImage = catchAsync(async (req: Request, res: Response,
   res.status(200).json({
     success: true,
     data: {
-      secure_url: result.secure_url
+      secure_url: result.secure_url,
+      public_id: result.public_id,
+      asset_id: result.asset_id,
+      width: result.width,
+      height: result.height,
+      format: result.format
     }
+  });
+});
+
+export const updateMediaAltText = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const { productId, mediaId } = req.params;
+  const { altText } = req.body;
+
+  if (typeof altText !== 'string') {
+    return next(new AppError('altText must be a string', 400));
+  }
+
+  const trimmedAlt = altText.trim().substring(0, 160);
+
+  const product = await Product.findById(productId);
+  if (!product) {
+    return next(new AppError('Product not found', 404));
+  }
+
+  // Find the specific image in the array
+  const image = (product.images as any).id(mediaId);
+  if (!image) {
+    return next(new AppError('Media not found on this product', 404));
+  }
+
+  // Update locally first
+  image.altText = trimmedAlt;
+  image.alt = trimmedAlt; // For backwards compatibility if any legacy code uses it directly
+
+  let syncError: string | null = null;
+  let syncedAt: Date | undefined;
+
+  // If publicId is present, sync with Cloudinary
+  if (image.publicId) {
+    try {
+      await updateImageAltText(image.publicId, trimmedAlt);
+      syncedAt = new Date();
+    } catch (err: any) {
+      syncError = err.message || 'Failed to sync with Cloudinary';
+      console.error('Cloudinary sync failed:', err);
+    }
+  }
+
+  image.cloudinarySync = {
+    altTextSyncedAt: syncedAt,
+    lastSyncError: syncError || undefined
+  };
+
+  await product.save();
+
+  res.status(200).json({
+    success: true,
+    data: image
   });
 });

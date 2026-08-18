@@ -17,6 +17,8 @@ router.route('/:id')
   .patch(restrictTo('admin', 'super_admin', 'operations'), productController.updateProduct)
   .delete(restrictTo('admin', 'super_admin'), productController.deleteProduct);
 
+router.patch('/:productId/media/:mediaId/alt-text', restrictTo('admin', 'super_admin', 'operations'), productController.updateMediaAltText);
+
 router.delete('/', restrictTo('admin', 'super_admin'), productController.deleteAllProducts);
 
 export default router;

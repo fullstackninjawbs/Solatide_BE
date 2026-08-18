@@ -6,6 +6,7 @@ import {
   updateProduct,
   deleteProduct,
   deleteAllProducts,
+  updateMediaAltText,
 } from '../../controllers/product.controller';
 
 // Re-export the full product controller under the admin namespace
@@ -16,4 +17,5 @@ export {
   updateProduct,
   deleteProduct,
   deleteAllProducts,
+  updateMediaAltText,
 };

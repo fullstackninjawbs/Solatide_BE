@@ -85,3 +85,24 @@ export const deleteImageByUrl = async (imageUrl: string): Promise<void> => {
     console.error('Error deleting image from Cloudinary:', error);
   }
 };
+
+/**
+ * Updates or clears the alt text metadata for an image in Cloudinary
+ * @param publicId - The Cloudinary public_id of the asset
+ * @param altText - The new alt text (pass empty string to clear)
+ * @returns Promise that resolves when update is complete
+ */
+export const updateImageAltText = async (publicId: string, altText: string): Promise<void> => {
+  try {
+    const contextStr = altText.trim() ? `alt=${altText.trim()}` : 'alt=';
+    
+    await cloudinary.api.update(publicId, {
+      context: contextStr
+    });
+  } catch (error) {
+    // We log the error but don't want to throw it necessarily, 
+    // to allow local DB save to succeed even if Cloudinary fails.
+    console.error(`Error updating Cloudinary alt text for ${publicId}:`, error);
+    throw error; // Let the caller decide how to handle it
+  }
+};
