@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { IOrder } from '../../models/order.model';
+import ShippingPackage from '../../models/shippingPackage.model';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -91,6 +92,8 @@ export class StarshipitService {
   }> {
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
+    
+    const defaultPackage = await ShippingPackage.findOne({ isDefault: true, active: true });
 
     const street = order.shippingAddressObj?.street1 || (typeof order.shippingAddress === 'string' ? order.shippingAddress : undefined);
     const suburb = order.shippingAddressObj?.city || order.shippingAddressObj?.street2;
@@ -99,7 +102,7 @@ export class StarshipitService {
     const postCode = order.shippingAddressObj?.zip;
     const country = order.shippingAddressObj?.country || 'AU';
 
-    const payload = {
+    const payload: any = {
       order_date: new Date().toISOString(),
       order_number: order.orderNumber || order._id?.toString(),
       reference: order.orderNumber || order._id?.toString(),
@@ -136,6 +139,16 @@ export class StarshipitService {
           value: order.subtotal || 0
         }]
     };
+
+    if (defaultPackage) {
+      const pkgWeightKg = defaultPackage.weight.unit === 'g' ? defaultPackage.weight.value / 1000 : defaultPackage.weight.value;
+      payload.packages = [{
+        weight: pkgWeightKg,
+        length: defaultPackage.dimensions?.length || 0,
+        width: defaultPackage.dimensions?.width || 0,
+        height: defaultPackage.dimensions?.height || 0
+      }];
+    }
 
     try {
       console.log('Sending payload to Starshipit /orders:', JSON.stringify(payload, null, 2));

@@ -145,3 +145,53 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
     },
   });
 });
+
+/**
+ * Handle incoming webhooks from Starshipit to sync tracking details
+ * Webhook sends data like: { order_number: '1004', reference: 'ORD-123', tracking_number: '...', carrier: '...', status: 'Dispatched' }
+ */
+export const handleStarshipitWebhook = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const payload = req.body;
+  
+  // Acknowledge receipt immediately to Starshipit
+  res.status(200).json({ received: true });
+
+  if (!payload || !payload.order_number) {
+    console.warn('Starshipit Webhook: Invalid payload', payload);
+    return;
+  }
+
+  try {
+    const order = await Order.findOne({ orderNumber: payload.order_number });
+    if (!order) {
+      console.warn(`Starshipit Webhook: Order ${payload.order_number} not found in database.`);
+      return;
+    }
+
+    // Only update if a tracking number is present and we don't have it (or if it changed, though less likely)
+    if (payload.tracking_number && (!order.trackingNumber || order.trackingNumber !== payload.tracking_number)) {
+      order.trackingNumber = payload.tracking_number;
+      order.trackingCarrier = payload.carrier || order.trackingCarrier || 'Unknown Carrier';
+      order.shipmentStatus = 'in_transit';
+      order.status = 'shipped'; // High level status
+      
+      // Auto-generate generic tracking URL if not provided by carrier rule
+      if (!order.trackingUrl) {
+        const carrier = order.trackingCarrier || '';
+        if (carrier.toLowerCase().includes('auspost') || carrier.toLowerCase().includes('australia post')) {
+          order.trackingUrl = `https://auspost.com.au/mypost/track/#/details/${payload.tracking_number}`;
+        } else {
+          order.trackingUrl = `https://www.google.com/search?q=${payload.tracking_number}`;
+        }
+      }
+      
+      await order.save();
+      console.log(`Starshipit Webhook: Updated tracking for order ${payload.order_number}`);
+    } else {
+      // Just a status update without new tracking
+      console.log(`Starshipit Webhook: Ignored non-tracking update for order ${payload.order_number}`);
+    }
+  } catch (error) {
+    console.error('Starshipit Webhook Processing Error:', error);
+  }
+});

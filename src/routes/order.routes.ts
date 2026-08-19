@@ -5,6 +5,7 @@ import {
   getAllOrders,
   updateOrderStatus,
   getOrderById,
+  handleStarshipitWebhook,
 } from '../controllers/order.controller';
 import { protect, restrictTo, optionalAuth } from '../middleware/auth';
 
@@ -15,6 +16,9 @@ router.post('/', optionalAuth, createOrder);
 
 // Public order lookup (used by checkout success/failure pages)
 router.get('/:id', optionalAuth, getOrderById);
+
+// Starshipit Webhook
+router.post('/webhook/starshipit', handleStarshipitWebhook);
 
 // Protect subsequent routes
 router.use(protect);

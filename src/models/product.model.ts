@@ -34,6 +34,7 @@ export interface IProductVariant {
   requiresShipping: boolean;
   taxable: boolean;
   weightGrams?: number;
+  shippingPackage?: string;
   tagadaVariantId?: string;
   tagadaUpdatedAt?: Date;
   currentBatchId?: mongoose.Types.ObjectId; // Per-variant batch reference
@@ -160,6 +161,10 @@ const variantSchema = new mongoose.Schema<IProductVariant>({
   },
   weightGrams: {
     type: Number,
+  },
+  shippingPackage: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ShippingPackage',
   },
   tagadaVariantId: {
     type: String,
