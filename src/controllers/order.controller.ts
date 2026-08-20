@@ -153,25 +153,35 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
 export const handleStarshipitWebhook = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const payload = req.body;
   
+  // Log the full payload for debugging to a file so we can inspect it!
+  try {
+    const fs = require('fs');
+    fs.appendFileSync('webhook_payload.json', JSON.stringify(payload, null, 2) + ',\n');
+  } catch (e) {}
+  console.log('Starshipit Webhook Payload received and saved to webhook_payload.json');
+  
   // Acknowledge receipt immediately to Starshipit
   res.status(200).json({ received: true });
 
-  if (!payload || !payload.order_number) {
-    console.warn('Starshipit Webhook: Invalid payload', payload);
+  // Sometimes Starshipit nests the payload under an 'order' object
+  const actualPayload = payload.order ? payload.order : payload;
+
+  if (!actualPayload || !actualPayload.order_number) {
+    console.warn('Starshipit Webhook: Invalid payload (missing order_number)');
     return;
   }
 
   try {
-    const order = await Order.findOne({ orderNumber: payload.order_number });
+    const order = await Order.findOne({ orderNumber: actualPayload.order_number });
     if (!order) {
-      console.warn(`Starshipit Webhook: Order ${payload.order_number} not found in database.`);
+      console.warn(`Starshipit Webhook: Order ${actualPayload.order_number} not found in database.`);
       return;
     }
 
     // Only update if a tracking number is present and we don't have it (or if it changed, though less likely)
-    if (payload.tracking_number && (!order.trackingNumber || order.trackingNumber !== payload.tracking_number)) {
-      order.trackingNumber = payload.tracking_number;
-      order.trackingCarrier = payload.carrier || order.trackingCarrier || 'Unknown Carrier';
+    if (actualPayload.tracking_number && (!order.trackingNumber || order.trackingNumber !== actualPayload.tracking_number)) {
+      order.trackingNumber = actualPayload.tracking_number;
+      order.trackingCarrier = actualPayload.carrier_name || actualPayload.carrier || order.trackingCarrier || 'Unknown Carrier';
       order.shipmentStatus = 'in_transit';
       order.status = 'shipped'; // High level status
       

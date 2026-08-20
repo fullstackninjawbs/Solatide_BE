@@ -304,6 +304,11 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
     });
   }
 
+  // Ensure the first variant matches the root stockQuantity
+  if (productData.variants && productData.variants.length === 1 && productData.stockQuantity !== undefined) {
+     productData.variants[0].stockQty = parseInt(productData.stockQuantity as string, 10) || 0;
+  }
+
   const newProduct = await Product.create(productData);
 
   // Sync manual collections
@@ -354,6 +359,23 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
       }
       return v;
     });
+  } else if (productData.stockQuantity !== undefined) {
+    // If variants weren't explicitly passed but stockQuantity was (e.g. from Inventory quick edit),
+    // sync it to the first variant if we can.
+    const existingProduct = await Product.findById(req.params.id);
+    if (existingProduct && existingProduct.variants && existingProduct.variants.length > 0) {
+      productData.variants = existingProduct.variants.map((v: any, index: number) => {
+        if (index === 0) {
+          v.stockQty = parseInt(productData.stockQuantity as string, 10) || 0;
+        }
+        return v;
+      });
+    }
+  }
+
+  // Double check if variants are passed, ensure the first variant matches the root stockQuantity
+  if (productData.variants && productData.variants.length === 1 && productData.stockQuantity !== undefined) {
+     productData.variants[0].stockQty = parseInt(productData.stockQuantity as string, 10) || 0;
   }
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, productData, {
