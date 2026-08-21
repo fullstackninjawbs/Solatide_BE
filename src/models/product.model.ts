@@ -454,7 +454,17 @@ productSchema.virtual('reviews', {
 
 // Pre-save hook: auto-generate slug from name if not set
 productSchema.pre('save', function (next) {
-  if (this.isModified('name') || !this.slug) {
+  if (this.isModified('slug') && this.slug) {
+    // If Admin manually provided a slug, clean it up
+    this.slug = this.slug
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  } else if (this.isModified('name') || !this.slug) {
+    // Generate slug from name if no slug exists or name changed (and slug wasn't explicitly changed)
     this.slug = (this.name || '')
       .toLowerCase()
       .trim()

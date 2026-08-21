@@ -14,7 +14,12 @@ const handleCastErrorDB = (err: any) => {
  * Handles database duplicate key errors (code 11000)
  */
 const handleDuplicateFieldsDB = (err: any) => {
-  const value = err.errmsg.match(/(["'])(\\?.)*?\1/)?.[0] || 'Unknown field';
+  const value = err.errmsg?.match(/(["'])(\\?.)*?\1/)?.[0] || 'Unknown field';
+  
+  if (err.errmsg && err.errmsg.includes('slug_1')) {
+    return new AppError('This URL handle is already being used by another product.', 400);
+  }
+
   const message = `Duplicate field value: ${value}. Please use another value!`;
   return new AppError(message, 400);
 };
