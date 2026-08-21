@@ -20,7 +20,8 @@ export async function fetchTagadaProducts(): Promise<any[]> {
       const response = await client.products.list({ 
         storeId: config.tagadaStoreId,
         page, 
-        limit: 100 
+        limit: 100,
+        includeVariants: true
       });
       
       // Tagada SDK usually returns an object like { data: [...], has_more: boolean } or similar
@@ -77,7 +78,7 @@ export function normalizeTagadaProduct(raw: any): Partial<any> {
   };
 
   // Map variants if available
-  if (raw.variants && Array.isArray(raw.variants)) {
+  if (raw.variants && Array.isArray(raw.variants) && raw.variants.length > 0) {
     normalized.variants = raw.variants.map((v: any) => ({
       title: v.name || v.title,
       sku: v.sku,
@@ -91,8 +92,12 @@ export function normalizeTagadaProduct(raw: any): Partial<any> {
       tagadaVariantId: v.id,
       tagadaUpdatedAt: new Date(),
     }));
+    
+    // Set the root tagadaVariantId to the first variant's ID if present
+    normalized.tagadaVariantId = raw.variants[0].id;
   } else {
     normalized.variants = [];
+    normalized.tagadaVariantId = raw.default_variant_id || raw.id; // Fallback if no variants array
   }
 
   return normalized;
@@ -121,7 +126,41 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
   }
 
   if (localProduct) {
-    // User requested to NEVER update existing products. Sync only imports brand new products.
+    let updated = false;
+
+    // Update root fields safely (ONLY tagadaVariantId, never overwrite manual data)
+    if (normalized.tagadaVariantId && localProduct.tagadaVariantId !== normalized.tagadaVariantId) {
+      localProduct.tagadaVariantId = normalized.tagadaVariantId;
+      updated = true;
+    }
+
+    // Update variants safely (ONLY tagadaVariantId)
+    if (normalized.variants && normalized.variants.length > 0) {
+      const defaultVariant = normalized.variants[0];
+      if (!localProduct.tagadaVariantId) {
+        localProduct.tagadaVariantId = defaultVariant.tagadaVariantId;
+        updated = true;
+      }
+      
+      // If the local product has a variants array, update the first one
+      if (localProduct.variants && localProduct.variants.length > 0) {
+        if (localProduct.variants[0].tagadaVariantId !== defaultVariant.tagadaVariantId) {
+          localProduct.variants[0].tagadaVariantId = defaultVariant.tagadaVariantId;
+          updated = true;
+        }
+      }
+    }
+
+    if (updated) {
+      localProduct.tagadaSync = {
+        lastSyncedAt: now,
+        tagadaUpdatedAt: tagadaProduct.updated_at ? new Date(tagadaProduct.updated_at) : now,
+        syncStatus: 'synced'
+      };
+      await localProduct.save();
+      return { action: 'updated', product: localProduct };
+    }
+
     return { action: 'skipped', product: localProduct };
   }
 

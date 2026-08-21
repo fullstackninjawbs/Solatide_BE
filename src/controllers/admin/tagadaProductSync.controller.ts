@@ -8,6 +8,7 @@ import {
   fetchTagadaProducts
 } from '../../services/tagadaProductSync.service';
 import TagadaProductSyncLog from '../../models/tagadaProductSyncLog.model';
+import '../../models/AdminUser'; // Side-effect import to ensure schema is registered
 
 // @desc    Get preview of Tagada sync (no DB writes)
 // @route   GET /api/admin/tagada/products/sync-preview
