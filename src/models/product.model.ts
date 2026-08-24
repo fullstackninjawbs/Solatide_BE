@@ -131,7 +131,7 @@ const variantSchema = new mongoose.Schema<IProductVariant>({
   },
   sku: {
     type: String,
-    required: true,
+    default: '',
   },
   price: {
     type: Number,

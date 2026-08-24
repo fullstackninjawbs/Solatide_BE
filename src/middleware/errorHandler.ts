@@ -68,12 +68,14 @@ const sendErrorProd = (err: AppError, res: Response) => {
       message: err.message,
     });
   } else {
-    // Programming or other unknown error: don't leak details
+    // Expose error for debugging
     console.error('[CRITICAL ERROR]', err);
     res.status(500).json({
       success: false,
       status: 'error',
-      message: 'Something went wrong on the server.',
+      message: err.message,
+      stack: err.stack,
+      error: err
     });
   }
 };

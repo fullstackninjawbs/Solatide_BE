@@ -71,7 +71,7 @@ export function normalizeTagadaProduct(raw: any): Partial<any> {
     compareAtPrice: extractPrice(raw.compare_at_price || raw.compareAtPrice),
     publishStatus: raw.active || raw.status === 'active' ? 'active' : 'draft',
     tagadaProductId: raw.id,
-    sku: raw.sku,
+    sku: raw.sku || (raw.variants && raw.variants.length > 0 ? raw.variants[0].sku : '') || '',
     imageUrl: raw.images && raw.images.length > 0 ? raw.images[0] : (raw.image || undefined),
     stockQuantity: raw.inventory_quantity || 0,
     inStock: raw.inventory_quantity > 0 || !raw.tracks_inventory,
@@ -81,7 +81,7 @@ export function normalizeTagadaProduct(raw: any): Partial<any> {
   if (raw.variants && Array.isArray(raw.variants) && raw.variants.length > 0) {
     normalized.variants = raw.variants.map((v: any) => ({
       title: v.name || v.title,
-      sku: v.sku,
+      sku: v.sku || '',
       price: extractPrice(v.price) || normalized.price,
       compareAtPrice: extractPrice(v.compare_at_price || v.compareAtPrice) || normalized.compareAtPrice,
       stockQty: v.inventory_quantity || 0,
@@ -128,25 +128,39 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
   if (localProduct) {
     let updated = false;
 
-    // Update root fields safely (ONLY tagadaVariantId, never overwrite manual data)
-    if (normalized.tagadaVariantId && localProduct.tagadaVariantId !== normalized.tagadaVariantId) {
-      localProduct.tagadaVariantId = normalized.tagadaVariantId;
-      updated = true;
-    }
-
-    // Update variants safely (ONLY tagadaVariantId)
-    if (normalized.variants && normalized.variants.length > 0) {
-      const defaultVariant = normalized.variants[0];
-      if (!localProduct.tagadaVariantId) {
-        localProduct.tagadaVariantId = defaultVariant.tagadaVariantId;
+    // Update root fields from Tagada
+    const rootFieldsToUpdate = ['name', 'description', 'price', 'compareAtPrice', 'publishStatus', 'sku', 'imageUrl', 'stockQuantity', 'inStock', 'tagadaVariantId'];
+    
+    for (const field of rootFieldsToUpdate) {
+      if (normalized[field] !== undefined && localProduct[field] !== normalized[field]) {
+        localProduct[field] = normalized[field];
         updated = true;
       }
+    }
+
+    // Update variants from Tagada
+    if (normalized.variants && normalized.variants.length > 0) {
+      const tagadaVariant = normalized.variants[0];
       
-      // If the local product has a variants array, update the first one
-      if (localProduct.variants && localProduct.variants.length > 0) {
-        if (localProduct.variants[0].tagadaVariantId !== defaultVariant.tagadaVariantId) {
-          localProduct.variants[0].tagadaVariantId = defaultVariant.tagadaVariantId;
-          updated = true;
+      // Ensure localProduct has a variants array
+      if (!localProduct.variants) {
+        localProduct.variants = [];
+      }
+      
+      // If the local product doesn't have a variant yet, add it
+      if (localProduct.variants.length === 0) {
+        localProduct.variants.push(tagadaVariant);
+        updated = true;
+      } else {
+        // Update the first variant with Tagada data
+        const localVariant = localProduct.variants[0];
+        const variantFieldsToUpdate = ['title', 'sku', 'price', 'compareAtPrice', 'stockQty', 'tagadaVariantId'];
+        
+        for (const field of variantFieldsToUpdate) {
+          if (tagadaVariant[field] !== undefined && localVariant[field] !== tagadaVariant[field]) {
+            localVariant[field] = tagadaVariant[field];
+            updated = true;
+          }
         }
       }
     }
