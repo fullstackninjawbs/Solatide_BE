@@ -132,8 +132,8 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
     const rootFieldsToUpdate = ['name', 'description', 'price', 'compareAtPrice', 'publishStatus', 'sku', 'imageUrl', 'stockQuantity', 'inStock', 'tagadaVariantId'];
     
     for (const field of rootFieldsToUpdate) {
-      if (normalized[field] !== undefined && localProduct[field] !== normalized[field]) {
-        localProduct[field] = normalized[field];
+      if ((normalized as any)[field] !== undefined && (localProduct as any)[field] !== (normalized as any)[field]) {
+        (localProduct as any)[field] = (normalized as any)[field];
         updated = true;
       }
     }
@@ -157,8 +157,8 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
         const variantFieldsToUpdate = ['title', 'sku', 'price', 'compareAtPrice', 'stockQty', 'tagadaVariantId'];
         
         for (const field of variantFieldsToUpdate) {
-          if (tagadaVariant[field] !== undefined && localVariant[field] !== tagadaVariant[field]) {
-            localVariant[field] = tagadaVariant[field];
+          if ((tagadaVariant as any)[field] !== undefined && (localVariant as any)[field] !== (tagadaVariant as any)[field]) {
+            (localVariant as any)[field] = (tagadaVariant as any)[field];
             updated = true;
           }
         }
