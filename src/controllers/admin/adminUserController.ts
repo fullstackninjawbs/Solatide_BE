@@ -127,6 +127,11 @@ export const deleteAdminUser = catchAsync(async (req: AuthenticatedRequest, res:
     return next(new AppError('You cannot delete your own account', 400));
   }
 
+  // Only super_admin can delete users
+  if (req.user?.role !== 'super_admin') {
+    return next(new AppError('Only super_admin can delete admin users', 403));
+  }
+
   const userToDelete = await User.findById(userId);
   if (!userToDelete) {
     return next(new AppError('User not found', 404));
