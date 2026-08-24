@@ -1,5 +1,6 @@
 import express from 'express';
 import * as contentController from '../../controllers/admin/contentController';
+import { restrictTo } from '../../middleware/auth';
 
 const router = express.Router();
 
@@ -10,6 +11,6 @@ router.route('/faqs')
 
 router.route('/faqs/:id')
   .put(contentController.updateFaqSection)
-  .delete(contentController.deleteFaqSection);
+  .delete(restrictTo('super_admin'), contentController.deleteFaqSection);
 
 export default router;

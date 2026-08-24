@@ -15,10 +15,10 @@ router.route('/')
 router.route('/:id')
   .get(productController.getProductById)
   .patch(restrictTo('admin', 'super_admin', 'operations'), productController.updateProduct)
-  .delete(restrictTo('admin', 'super_admin'), productController.deleteProduct);
+  .delete(restrictTo('super_admin'), productController.deleteProduct);
 
 router.patch('/:productId/media/:mediaId/alt-text', restrictTo('admin', 'super_admin', 'operations'), productController.updateMediaAltText);
 
-router.delete('/', restrictTo('admin', 'super_admin'), productController.deleteAllProducts);
+router.delete('/', restrictTo('super_admin'), productController.deleteAllProducts);
 
 export default router;

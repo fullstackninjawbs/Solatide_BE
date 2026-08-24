@@ -15,6 +15,6 @@ router.route('/')
 router.route('/:id')
   .get(collectionController.getCollectionById)
   .patch(collectionController.updateCollection)
-  .delete(collectionController.deleteCollection);
+  .delete(restrictTo('super_admin'), collectionController.deleteCollection);
 
 export default router;

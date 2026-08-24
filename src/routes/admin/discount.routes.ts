@@ -1,5 +1,6 @@
 import express from 'express';
 import * as discountController from '../../controllers/admin/discountController';
+import { restrictTo } from '../../middleware/auth';
 
 const router = express.Router();
 
@@ -8,5 +9,5 @@ router.get('/', discountController.getDiscounts);
 router.get('/:id', discountController.getDiscountById);
 router.post('/', discountController.createDiscount);
 router.put('/:id', discountController.updateDiscount);
-router.delete('/:id', discountController.deleteDiscount);
+router.delete('/:id', restrictTo('super_admin'), discountController.deleteDiscount);
 export default router;

@@ -26,6 +26,6 @@ router.post('/upload-coa', upload.single('coaFile'), batchController.uploadCOA);
 router.route('/:id')
   .get(batchController.getBatchById)
   .put(batchController.updateBatch)
-  .delete(batchController.deleteBatch);
+  .delete(restrictTo('super_admin'), batchController.deleteBatch);
 
 export default router;
