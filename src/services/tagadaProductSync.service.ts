@@ -129,7 +129,7 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
     let updated = false;
 
     // Update root fields from Tagada
-    const rootFieldsToUpdate = ['name', 'description', 'price', 'compareAtPrice', 'publishStatus', 'sku', 'imageUrl', 'tagadaVariantId'];
+    const rootFieldsToUpdate = ['name', 'price', 'sku', 'tagadaVariantId'];
 
     for (const field of rootFieldsToUpdate) {
       if ((normalized as any)[field] !== undefined && (localProduct as any)[field] !== (normalized as any)[field]) {
@@ -154,7 +154,7 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
       } else {
         // Update the first variant with Tagada data
         const localVariant = localProduct.variants[0];
-        const variantFieldsToUpdate = ['title', 'sku', 'price', 'compareAtPrice', 'tagadaVariantId'];
+        const variantFieldsToUpdate = ['title', 'sku', 'price', 'tagadaVariantId'];
 
         for (const field of variantFieldsToUpdate) {
           if ((tagadaVariant as any)[field] !== undefined && (localVariant as any)[field] !== (tagadaVariant as any)[field]) {
@@ -227,7 +227,8 @@ export async function previewTagadaProductSync(): Promise<any> {
       const changedFields = [];
       if (localProduct.name !== normalized.name) changedFields.push('name');
       if (localProduct.price !== normalized.price) changedFields.push('price');
-      // Add more diff checks as needed
+      if (localProduct.sku !== normalized.sku) changedFields.push('sku');
+      if (localProduct.tagadaVariantId !== normalized.tagadaVariantId) changedFields.push('tagadaVariantId');
 
       changes.push({
         tagadaProductId: normalized.tagadaProductId,
