@@ -17,13 +17,13 @@ export async function fetchTagadaProducts(): Promise<any[]> {
   while (hasMore) {
     try {
       // Pass storeId as required by Tagada SDK
-      const response = await client.products.list({ 
+      const response = await client.products.list({
         storeId: config.tagadaStoreId,
-        page, 
+        page,
         limit: 100,
         includeVariants: true
       });
-      
+
       // Tagada SDK usually returns an object like { data: [...], has_more: boolean } or similar
       const products = response.data || response;
       if (Array.isArray(products)) {
@@ -33,7 +33,7 @@ export async function fetchTagadaProducts(): Promise<any[]> {
       } else {
         break;
       }
-      
+
       if (products.length < 100 || response.has_more === false) {
         hasMore = false;
       } else {
@@ -92,7 +92,7 @@ export function normalizeTagadaProduct(raw: any): Partial<any> {
       tagadaVariantId: v.id,
       tagadaUpdatedAt: new Date(),
     }));
-    
+
     // Set the root tagadaVariantId to the first variant's ID if present
     normalized.tagadaVariantId = raw.variants[0].id;
   } else {
@@ -129,8 +129,8 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
     let updated = false;
 
     // Update root fields from Tagada
-    const rootFieldsToUpdate = ['name', 'description', 'price', 'compareAtPrice', 'publishStatus', 'sku', 'imageUrl', 'stockQuantity', 'inStock', 'tagadaVariantId'];
-    
+    const rootFieldsToUpdate = ['name', 'description', 'price', 'compareAtPrice', 'publishStatus', 'sku', 'imageUrl', 'tagadaVariantId'];
+
     for (const field of rootFieldsToUpdate) {
       if ((normalized as any)[field] !== undefined && (localProduct as any)[field] !== (normalized as any)[field]) {
         (localProduct as any)[field] = (normalized as any)[field];
@@ -141,12 +141,12 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
     // Update variants from Tagada
     if (normalized.variants && normalized.variants.length > 0) {
       const tagadaVariant = normalized.variants[0];
-      
+
       // Ensure localProduct has a variants array
       if (!localProduct.variants) {
         localProduct.variants = [];
       }
-      
+
       // If the local product doesn't have a variant yet, add it
       if (localProduct.variants.length === 0) {
         localProduct.variants.push(tagadaVariant);
@@ -155,7 +155,7 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
         // Update the first variant with Tagada data
         const localVariant = localProduct.variants[0];
         const variantFieldsToUpdate = ['title', 'sku', 'price', 'compareAtPrice', 'stockQty', 'tagadaVariantId'];
-        
+
         for (const field of variantFieldsToUpdate) {
           if ((tagadaVariant as any)[field] !== undefined && (localVariant as any)[field] !== (tagadaVariant as any)[field]) {
             (localVariant as any)[field] = (tagadaVariant as any)[field];
@@ -182,7 +182,7 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
   try {
     const nextIdRecord = await Product.findOne().sort({ id: -1 }).select('id');
     const nextId = (nextIdRecord?.id || 0) + 1;
-    
+
     const newProductData = {
       ...normalized,
       id: nextId,
@@ -228,7 +228,7 @@ export async function previewTagadaProductSync(): Promise<any> {
       if (localProduct.name !== normalized.name) changedFields.push('name');
       if (localProduct.price !== normalized.price) changedFields.push('price');
       // Add more diff checks as needed
-      
+
       changes.push({
         tagadaProductId: normalized.tagadaProductId,
         localProductId: localProduct._id,
@@ -261,7 +261,7 @@ export async function syncAllTagadaProducts(adminUserId: any): Promise<any> {
 
     for (const raw of products) {
       const result = await syncTagadaProduct(raw);
-      
+
       const changeLog = {
         tagadaProductId: raw.id,
         localProductId: result.product?._id,
