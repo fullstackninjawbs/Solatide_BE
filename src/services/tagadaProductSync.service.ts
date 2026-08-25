@@ -154,7 +154,7 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
       } else {
         // Update the first variant with Tagada data
         const localVariant = localProduct.variants[0];
-        const variantFieldsToUpdate = ['title', 'sku', 'price', 'compareAtPrice', 'stockQty', 'tagadaVariantId'];
+        const variantFieldsToUpdate = ['title', 'sku', 'price', 'compareAtPrice', 'tagadaVariantId'];
 
         for (const field of variantFieldsToUpdate) {
           if ((tagadaVariant as any)[field] !== undefined && (localVariant as any)[field] !== (tagadaVariant as any)[field]) {
