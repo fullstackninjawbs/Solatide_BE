@@ -92,6 +92,8 @@ export const syncFromTagada = catchAsync(async (req: Request, res: Response, nex
 
     if (!actualCode) continue;
 
+    const usedCount = codeObj?.timesUsed || promo.timesUsed || codeObj?.usageCount || promo.usageCount || 0;
+
     // Check if it already exists in our DB
     const exists = await Discount.findOne({ code: actualCode });
     if (!exists) {
@@ -102,9 +104,14 @@ export const syncFromTagada = catchAsync(async (req: Request, res: Response, nex
         status: (codeObj ? codeObj.active : true) && promo.enabled ? 'active' : 'disabled',
         tagadaPromotionId: promo.id,
         tagadaPromotionCodeId: codeObj?.id,
-        appliesTo: 'all'
+        appliesTo: 'all',
+        usesSoFar: usedCount
       });
       imported++;
+    } else {
+      // Update existing discount usage count
+      exists.usesSoFar = usedCount;
+      await exists.save();
     }
   }
 

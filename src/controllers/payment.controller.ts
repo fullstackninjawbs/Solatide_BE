@@ -842,7 +842,7 @@ export const tagadaWebhook = catchAsync(async (
           try {
             await Discount.findOneAndUpdate(
               { code: order.couponCode },
-              { $inc: { used: 1 } }
+              { $inc: { usesSoFar: 1 } }
             );
             console.log(`[Discount] Incremented usage for coupon ${order.couponCode}`);
           } catch (error) {
