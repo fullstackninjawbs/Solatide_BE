@@ -19,6 +19,7 @@ import Product from '../models/product.model';
 import Customer from '../models/Customer';
 import PaymentSettings from '../models/PaymentSettings';
 import Refund from '../models/Refund';
+import Discount from '../models/Discount';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
@@ -833,6 +834,19 @@ export const tagadaWebhook = catchAsync(async (
             console.log(`[Address Validation] Validated shipping address for order ${order.orderNumber}`);
           } catch (err) {
             console.error('[TagadaPay Webhook] Address Validation Error:', err);
+          }
+        }
+
+        // 5) Increment Discount Usage
+        if (order.couponCode) {
+          try {
+            await Discount.findOneAndUpdate(
+              { code: order.couponCode },
+              { $inc: { used: 1 } }
+            );
+            console.log(`[Discount] Incremented usage for coupon ${order.couponCode}`);
+          } catch (error) {
+            console.error(`[Discount] Failed to increment usage for coupon ${order.couponCode}:`, error);
           }
         }
       })().catch(err => {
