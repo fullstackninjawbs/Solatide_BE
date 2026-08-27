@@ -5,6 +5,7 @@ import orderRoutes from './order.routes';
 import reviewRoutes from './review.routes';
 import contentRoutes from './content.routes';
 import coaRoutes from './coa.routes';
+import pageRoutes from './public.page.routes';
 
 const router = Router();
 
@@ -15,5 +16,6 @@ router.use('/orders', orderRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/content', contentRoutes);
 router.use('/coas', coaRoutes);
+router.use('/pages', pageRoutes);
 
 export default router;
