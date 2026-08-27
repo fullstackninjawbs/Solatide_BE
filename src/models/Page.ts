@@ -69,7 +69,5 @@ const PageSchema = new Schema<IPage>(
   { timestamps: true }
 );
 
-// Ensure the slug is properly indexed
-PageSchema.index({ slug: 1 });
 
 export default mongoose.model<IPage>('Page', PageSchema);

@@ -383,8 +383,6 @@ orderSchema.index({ 'attribution.firstTouch.utmCampaign': 1 });
 orderSchema.index({ paymentStatus: 1, createdAt: -1 });
 orderSchema.index({ fulfilmentStatus: 1, createdAt: -1 });
 orderSchema.index({ 'customer.email': 1, createdAt: -1 });
-orderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
 orderSchema.index({ source: 1, createdAt: -1 });
-
 export const Order = mongoose.model<IOrder>('Order', orderSchema);
 export default Order;
