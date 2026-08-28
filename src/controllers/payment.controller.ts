@@ -204,7 +204,8 @@ export const createTagadaPayment = catchAsync(
       return next(new AppError('No Tagada variant IDs found on this order. Please ensure products have a tagadaVariantId configured.', 400));
     }
 
-    const clientOrigin = config.corsOrigin.replace(/\/$/, '');
+    const originHeader = req.headers.origin || (Array.isArray(config.corsOrigin) ? config.corsOrigin[0] : config.corsOrigin);
+    const clientOrigin = originHeader.replace(/\/$/, '');
     const returnUrl = `${clientOrigin}/checkout/success`;
 
     // 5) Call TagadaPay SDK to create session

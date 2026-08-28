@@ -10,7 +10,7 @@ interface Config {
   mongoUri: string;
   jwtSecret: string;
   jwtExpiresIn: string;
-  corsOrigin: string;
+  corsOrigin: string | string[];
   // TagadaPay
   tagadaEnv: 'sandbox' | 'prod';
   tagadaApiKeySandbox: string;
@@ -44,7 +44,9 @@ export const config: Config = {
   mongoUri: process.env.MONGO_URI!,
   jwtSecret: process.env.JWT_SECRET!,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  corsOrigin: process.env.CORS_ORIGIN 
+    ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) 
+    : 'http://localhost:5173',
   // TagadaPay
   tagadaEnv: (process.env.TAGADA_ENV as 'sandbox' | 'prod') || 'sandbox',
   tagadaApiKeySandbox: process.env.TAGADA_API_KEY_SANDBOX || '',
