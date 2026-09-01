@@ -37,7 +37,7 @@ export const sendVerificationEmail = async (
         .stars { color: #fbbf24; font-size: 18px; margin: 0 0 10px 0; letter-spacing: 2px; }
         .review-title { font-weight: 600; color: #111; margin: 0 0 5px 0; font-size: 15px; }
         .review-content { color: #4b5563; font-size: 14px; margin: 0; white-space: pre-wrap; }
-        .button-container { text-align: center; margin: 30px 0; color: #9CA3AF }
+        .button-container { text-align: center; margin: 30px 0; color: #FFFFF0 }
         .button { background-color: #008060; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 4px; font-weight: 600; font-size: 16px; display: inline-block; }
         .footer { text-align: center; margin-top: 40px; color: #9ca3af; font-size: 12px; border-top: 1px solid #f3f4f6; padding-top: 20px; }
       </style>
