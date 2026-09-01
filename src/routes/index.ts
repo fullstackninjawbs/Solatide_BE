@@ -6,6 +6,7 @@ import reviewRoutes from './review.routes';
 import contentRoutes from './content.routes';
 import coaRoutes from './coa.routes';
 import pageRoutes from './public.page.routes';
+import subscribeRoutes from './subscribe.routes';
 
 const router = Router();
 
@@ -17,5 +18,6 @@ router.use('/reviews', reviewRoutes);
 router.use('/content', contentRoutes);
 router.use('/coas', coaRoutes);
 router.use('/pages', pageRoutes);
+router.use('/subscribe', subscribeRoutes);
 
 export default router;
