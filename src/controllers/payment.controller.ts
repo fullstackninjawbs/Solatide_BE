@@ -767,6 +767,8 @@ export const tagadaWebhook = catchAsync(async (
 
     // Save the order to DB immediately to release the API caller/client
     try {
+      // Force Mongoose version concurrency check to prevent race conditions (duplicate emails/order numbers)
+      order.increment();
       await order.save({ validateBeforeSave: false });
     } catch (err: any) {
       if (err.name === 'VersionError') {
