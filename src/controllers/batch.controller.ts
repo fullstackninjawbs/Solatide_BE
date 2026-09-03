@@ -110,6 +110,7 @@ export const getPublicCoas = catchAsync(async (req: Request, res: Response, next
 
   const batches = await Batch.find(filter)
     .populate('productId', 'name slug')
+    .populate('products', 'name slug')
     .sort('-createdAt');
 
   res.status(200).json({
