@@ -444,7 +444,7 @@ export const sendNewsletterWelcomeEmail = async (email: string) => {
         <p>Thank you for subscribing to our newsletter.</p>
         <p>You'll now be the first to know about our latest product releases, restocks, and exclusive research updates.</p>
         <div class="button-container">
-          <a href="${shopUrl}" class="button">Browse Peptides</a>
+          <a href="${shopUrl}" class="button" style="color: #ffffff !important;">Browse Peptides</a>
         </div>
         <div class="footer">
           <p>© ${new Date().getFullYear()} Solatide Biosciences. All rights reserved.</p>
