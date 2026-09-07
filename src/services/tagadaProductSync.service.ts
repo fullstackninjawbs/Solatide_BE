@@ -219,6 +219,7 @@ export async function previewTagadaProductSync(): Promise<any> {
     if (!localProduct) {
       changes.push({
         tagadaProductId: normalized.tagadaProductId,
+        tagadaVariantId: normalized.tagadaVariantId,
         productName: normalized.name,
         action: 'created'
       });
@@ -232,6 +233,7 @@ export async function previewTagadaProductSync(): Promise<any> {
 
       changes.push({
         tagadaProductId: normalized.tagadaProductId,
+        tagadaVariantId: normalized.tagadaVariantId,
         localProductId: localProduct._id,
         productName: normalized.name,
         action: changedFields.length > 0 ? 'updated' : 'skipped',
