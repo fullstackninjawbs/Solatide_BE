@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import sanitizeHtml from 'sanitize-html';
 import Page from '../models/Page';
+import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 
 // Helper to sanitize HTML content
 const sanitizePageContent = (html: string) => {
@@ -113,6 +114,10 @@ export const createPage = async (req: Request, res: Response): Promise<void> => 
     });
 
     await newPage.save();
+    
+    // Trigger storefront rebuild automatically in the background
+    triggerStorefrontRebuild();
+    
     res.status(201).json(newPage);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -173,6 +178,9 @@ export const updatePage = async (req: Request, res: Response): Promise<void> => 
     page.updatedBy = (req as any).user?._id;
     await page.save();
 
+    // Trigger storefront rebuild automatically in the background
+    triggerStorefrontRebuild();
+
     res.json(page);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -189,6 +197,10 @@ export const deletePage = async (req: Request, res: Response): Promise<void> => 
       res.status(404).json({ message: 'Page not found' });
       return;
     }
+    
+    // Trigger storefront rebuild automatically in the background
+    triggerStorefrontRebuild();
+    
     res.json({ message: 'Page deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -229,6 +241,18 @@ export const getPageBySlug = async (req: Request, res: Response): Promise<void> 
     }
 
     res.json(page);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * PUBLIC: Get list of active public pages (for sitemap/prerendering)
+ */
+export const getPublicPagesList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const pages = await Page.find({ status: 'published' }, 'slug title updatedAt').sort({ updatedAt: -1 });
+    res.json(pages);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -6,6 +6,7 @@ import catchAsync from '../utils/catchAsync';
 import { uploadImageBuffer, updateImageAltText } from '../utils/cloudinary';
 import { buildQueryFromRules } from '../utils/collectionUtils';
 import { cacheGet, cacheSet, cacheKey, TTL } from '../utils/cache';
+import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 
 const slugify = (name: string): string =>
   name
@@ -322,6 +323,9 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
   // Invalidate product list cache
   const { cacheDel } = await import('../utils/cache');
   await cacheDel('products:list*');
+  
+  // Trigger storefront rebuild in background
+  triggerStorefrontRebuild();
 
   res.status(201).json({
     success: true,
@@ -406,6 +410,9 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
     cacheDel(`products:detail:${updatedProduct.slug}`),
     cacheDel('products:list*'),
   ]);
+  
+  // Trigger storefront rebuild in background
+  triggerStorefrontRebuild();
 
   res.status(200).json({
     success: true,
@@ -427,6 +434,9 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
     cacheDel(`products:detail:${req.params.id}`),
     cacheDel('products:list*'),
   ]);
+  
+  // Trigger storefront rebuild in background
+  triggerStorefrontRebuild();
 
   res.status(204).json({ success: true, data: null });
 });

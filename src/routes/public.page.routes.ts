@@ -6,6 +6,7 @@ const router = Router();
 // ─── PUBLIC ROUTES ───
 // These will be mounted under /api/pages
 
+router.get('/', pageController.getPublicPagesList);
 router.get('/:slug', pageController.getPageBySlug);
 
 export default router;
