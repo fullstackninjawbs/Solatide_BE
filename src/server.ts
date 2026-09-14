@@ -27,6 +27,9 @@ process.on('uncaughtException', (err: Error) => {
 // Initialize Express app
 const app = express();
 
+// Trust reverse proxy (e.g. NGINX) to correctly handle X-Forwarded-For headers for rate limiting
+app.set('trust proxy', 1);
+
 import { initializeTagadaClientFromDB } from './services/tagadaClient';
 
 // Connect to MongoDB Database and initialize DB-backed singletons
