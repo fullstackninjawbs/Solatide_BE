@@ -80,7 +80,7 @@ app.get('/api/status', (req: Request, res: Response) => {
 });
 
 // Health check — no auth, no rate limit, highest priority
-app.use('/health', healthRoutes);
+app.use('/api/health', healthRoutes);
 
 // Register Direct and Versioned API Routes
 app.use('/api/products', publicLimiter, productRoutes);
