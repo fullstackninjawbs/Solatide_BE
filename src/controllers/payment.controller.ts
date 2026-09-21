@@ -151,7 +151,7 @@ export const createTagadaPayment = catchAsync(
       if (!order.attribution) {
         order.attribution = {};
       }
-      
+
       // Preserve first touch if it already exists on the order
       if (attribution.firstTouch && !order.attribution.firstTouch?.source) {
         order.attribution.firstTouch = {
@@ -160,7 +160,7 @@ export const createTagadaPayment = catchAsync(
           channel: attribution.firstTouch.channel?.substring(0, 255)
         };
       }
-      
+
       // Update last touch if meaningful
       if (attribution.lastTouch) {
         order.attribution.lastTouch = {
@@ -339,7 +339,7 @@ async function decrementTagadaInventory(lineItems: any[]) {
 
     // Check if it matches a variant
     if (Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
-      const variant = productDoc.variants.find((v: any) => 
+      const variant = productDoc.variants.find((v: any) =>
         (tagadaVarId && v.tagadaVariantId === tagadaVarId) || (sku && v.sku === sku)
       );
       if (variant) {
@@ -352,10 +352,10 @@ async function decrementTagadaInventory(lineItems: any[]) {
 
     // Check if it matches the base product directly (and we didn't update a variant)
     if (!updated) {
-      const isBaseProductMatch = 
-        (tagadaVarId && productDoc.tagadaVariantId === tagadaVarId) || 
+      const isBaseProductMatch =
+        (tagadaVarId && productDoc.tagadaVariantId === tagadaVarId) ||
         (sku && productDoc.sku === sku);
-      
+
       if (isBaseProductMatch && typeof productDoc.stockQuantity === 'number') {
         productDoc.stockQuantity = Math.max(0, productDoc.stockQuantity - qty);
         updated = true;
@@ -546,22 +546,22 @@ export const tagadaWebhook = catchAsync(async (
     order.fulfilmentStatus = 'unfulfilled';
 
     let fullOrder: any = data; // fallback to data if fetch fails or data IS the order
-    
+
     const targetTagadaId = tagadaOrderId || order.tagadaOrderId || tagadaSessionId || order.tagadaSessionId || order.tagadaPaymentId;
-    
+
     if (targetTagadaId) {
       try {
         const client = await getTagadaClient();
         let res: any = null;
         let retries = 3;
-        
+
         while (retries > 0) {
           try {
             // Some Tagada IDs are checkout sessions, others are order IDs
             if (targetTagadaId.startsWith('cs_')) {
-               res = await client.checkout.retrieveSession(targetTagadaId);
+              res = await client.checkout.retrieveSession(targetTagadaId);
             } else {
-               res = await client.orders.retrieve(targetTagadaId);
+              res = await client.orders.retrieve(targetTagadaId);
             }
 
             const testOrder = res.order || res.session || res;
@@ -923,8 +923,8 @@ export const testTagadaConnection = catchAsync(
       const axios = require('axios').default;
       // Use a lightweight endpoint — list payments with limit 1
       const env = config.tagadaEnv;
-      const apiKey = env === 'prod' ? config.tagadaApiKeyProd : config.tagadaApiKeySandbox;
-      const baseUrl = env === 'prod' ? 'https://app.tagadapay.com/api/public/v1' : 'https://app.tagadapay.dev/api/public/v1';
+      const apiKey = env === 'production' ? config.tagadaApiKeyProd : config.tagadaApiKeySandbox;
+      const baseUrl = env === 'production' ? 'https://app.tagadapay.com/api/public/v1' : 'https://app.tagadapay.dev/api/public/v1';
 
       await axios.get(`${baseUrl}/payments`, {
         params: { limit: 1 },
@@ -975,9 +975,9 @@ export const syncTagadaOrder = catchAsync(
 
     try {
       if (targetTagadaId.startsWith('cs_')) {
-         tagadaData = await client.checkout.retrieveSession(targetTagadaId);
+        tagadaData = await client.checkout.retrieveSession(targetTagadaId);
       } else {
-         tagadaData = await client.orders.retrieve(targetTagadaId);
+        tagadaData = await client.orders.retrieve(targetTagadaId);
       }
     } catch (err: any) {
       console.error('[TagadaPay Sync] Failed to fetch details:', err);

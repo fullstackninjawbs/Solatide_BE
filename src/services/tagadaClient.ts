@@ -37,7 +37,7 @@ export async function buildTagadaClient(opts?: {
 
   const env = opts?.env ?? config.tagadaEnv;
   const apiKey =
-    env === 'prod'
+    env === 'production'
       ? (opts?.apiKeyProd || config.tagadaApiKeyProd)
       : (opts?.apiKeySandbox || config.tagadaApiKeySandbox);
 

@@ -12,7 +12,7 @@ interface Config {
   jwtExpiresIn: string;
   corsOrigin: string | string[];
   // TagadaPay
-  tagadaEnv: 'sandbox' | 'prod';
+  tagadaEnv: 'sandbox' | 'production';
   tagadaApiKeySandbox: string;
   tagadaApiKeyProd: string;
   tagadaWebhookSecret: string;
@@ -44,11 +44,11 @@ export const config: Config = {
   mongoUri: process.env.MONGO_URI!,
   jwtSecret: process.env.JWT_SECRET!,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  corsOrigin: process.env.CORS_ORIGIN 
-    ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim()) 
+  corsOrigin: process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
     : 'http://localhost:5173',
   // TagadaPay
-  tagadaEnv: (process.env.TAGADA_ENV as 'sandbox' | 'prod') || 'sandbox',
+  tagadaEnv: (process.env.TAGADA_ENV as 'sandbox' | 'production') || 'sandbox',
   tagadaApiKeySandbox: process.env.TAGADA_API_KEY_SANDBOX || '',
   tagadaApiKeyProd: process.env.TAGADA_API_KEY_PROD || '',
   tagadaWebhookSecret: process.env.TAGADA_WEBHOOK_SECRET || '',
