@@ -12,7 +12,7 @@ export interface IPaymentSettings extends Document {
   stripeKeys?: string;
   manualPaymentInstructions?: string;
   // TagadaPay
-  tagadaEnv: 'sandbox' | 'prod';
+  tagadaEnv: 'sandbox' | 'production';
   tagadaApiKeySandbox: string;
   tagadaApiKeyProd: string;
   tagadaWebhookSecret: string;
@@ -27,7 +27,7 @@ const PaymentSettingsSchema = new Schema<IPaymentSettings>(
     // TagadaPay
     tagadaEnv: {
       type: String,
-      enum: ['sandbox', 'prod'],
+      enum: ['sandbox', 'production'],
       default: 'sandbox',
     },
     tagadaApiKeySandbox: { type: String, default: '' },

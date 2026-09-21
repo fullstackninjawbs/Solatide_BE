@@ -24,7 +24,7 @@ export let tagadaClient: any = null;
  * Build a fresh Tagada instance using current config values.
  */
 export async function buildTagadaClient(opts?: {
-  env?: 'sandbox' | 'prod';
+  env?: 'sandbox' | 'production';
   apiKeySandbox?: string;
   apiKeyProd?: string;
 }) {
@@ -48,7 +48,7 @@ export async function buildTagadaClient(opts?: {
  * Rebuild the singleton (e.g. after admin updates credentials from the UI).
  */
 export async function rebuildTagadaClient(opts?: {
-  env?: 'sandbox' | 'prod';
+  env?: 'sandbox' | 'production';
   apiKeySandbox?: string;
   apiKeyProd?: string;
 }): Promise<void> {
@@ -63,7 +63,7 @@ export async function initializeTagadaClientFromDB(): Promise<void> {
     const settings = await PaymentSettings.findOne();
     if (settings) {
       await rebuildTagadaClient({
-        env: settings.tagadaEnv as 'sandbox' | 'prod',
+        env: settings.tagadaEnv as 'sandbox' | 'production',
         apiKeySandbox: settings.tagadaApiKeySandbox,
         apiKeyProd: settings.tagadaApiKeyProd,
       });

@@ -55,8 +55,8 @@ export const updateTagadaSettings = catchAsync(
       tagadaEnabled,
     } = req.body;
 
-    if (tagadaEnv && !['sandbox', 'prod'].includes(tagadaEnv)) {
-      return next(new AppError("tagadaEnv must be 'sandbox' or 'prod'", 400));
+    if (tagadaEnv && !['sandbox', 'production'].includes(tagadaEnv)) {
+      return next(new AppError("tagadaEnv must be 'sandbox' or 'production'", 400));
     }
 
     let settings = await PaymentSettings.findOne();
