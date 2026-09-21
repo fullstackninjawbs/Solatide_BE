@@ -110,6 +110,35 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
     }
   }
 
+  // If the order is still pending, proactively check TagadaPay for the latest status
+  if (order.paymentStatus === 'pending' && order.paymentMethod === 'tagada') {
+    const targetTagadaId = order.tagadaOrderId || order.tagadaSessionId || order.tagadaPaymentId;
+    if (targetTagadaId) {
+      try {
+        const client = await getTagadaClient();
+        let tagadaData: any = null;
+        if (targetTagadaId.startsWith('cs_')) {
+          tagadaData = await client.checkout.retrieveSession(targetTagadaId);
+        } else {
+          tagadaData = await client.orders.retrieve(targetTagadaId);
+        }
+        
+        const fullOrder = tagadaData?.order || tagadaData?.session || tagadaData;
+        const rawStatus = fullOrder?.status || 'unknown';
+        const isPaid = ['succeeded', 'paid', 'captured'].includes(rawStatus.toLowerCase());
+        
+        if (isPaid) {
+          order.paymentStatus = 'paid';
+          order.status = 'processing';
+          order.fulfilmentStatus = 'unfulfilled';
+          await order.save();
+        }
+      } catch (err) {
+        console.error('[getOrderById] Auto-sync failed for pending Tagada order:', err);
+      }
+    }
+  }
+
   res.status(200).json({
     success: true,
     data: { order: order.toObject ? order.toObject() : order },
