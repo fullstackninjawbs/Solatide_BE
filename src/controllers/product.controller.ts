@@ -406,8 +406,7 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
   // Invalidate caches for this product and all lists
   const { cacheDel } = await import('../utils/cache');
   await Promise.all([
-    cacheDel(`products:detail:${req.params.id}`),
-    cacheDel(`products:detail:${updatedProduct.slug}`),
+    cacheDel('products:detail*'),
     cacheDel('products:list*'),
   ]);
   
@@ -431,7 +430,7 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
   // Invalidate caches
   const { cacheDel } = await import('../utils/cache');
   await Promise.all([
-    cacheDel(`products:detail:${req.params.id}`),
+    cacheDel('products:detail*'),
     cacheDel('products:list*'),
   ]);
   
