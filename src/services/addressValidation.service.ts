@@ -118,7 +118,8 @@ export class AddressValidationService {
         locality: 'city/suburb',
         administrative_area_level_1: 'state/province',
         postal_code: 'ZIP/postal code',
-        country: 'country'
+        country: 'country',
+        subpremise: 'apartment/unit number'
       };
 
       if (result.address && result.address.missingComponentTypes && result.address.missingComponentTypes.length > 0) {
