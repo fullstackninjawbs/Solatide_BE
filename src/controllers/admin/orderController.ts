@@ -41,6 +41,21 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
 
   // Build filter
   const filter: Record<string, any> = {};
+
+  if (req.query.hasCustomer === 'true') {
+    filter.$or = [
+      { customerName: { $nin: ['', null] } },
+      { customerEmail: { $nin: ['', null] } },
+      { 'customer.firstName': { $nin: ['', null] } }
+    ];
+  } else if (req.query.hasCustomer === 'false') {
+    filter.$and = [
+      { customerName: { $in: ['', null] } },
+      { customerEmail: { $in: ['', null] } },
+      { 'customer.firstName': { $in: ['', null] } }
+    ];
+  }
+
   if (status) filter.status = status;
   if (paymentStatus) filter.paymentStatus = paymentStatus;
   if (fulfilmentStatus) filter.fulfilmentStatus = fulfilmentStatus;
@@ -48,12 +63,24 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
   // Text search across orderNumber and customer.email
   if (q && q.trim()) {
     const escapedQ = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    filter.$or = [
-      { orderNumber: { $regex: escapedQ, $options: 'i' } },
-      { 'customer.email': { $regex: escapedQ, $options: 'i' } },
-      { customerEmail: { $regex: escapedQ, $options: 'i' } },
-      { customerName: { $regex: escapedQ, $options: 'i' } },
-    ];
+    const searchFilter = {
+      $or: [
+        { orderNumber: { $regex: escapedQ, $options: 'i' } },
+        { 'customer.email': { $regex: escapedQ, $options: 'i' } },
+        { customerEmail: { $regex: escapedQ, $options: 'i' } },
+        { customerName: { $regex: escapedQ, $options: 'i' } },
+      ]
+    };
+
+    if (filter.$and) {
+       filter.$and.push(searchFilter);
+    } else if (filter.$or) {
+       const existingOr = filter.$or;
+       delete filter.$or;
+       filter.$and = [ { $or: existingOr }, searchFilter ];
+    } else {
+       filter.$or = searchFilter.$or;
+    }
   }
 
   const [orders, total] = await Promise.all([
