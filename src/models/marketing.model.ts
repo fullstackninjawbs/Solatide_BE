@@ -144,8 +144,6 @@ const affiliateSchema = new mongoose.Schema<IAffiliate>(
 
 newsletterSubscriberSchema.index({ email: 1 }, { unique: true });
 restockAlertSchema.index({ product: 1, isNotified: 1 });
-affiliateSchema.index({ referralCode: 1 }, { unique: true });
-
 export const NewsletterSubscriber = mongoose.model<INewsletterSubscriber>('NewsletterSubscriber', newsletterSubscriberSchema);
 export const RestockAlert = mongoose.model<IRestockAlert>('RestockAlert', restockAlertSchema);
 export const Affiliate = mongoose.model<IAffiliate>('Affiliate', affiliateSchema);
