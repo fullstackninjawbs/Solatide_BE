@@ -32,13 +32,17 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
 
     const canContinueSelling = dbProduct.inventoryPolicy === 'continue' || dbProduct.continueSellingWhenOutOfStock === true;
     const hasStock = dbProduct.inStock !== false && (dbProduct.stockQuantity > 0 || (dbProduct as any).stockQty > 0 || canContinueSelling);
+    const quantity = item.quantity || 1;
 
     if (!hasStock && !canContinueSelling) {
       return next(new AppError(`Product '${dbProduct.name}' is out of stock.`, 400));
     }
 
+    if (!canContinueSelling && quantity > (dbProduct.stockQuantity || 0)) {
+       return next(new AppError(`Only ${dbProduct.stockQuantity || 0} units of '${dbProduct.name}' are available.`, 400));
+    }
+
     const price = dbProduct.price;
-    const quantity = item.quantity || 1;
     totalAmount += price * quantity;
 
     orderItems.push({

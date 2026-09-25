@@ -269,6 +269,21 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
 });
 
 
+const calculateInStock = (productData: any): boolean => {
+  let totalStock = 0;
+  if (productData.variants && Array.isArray(productData.variants) && productData.variants.length > 0) {
+    totalStock = productData.variants.reduce((sum: number, v: any) => sum + (parseInt(v.stockQty) || 0), 0);
+  } else {
+    totalStock = parseInt(productData.stockQuantity) || 0;
+  }
+  
+  if (productData.inventoryPolicy === 'continue' || productData.continueSellingWhenOutOfStock === true) {
+    return true;
+  }
+  
+  return totalStock > 0;
+};
+
 export const createProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { collections, tags, tag, ...productData } = req.body;
 
@@ -309,6 +324,8 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
   if (productData.variants && productData.variants.length === 1 && productData.stockQuantity !== undefined) {
      productData.variants[0].stockQty = parseInt(productData.stockQuantity as string, 10) || 0;
   }
+  
+  productData.inStock = calculateInStock(productData);
 
   const newProduct = await Product.create(productData);
 
@@ -381,6 +398,8 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
   if (productData.variants && productData.variants.length === 1 && productData.stockQuantity !== undefined) {
      productData.variants[0].stockQty = parseInt(productData.stockQuantity as string, 10) || 0;
   }
+  
+  productData.inStock = calculateInStock(productData);
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, productData, {
     new: true,
