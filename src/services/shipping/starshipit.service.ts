@@ -41,6 +41,10 @@ function parseStarshipitError(data: any, fallback: string): string {
     return 'Destination address or country is unconfigured in Starshipit. Update shipping address or enable international courier in Starshipit.';
   }
 
+  if (rawMsg.includes('could not be created, but the import step did not return a specific validation error')) {
+    return 'Shipping address is incomplete OR your Starshipit account is not configured with an International Courier capable of delivering to this country. Please verify the address, and ensure you have an international courier enabled in Starshipit.';
+  }
+
   return rawMsg;
 }
 
@@ -141,42 +145,76 @@ export class StarshipitService {
     };
 
     if (defaultPackage) {
-      const pkgWeightKg = defaultPackage.weight.unit === 'g' ? defaultPackage.weight.value / 1000 : defaultPackage.weight.value;
+      const pkgWeightKg = defaultPackage.weight?.unit === 'g' ? (defaultPackage.weight?.value || 500) / 1000 : (defaultPackage.weight?.value || weightKg || 0.5);
       payload.packages = [{
         weight: pkgWeightKg,
-        length: defaultPackage.dimensions?.length || 0,
-        width: defaultPackage.dimensions?.width || 0,
-        height: defaultPackage.dimensions?.height || 0
+        length: defaultPackage.dimensions?.length ? defaultPackage.dimensions.length / 100 : 0.1,
+        width: defaultPackage.dimensions?.width ? defaultPackage.dimensions.width / 100 : 0.1,
+        height: defaultPackage.dimensions?.height ? defaultPackage.dimensions.height / 100 : 0.1
       }];
     }
+    // If no default package, we completely omit 'packages' array to prevent "blank package" API errors
+    // Starshipit will fallback to the default package set in their own dashboard or calculate from items.
+
+    let starshipitOrderId = order.starshipitOrderId;
+    let trackingNumber = '';
+    let trackingCarrier = '';
+    let labelUrl = '';
 
     try {
-      console.log('Sending payload to Starshipit /orders:', JSON.stringify(payload, null, 2));
-      const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, { headers: this.headers });
+      if (!starshipitOrderId) {
+        console.log('Sending payload to Starshipit /orders:', JSON.stringify(payload, null, 2));
+        const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, { headers: this.headers });
 
-      console.log('Starshipit POST /orders HTTP Status:', response.status);
-      console.log('Starshipit POST /orders Response Data:', JSON.stringify(response.data, null, 2));
+        console.log('Starshipit POST /orders HTTP Status:', response.status);
 
-      // Handle soft failures (HTTP 200 but success = false)
-      if (response.data && response.data.success === false) {
-        const errMsg = parseStarshipitError(response.data, 'Starshipit API returned success=false');
-        console.error('Starshipit returned soft failure. Detail:', errMsg);
-        throw new Error(errMsg);
+        const starshipitOrder = response.data?.order;
+
+        // Handle soft failures (HTTP 200 but success = false)
+        // IMPORTANT: Even when success=false, Starshipit may have still CREATED the order and returned an order_id.
+        // If we throw here without saving the order_id, the next retry will try to import again and fail.
+        if (response.data && response.data.success === false) {
+          const errMsg = parseStarshipitError(response.data, 'Starshipit API returned success=false');
+          console.error('Starshipit returned soft failure. Detail:', errMsg);
+
+          // If an order_id is present despite the failure, save it and treat as a warning
+          if (starshipitOrder && starshipitOrder.order_id) {
+            console.warn(`Starshipit created order ${starshipitOrder.order_id} but reported a soft failure. Saving order_id to prevent duplicate imports.`);
+            starshipitOrderId = starshipitOrder.order_id.toString();
+            trackingNumber = starshipitOrder.tracking_number || '';
+            trackingCarrier = starshipitOrder.carrier || '';
+            // Return early with orderId + warning so controller can save it
+            return {
+              orderId: starshipitOrderId,
+              trackingNumber,
+              trackingCarrier,
+              labelUrl: '',
+              warning: errMsg
+            };
+          }
+          // No order_id in response — genuine failure, throw
+          throw new Error(errMsg);
+        }
+
+        if (!starshipitOrder || !starshipitOrder.order_id) {
+          throw new Error('Invalid response from Starshipit API: Missing order_id');
+        }
+
+        starshipitOrderId = starshipitOrder.order_id.toString();
+        trackingNumber = starshipitOrder.tracking_number || '';
+        trackingCarrier = starshipitOrder.carrier || '';
+      } else {
+        console.log(`Order ${order.orderNumber} already imported to Starshipit (ID: ${starshipitOrderId}). Skipping import step.`);
       }
 
-      const starshipitOrder = response.data?.order;
-      if (!starshipitOrder || !starshipitOrder.order_id) {
-        throw new Error('Invalid response from Starshipit API: Missing order_id');
+      if (!starshipitOrderId) {
+        throw new Error('Failed to obtain a valid Starshipit Order ID.');
       }
-
-      let trackingNumber = starshipitOrder.tracking_number || '';
-      let trackingCarrier = starshipitOrder.carrier || '';
-      let labelUrl = '';
 
       try {
-        console.log(`Calling POST /orders/shipment for order_id: ${starshipitOrder.order_id}`);
+        console.log(`Calling POST /orders/shipment for order_id: ${starshipitOrderId}`);
         const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, {
-          order_id: starshipitOrder.order_id
+          order_id: parseInt(starshipitOrderId)
         }, { headers: this.headers });
 
         console.log('Starshipit POST /orders/shipment HTTP Status:', labelResponse.status);
@@ -207,7 +245,7 @@ export class StarshipitService {
         console.warn('Starshipit POST /orders/shipment Warning:', labelError.response?.data || labelError.message);
         const warning = parseStarshipitError(labelError.response?.data, labelError.message || 'Auto-label generation pending in Starshipit dashboard');
         return {
-          orderId: starshipitOrder.order_id.toString(),
+          orderId: starshipitOrderId,
           trackingNumber,
           trackingCarrier,
           labelUrl,
@@ -216,7 +254,7 @@ export class StarshipitService {
       }
 
       return {
-        orderId: starshipitOrder.order_id.toString(),
+        orderId: starshipitOrderId,
         trackingNumber,
         trackingCarrier,
         labelUrl

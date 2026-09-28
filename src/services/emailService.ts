@@ -261,6 +261,21 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
     ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim()
     : (order.customerName || 'Customer');
 
+  const country = order.shippingAddressObj?.country || '';
+  const isDomestic = country.toLowerCase() === 'au' || country.toLowerCase() === 'australia';
+  const methodName = (order.shippingMethodName || '').toLowerCase();
+  
+  let displayMethod = 'Australia Post';
+  if (isDomestic) {
+    displayMethod = 'Australia Post - Express';
+  } else {
+    if (methodName.includes('express')) {
+      displayMethod = 'Australia Post - International Express';
+    } else {
+      displayMethod = 'Australia Post - International Standard';
+    }
+  }
+
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -302,8 +317,8 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
           
           <div class="details-box">
             <div class="detail-row">
-              <span class="detail-label">Carrier:</span>
-              <span class="detail-value">${order.trackingCarrier || 'Standard Shipping'}</span>
+              <span class="detail-label">Shipping Method:</span>
+              <span class="detail-value">${displayMethod}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Tracking Number:</span>

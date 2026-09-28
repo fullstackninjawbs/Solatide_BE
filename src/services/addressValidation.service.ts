@@ -154,7 +154,7 @@ export class AddressValidationService {
       let suggestedAddress: any = null;
       if (result.address && result.address.postalAddress) {
         const pa = result.address.postalAddress;
-        suggestedAddress = {
+        const candidate = {
           street1: pa.addressLines?.[0] || '',
           street2: pa.addressLines?.[1] || '',
           city: pa.locality || '',
@@ -162,7 +162,22 @@ export class AddressValidationService {
           zip: pa.postalCode || '',
           country: pa.regionCode || ''
         };
+
+        // Only use the suggestion if it differs from the original in at least one meaningful field.
+        // If Google just echoes back the same garbage address, we don't want to show it as a "correction".
+        const normalize = (s?: string) => (s || '').trim().toLowerCase();
+        const isDifferent =
+          normalize(candidate.street1) !== normalize(address.street1) ||
+          normalize(candidate.city) !== normalize(address.city) ||
+          normalize(candidate.state) !== normalize(address.state) ||
+          normalize(candidate.zip) !== normalize(address.zip);
+
+        if (isDifferent && candidate.street1) {
+          suggestedAddress = candidate;
+        }
+        // If not meaningfully different, leave suggestedAddress as null — no point showing the same address as a "correction"
       }
+
 
       // Add detailed debug logs
       console.log(`\n[AddressValidationService] DEBUG for Order ${orderId}:`);

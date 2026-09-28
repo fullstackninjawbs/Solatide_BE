@@ -11,6 +11,8 @@ import {
   createAdminOrder,
   getNewOrderConfig,
   revalidateOrderAddress,
+  addressAutocomplete,
+  addressPlaceDetails,
   exportOrdersCsv
 } from '../../controllers/admin/orderController';
 
@@ -24,6 +26,12 @@ router.get('/', getOrders);
 
 // GET  /api/admin/orders/export/csv    — export orders to CSV
 router.get('/export/csv', exportOrdersCsv);
+
+// GET /api/admin/orders/address/autocomplete
+router.get('/address/autocomplete', addressAutocomplete);
+
+// GET /api/admin/orders/address/place-details
+router.get('/address/place-details', addressPlaceDetails);
 
 // GET  /api/admin/orders/new-config     — form config options
 router.get('/new-config', getNewOrderConfig);

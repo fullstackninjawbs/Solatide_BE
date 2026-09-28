@@ -5,6 +5,7 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { generateOrderNumber } from './payment.controller';
+import { sendShipmentConfirmationEmail } from '../services/emailService';
 
 /**
  * Place a new Order.
@@ -182,28 +183,52 @@ export const handleStarshipitWebhook = catchAsync(async (req: Request, res: Resp
       return;
     }
 
-    // Only update if a tracking number is present and we don't have it (or if it changed, though less likely)
-    if (actualPayload.tracking_number && (!order.trackingNumber || order.trackingNumber !== actualPayload.tracking_number)) {
+    let hasChanges = false;
+    let isNewlyShipped = false;
+
+    if (actualPayload.tracking_number && order.trackingNumber !== actualPayload.tracking_number) {
       order.trackingNumber = actualPayload.tracking_number;
-      order.trackingCarrier = actualPayload.carrier_name || actualPayload.carrier || order.trackingCarrier || 'Unknown Carrier';
-      order.shipmentStatus = 'in_transit';
-      order.status = 'shipped'; // High level status
-      
-      // Auto-generate generic tracking URL if not provided by carrier rule
-      if (!order.trackingUrl) {
+      hasChanges = true;
+    }
+
+    if (actualPayload.tracking_status && order.shipmentStatus !== actualPayload.tracking_status) {
+      order.shipmentStatus = actualPayload.tracking_status;
+      hasChanges = true;
+      const statusLower = actualPayload.tracking_status.toLowerCase();
+      if (statusLower === 'dispatched' || statusLower === 'shipped' || statusLower === 'printed') {
+        if (order.status !== 'shipped' || order.fulfilmentStatus !== 'fulfilled') {
+          order.status = 'shipped';
+          order.fulfilmentStatus = 'fulfilled';
+          isNewlyShipped = true;
+        }
+      }
+    }
+
+    const newCarrier = actualPayload.carrier_name || actualPayload.carrier;
+    if (newCarrier && order.trackingCarrier !== newCarrier) {
+      order.trackingCarrier = newCarrier;
+      hasChanges = true;
+    }
+
+    if (hasChanges) {
+      // Auto-generate generic tracking URL if we have a tracking number but no URL
+      if (order.trackingNumber && !order.trackingUrl) {
         const carrier = order.trackingCarrier || '';
         if (carrier.toLowerCase().includes('auspost') || carrier.toLowerCase().includes('australia post')) {
-          order.trackingUrl = `https://auspost.com.au/mypost/track/#/details/${payload.tracking_number}`;
+          order.trackingUrl = `https://auspost.com.au/mypost/track/#/details/${order.trackingNumber}`;
         } else {
-          order.trackingUrl = `https://www.google.com/search?q=${payload.tracking_number}`;
+          order.trackingUrl = `https://www.google.com/search?q=${order.trackingNumber}`;
         }
       }
       
       await order.save();
-      console.log(`Starshipit Webhook: Updated tracking for order ${payload.order_number}`);
+      console.log(`Starshipit Webhook: Updated order ${actualPayload.order_number} to status ${actualPayload.tracking_status}`);
+
+      if (isNewlyShipped) {
+        sendShipmentConfirmationEmail(order).catch(err => console.error('Failed to send shipment email via webhook:', err));
+      }
     } else {
-      // Just a status update without new tracking
-      console.log(`Starshipit Webhook: Ignored non-tracking update for order ${payload.order_number}`);
+      console.log(`Starshipit Webhook: Ignored non-changing update for order ${actualPayload.order_number}`);
     }
   } catch (error) {
     console.error('Starshipit Webhook Processing Error:', error);

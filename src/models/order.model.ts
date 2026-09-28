@@ -119,7 +119,7 @@ export interface IOrder extends mongoose.Document {
     name?: string;
   };
   tagadaPaymentId?: string;
-  tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded' | 'succeeded';
+  tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded' | 'succeeded' | 'pending' | 'unknown';
   tagadaEnv?: 'sandbox' | 'production';
   refundedAmount: number;
   refundStatus: 'none' | 'initiated' | 'partially_refunded' | 'refunded';
@@ -279,7 +279,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     tagadaPaymentId: { type: String },
     tagadaPaymentStatus: {
       type: String,
-      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'succeeded'],
+      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'succeeded', 'pending', 'unknown'],
     },
     tagadaEnv: {
       type: String,

@@ -525,7 +525,9 @@ export const tagadaWebhook = catchAsync(async (
     | 'captured'
     | 'failed'
     | 'refunded'
-    | 'succeeded';
+    | 'succeeded'
+    | 'pending'
+    | 'unknown';
   const newPaymentStatus = mapTagadaStatus(inferredStatus);
 
   order.tagadaPaymentId = tagadaPaymentId;

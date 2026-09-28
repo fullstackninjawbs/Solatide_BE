@@ -12,6 +12,7 @@ import Refund from '../../models/Refund';
 import Customer from '../../models/Customer';
 import { generateOrderNumber } from '../payment.controller';
 import AddressValidationService from '../../services/addressValidation.service';
+import axios from 'axios';
 
 /**
  * GET /api/admin/orders
@@ -73,13 +74,13 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
     };
 
     if (filter.$and) {
-       filter.$and.push(searchFilter);
+      filter.$and.push(searchFilter);
     } else if (filter.$or) {
-       const existingOr = filter.$or;
-       delete filter.$or;
-       filter.$and = [ { $or: existingOr }, searchFilter ];
+      const existingOr = filter.$or;
+      delete filter.$or;
+      filter.$and = [{ $or: existingOr }, searchFilter];
     } else {
-       filter.$or = searchFilter.$or;
+      filter.$or = searchFilter.$or;
     }
   }
 
@@ -149,11 +150,11 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
         } else {
           tagadaData = await client.orders.retrieve(targetTagadaId);
         }
-        
+
         const fullOrder = tagadaData?.order || tagadaData?.session || tagadaData;
         const rawStatus = fullOrder?.status || 'unknown';
         const isPaid = ['succeeded', 'paid', 'captured'].includes(rawStatus.toLowerCase());
-        
+
         if (isPaid) {
           order.paymentStatus = 'paid';
           order.status = 'processing';
@@ -222,7 +223,7 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
  * Update order details including tags, comments, addresses.
  */
 export const updateOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const { tags, comments, shippingAddressObj, billingAddressObj, adminNotes } = req.body;
+  const { tags, comments, shippingAddressObj, billingAddressObj, adminNotes, skipRevalidation } = req.body;
 
   const updateFields: Record<string, any> = {};
   if (tags !== undefined) updateFields.tags = tags;
@@ -245,6 +246,34 @@ export const updateOrder = catchAsync(async (req: Request, res: Response, next: 
     return next(new AppError('No order found with that ID', 404));
   }
 
+  if (shippingAddressObj !== undefined) {
+    if (skipRevalidation) {
+      // Admin explicitly accepted a suggested address — trust it, just clear the flag fully
+      await Order.updateOne(
+        { _id: order._id },
+        {
+          $set: {
+            'addressValidation.needsReview': false,
+            'addressValidation.validationMessage': '',
+            'addressValidation.status': 'confirmed'
+          },
+          $unset: { 'addressValidation.suggestedAddress': '' }
+        }
+      );
+      const reFetched = await Order.findById(order._id).lean();
+      if (reFetched) Object.assign(order, reFetched);
+    } else {
+      try {
+        await Order.updateOne({ _id: order._id }, { $unset: { addressValidation: '' } });
+        await AddressValidationService.validateOrderAddress(order._id);
+        const reFetched = await Order.findById(order._id).lean();
+        if (reFetched) Object.assign(order, reFetched);
+      } catch (err) {
+        console.error('[Admin Order] Validation error during update:', err);
+      }
+    }
+  }
+
   res.status(200).json({
     success: true,
     data: { order },
@@ -262,12 +291,101 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('No order found with that ID', 404));
   }
 
-  if (order.easyPostShipmentId || order.starshipitOrderId) {
-    return next(new AppError('Shipment already created for this order', 400));
+  // ─── If order is already in Starshipit, skip import and try to pull latest details / generate label ───
+  if (order.starshipitOrderId) {
+    const starshipitOrderId = order.starshipitOrderId;
+    try {
+      // Try to generate the label (idempotent — Starshipit ignores if already generated)
+      let trackingNumber = order.trackingNumber || '';
+      let trackingCarrier = order.trackingCarrier || '';
+      let labelUrl = order.labelUrl || '';
+      let trackingUrl = order.trackingUrl || '';
+      let shipmentStatus = order.shipmentStatus || 'Order Created in Starshipit';
+      let warning: string | undefined;
+
+      try {
+        const axios = require('axios');
+        const headers = {
+          'StarShipIT-Api-Key': process.env.STARSHIPIT_API_KEY || '',
+          'Ocp-Apim-Subscription-Key': process.env.STARSHIPIT_SUBSCRIPTION_KEY || '',
+          'Content-Type': 'application/json'
+        };
+        const labelResponse = await axios.post(
+          'https://api.starshipit.com/api/orders/shipment',
+          { order_id: parseInt(starshipitOrderId) },
+          { headers }
+        );
+        if (labelResponse.data && labelResponse.data.success !== false) {
+          const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];
+          if (shippedOrder) {
+            trackingNumber = trackingNumber || shippedOrder.tracking_number || '';
+            trackingCarrier = trackingCarrier || shippedOrder.carrier || '';
+            labelUrl = shippedOrder.label_url || shippedOrder.pdf_url || shippedOrder.tracking_url || labelUrl;
+            shipmentStatus = trackingNumber ? 'Label Generated' : shipmentStatus;
+          }
+        }
+      } catch (labelErr: any) {
+        warning = `Label generation pending in Starshipit — check dashboard`;
+        console.warn('Label generation attempt failed (already imported):', labelErr.response?.data || labelErr.message);
+      }
+
+      // Always do a fresh getShipmentDetails to sync any new tracking data
+      try {
+        const details = await starshipitService.getShipmentDetails(starshipitOrderId);
+        trackingNumber = trackingNumber || details.trackingNumber || '';
+        trackingCarrier = trackingCarrier || details.trackingCarrier || '';
+        labelUrl = labelUrl || details.labelUrl || '';
+        trackingUrl = trackingUrl || details.trackingUrl || '';
+        if (details.shipmentStatus && details.shipmentStatus !== '') shipmentStatus = details.shipmentStatus;
+      } catch (detailsErr: any) {
+        console.warn('getShipmentDetails failed for existing order:', detailsErr.message);
+      }
+
+      // Build tracking URL if still missing
+      if (!trackingUrl && trackingNumber && trackingCarrier) {
+        const cl = trackingCarrier.toLowerCase();
+        if (cl.includes('australia post') || cl.includes('auspost') || cl.includes('mypost')) {
+          trackingUrl = `https://auspost.com.au/mypost/track/#/details/${trackingNumber}`;
+        } else {
+          trackingUrl = `https://www.google.com/search?q=${trackingNumber}`;
+        }
+      }
+
+      if (trackingNumber) order.trackingNumber = trackingNumber;
+      if (trackingCarrier) order.trackingCarrier = trackingCarrier;
+      if (labelUrl) order.labelUrl = labelUrl;
+      if (trackingUrl) order.trackingUrl = trackingUrl;
+      order.shipmentStatus = trackingNumber ? 'Label Generated' : (shipmentStatus || 'Order Created in Starshipit (Label Pending)');
+      if (trackingNumber) { order.status = 'shipped'; order.shippedAt = new Date(); }
+
+      await order.save();
+
+      if (trackingNumber && !order.trackingNumber) {
+        sendShipmentConfirmationEmail(order).catch(err => console.error('Failed to send shipment email:', err));
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: warning
+          ? `Order already in Starshipit (ID: ${starshipitOrderId}). Note: ${warning}`
+          : `Shipment details refreshed from Starshipit (ID: ${starshipitOrderId})`,
+        data: { order }
+      });
+    } catch (err: any) {
+      return next(new AppError(err.message || 'Failed to refresh shipment from Starshipit', 500));
+    }
   }
 
   if (!order.shippingAddressObj) {
     return next(new AppError('Order missing shipping address', 400));
+  }
+
+  if (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending') {
+    return next(new AppError('Cannot create shipment: Payment is still pending', 400));
+  }
+
+  if (order.addressValidation?.needsReview) {
+    return next(new AppError('Cannot create shipment: Shipping address needs review and must be verified first', 400));
   }
 
   // Get Store Settings for 'From' address
@@ -732,6 +850,78 @@ export const revalidateOrderAddress = catchAsync(async (req: Request, res: Respo
 });
 
 /**
+ * GET /api/admin/orders/address/autocomplete
+ * Provides Google Places Autocomplete API proxy for address search
+ */
+export const addressAutocomplete = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const query = req.query.q as string;
+  if (!query) {
+    return res.status(200).json({ success: true, predictions: [] });
+  }
+
+  const apiKey = process.env.GOOGLE_ADDRESS_VALIDATION_API_KEY;
+  if (!apiKey) {
+    return next(new AppError('Google API key not configured', 500));
+  }
+
+  try {
+    const response = await axios.get(`https://maps.googleapis.com/maps/api/place/autocomplete/json`, {
+      params: {
+        input: query,
+        key: apiKey,
+        types: 'geocode'
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      predictions: response.data.predictions || []
+    });
+  } catch (err: any) {
+    console.error('[Address Autocomplete] Error:', err.response?.data || err.message);
+    res.status(500).json({ success: false, predictions: [] });
+  }
+});
+
+/**
+ * GET /api/admin/orders/address/place-details
+ * Provides Google Geocode API proxy to fetch full address components from a place_id
+ */
+export const addressPlaceDetails = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const placeId = req.query.place_id as string;
+  if (!placeId) {
+    return res.status(400).json({ success: false, message: 'place_id is required' });
+  }
+
+  const apiKey = process.env.GOOGLE_ADDRESS_VALIDATION_API_KEY;
+  if (!apiKey) {
+    return next(new AppError('Google API key not configured', 500));
+  }
+
+  try {
+    const response = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json`, {
+      params: {
+        place_id: placeId,
+        key: apiKey
+      }
+    });
+
+    const result = response.data.results?.[0];
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Address details not found' });
+    }
+
+    res.status(200).json({
+      success: true,
+      address: result
+    });
+  } catch (err: any) {
+    console.error('[Address Place Details] Error:', err.response?.data || err.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch address details' });
+  }
+});
+
+/**
  * GET /api/admin/orders/export/csv
  * Export orders to CSV including attribution fields
  */
@@ -760,7 +950,7 @@ export const exportOrdersCsv = catchAsync(async (req: Request, res: Response, ne
     const custName = [o.customer?.firstName, o.customer?.lastName].filter(Boolean).join(' ') || o.customerName || '';
     const custEmail = o.customer?.email || o.customerEmail || '';
     const total = o.grandTotal ?? o.totalAmount ?? 0;
-    
+
     return [
       o.orderNumber || String(o._id).slice(-6),
       new Date(o.createdAt).toISOString(),
