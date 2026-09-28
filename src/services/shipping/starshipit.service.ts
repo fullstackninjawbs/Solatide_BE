@@ -185,7 +185,7 @@ export class StarshipitService {
             trackingCarrier = starshipitOrder.carrier || '';
             // Return early with orderId + warning so controller can save it
             return {
-              orderId: starshipitOrderId,
+              orderId: starshipitOrderId as string,
               trackingNumber,
               trackingCarrier,
               labelUrl: '',
