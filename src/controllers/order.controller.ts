@@ -199,6 +199,7 @@ export const handleStarshipitWebhook = catchAsync(async (req: Request, res: Resp
         if (order.status !== 'shipped' || order.fulfilmentStatus !== 'fulfilled') {
           order.status = 'shipped';
           order.fulfilmentStatus = 'fulfilled';
+          order.shippedAt = new Date();
           isNewlyShipped = true;
         }
       }
