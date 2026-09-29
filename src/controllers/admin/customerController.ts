@@ -54,9 +54,14 @@ export const getCustomerById = catchAsync(async (req: Request, res: Response, ne
 
   // Fetch their full order history
   const orders = await Order.find({ 
-    $or: [
-      { customerEmail: customer.email },
-      { 'customer.email': customer.email }
+    $and: [
+      {
+        $or: [
+          { customerEmail: customer.email },
+          { 'customer.email': customer.email }
+        ]
+      },
+      { isDeleted: { $ne: true } }
     ]
   }).sort({ createdAt: -1 });
 
