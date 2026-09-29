@@ -123,7 +123,7 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   }));
 
   // Recent Orders
-  const recentOrders = await Order.find()
+  const recentOrders = await Order.find({ paymentStatus: 'paid', isDeleted: { $ne: true } })
     .sort({ createdAt: -1 })
     .limit(5)
     .populate('customer', 'name email')
