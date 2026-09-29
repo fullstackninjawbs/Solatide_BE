@@ -3,7 +3,7 @@ import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
-import { sendShipmentConfirmationEmail } from '../../services/emailService';
+import { sendShipmentConfirmationEmail, sendOrderConfirmationEmail } from '../../services/emailService';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -187,10 +187,11 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
  * Body: { status?, fulfilmentStatus?, adminNotes? }
  */
 export const updateOrderStatus = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const { status, fulfilmentStatus, adminNotes } = req.body;
+  const { status, fulfilmentStatus, paymentStatus, adminNotes } = req.body;
 
   const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
   const validFulfilment = ['unfulfilled', 'fulfilled', 'partial'];
+  const validPaymentStatuses = ['pending', 'paid', 'failed', 'refunded'];
 
   if (status && !validStatuses.includes(status)) {
     return next(new AppError(`Invalid status: ${status}`, 400));
@@ -198,10 +199,14 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
   if (fulfilmentStatus && !validFulfilment.includes(fulfilmentStatus)) {
     return next(new AppError(`Invalid fulfilmentStatus: ${fulfilmentStatus}`, 400));
   }
+  if (paymentStatus && !validPaymentStatuses.includes(paymentStatus)) {
+    return next(new AppError(`Invalid paymentStatus: ${paymentStatus}`, 400));
+  }
 
   const updateFields: Record<string, any> = {};
   if (status) updateFields.status = status;
   if (fulfilmentStatus) updateFields.fulfilmentStatus = fulfilmentStatus;
+  if (paymentStatus) updateFields.paymentStatus = paymentStatus;
   if (adminNotes !== undefined) updateFields.adminNotes = adminNotes;
 
   if (Object.keys(updateFields).length === 0) {
@@ -387,7 +392,9 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Order missing shipping address', 400));
   }
 
-  if (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending') {
+  const isManual = order.source === 'admin_manual';
+  
+  if (!isManual && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
     return next(new AppError('Cannot create shipment: Payment is still pending', 400));
   }
 
@@ -628,6 +635,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     discountTotal = 0,
     notes = '',
     paymentStatus = 'pending',
+    sendEmail = false,
   } = req.body;
 
   // 1. Basic validation
@@ -798,6 +806,15 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     AddressValidationService.validateOrderAddress(order._id).catch(err => {
       console.error('[Admin Order] Address Validation Error:', err);
     });
+  }
+
+  // 10. Send order confirmation email if requested
+  if (sendEmail) {
+    try {
+      await sendOrderConfirmationEmail(order);
+    } catch (err) {
+      console.error('[Admin Order] Failed to send order confirmation email:', err);
+    }
   }
 
   res.status(201).json({

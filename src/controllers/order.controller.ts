@@ -158,13 +158,6 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
 export const handleStarshipitWebhook = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const payload = req.body;
   
-  // Log the full payload for debugging to a file so we can inspect it!
-  try {
-    const fs = require('fs');
-    fs.appendFileSync('webhook_payload.json', JSON.stringify(payload, null, 2) + ',\n');
-  } catch (e) {}
-  console.log('Starshipit Webhook Payload received and saved to webhook_payload.json');
-  
   // Acknowledge receipt immediately to Starshipit
   res.status(200).json({ received: true });
 
