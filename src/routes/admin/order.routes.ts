@@ -15,7 +15,9 @@ import {
   addressPlaceDetails,
   exportOrdersCsv,
   softDeleteOrder,
-  restoreOrder
+  restoreOrder,
+  bulkSoftDeleteOrders,
+  bulkRestoreOrders
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -43,6 +45,12 @@ router.post('/', createAdminOrder);
 
 // GET  /api/admin/orders/:id           — full order detail
 router.get('/:id', getOrderById);
+
+// POST /api/admin/orders/bulk-soft-delete
+router.post('/bulk-soft-delete', bulkSoftDeleteOrders);
+
+// POST /api/admin/orders/bulk-restore
+router.post('/bulk-restore', bulkRestoreOrders);
 
 // DELETE /api/admin/orders/:id/soft-delete
 router.delete('/:id/soft-delete', softDeleteOrder);

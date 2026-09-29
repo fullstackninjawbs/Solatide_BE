@@ -1029,3 +1029,45 @@ export const restoreOrder = catchAsync(async (req: Request, res: Response, next:
   });
 });
 
+/**
+ * POST /api/admin/orders/bulk-soft-delete
+ * Bulk soft delete orders.
+ */
+export const bulkSoftDeleteOrders = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids)) {
+    return next(new AppError('Please provide an array of order IDs', 400));
+  }
+
+  await Order.updateMany(
+    { _id: { $in: ids } },
+    { $set: { isDeleted: true } }
+  );
+
+  res.status(200).json({
+    success: true,
+    message: `${ids.length} orders moved to deleted list`
+  });
+});
+
+/**
+ * POST /api/admin/orders/bulk-restore
+ * Bulk restore soft deleted orders.
+ */
+export const bulkRestoreOrders = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids)) {
+    return next(new AppError('Please provide an array of order IDs', 400));
+  }
+
+  await Order.updateMany(
+    { _id: { $in: ids } },
+    { $set: { isDeleted: false } }
+  );
+
+  res.status(200).json({
+    success: true,
+    message: `${ids.length} orders restored successfully`
+  });
+});
+

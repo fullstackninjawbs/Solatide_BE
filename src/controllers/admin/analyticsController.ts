@@ -17,6 +17,8 @@ const buildMatchFilter = (req: Request) => {
     match.paymentMethod = paymentMethod;
   }
   
+  match.isDeleted = { $ne: true };
+
   return match;
 };
 
@@ -214,29 +216,29 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       { $count: 'count' },
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid' } },
+      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid', isDeleted: { $ne: true } } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid' } },
+      { $match: { createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid', isDeleted: { $ne: true } } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
     ]),
     AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: prevFrom, $lte: prevTo } }),
-    Order.countDocuments({ createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid' }),
-    Order.countDocuments({ createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid' }),
+    Order.countDocuments({ createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
+    Order.countDocuments({ createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: liveWindow } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: liveWindow } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'purchase', timestamp: { $gte: liveWindow } }),
-    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: { $ne: 'paid' } }),
+    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: { $ne: 'paid' }, isDeleted: { $ne: true } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'purchase', timestamp: { $gte: from, $lte: to } }),
     Order.aggregate([
-      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: { $ne: 'paid' } } },
+      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: { $ne: 'paid' }, isDeleted: { $ne: true } } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } }
     ]),
-    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: 'paid' }),
+    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
     AnalyticsEvent.find({}).sort({ timestamp: -1 }).limit(15).lean(),
     AnalyticsEvent.aggregate([
       { $match: { timestamp: { $gte: from, $lte: to }, country: { $exists: true, $nin: [null, ''] } } },
@@ -291,11 +293,11 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     const bTo = new Date(from.getTime() + (i + 1) * intervalMs);
     sparklinePromises.push(Promise.all([
       Order.aggregate([
-        { $match: { createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid' } },
+        { $match: { createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid', isDeleted: { $ne: true } } },
         { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
       ]),
       AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: bFrom, $lt: bTo } }),
-      Order.countDocuments({ createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid' })
+      Order.countDocuments({ createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid', isDeleted: { $ne: true } })
     ]));
   }
 
@@ -310,7 +312,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   let countryResult = countryResultInitial as any[];
   if (countryResult.length === 0) {
     const orderCountries = await Order.aggregate([
-      { $match: { createdAt: { $gte: from, $lte: to }, 'shippingAddressObj.country': { $exists: true, $nin: [null, ''] } } },
+      { $match: { createdAt: { $gte: from, $lte: to }, 'shippingAddressObj.country': { $exists: true, $nin: [null, ''] }, isDeleted: { $ne: true } } },
       { $group: { _id: '$shippingAddressObj.country', sessions: { $sum: 1 } } },
       { $project: { _id: 0, country: '$_id', sessions: 1 } }
     ]);
