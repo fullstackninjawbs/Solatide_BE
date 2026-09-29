@@ -236,7 +236,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     AnalyticsEvent.distinct('sessionId', { eventType: 'purchase', timestamp: { $gte: from, $lte: to } }),
     Order.aggregate([
       { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: { $ne: 'paid' }, isDeleted: { $ne: true } } },
-      { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } }
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } }, count: { $sum: 1 } } }
     ]),
     Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
     AnalyticsEvent.find({}).sort({ timestamp: -1 }).limit(15).lean(),
@@ -272,6 +272,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   const funnelPurchased = orders; // Completed paid orders count
 
   const abandonedCartValue = pendingOrdersValueAgg[0]?.total ?? 0;
+  const abandonedCartCount = pendingOrdersValueAgg[0]?.count ?? 0;
   const conversionRate = sessions > 0 ? Number(((orders / sessions) * 100).toFixed(1)) : 0;
 
   const funnel = {
@@ -338,7 +339,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       sessionsChangePct,
       orders,
       ordersChangePct,
-      abandonedCarts: checkingOutCount,
+      abandonedCarts: abandonedCartCount,
       abandonedCartValue,
       conversionRate,
       funnel,
