@@ -13,7 +13,9 @@ import {
   revalidateOrderAddress,
   addressAutocomplete,
   addressPlaceDetails,
-  exportOrdersCsv
+  exportOrdersCsv,
+  softDeleteOrder,
+  restoreOrder
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -41,6 +43,12 @@ router.post('/', createAdminOrder);
 
 // GET  /api/admin/orders/:id           — full order detail
 router.get('/:id', getOrderById);
+
+// DELETE /api/admin/orders/:id/soft-delete
+router.delete('/:id/soft-delete', softDeleteOrder);
+
+// PATCH /api/admin/orders/:id/restore
+router.patch('/:id/restore', restoreOrder);
 
 // PATCH /api/admin/orders/:id          — update full order details
 router.patch('/:id', updateOrder);

@@ -61,6 +61,13 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
   if (paymentStatus) filter.paymentStatus = paymentStatus;
   if (fulfilmentStatus) filter.fulfilmentStatus = fulfilmentStatus;
 
+  // Handle deleted orders toggle
+  if (req.query.isDeleted === 'true') {
+    filter.isDeleted = true;
+  } else {
+    filter.isDeleted = { $ne: true };
+  }
+
   // Text search across orderNumber and customer.email
   if (q && q.trim()) {
     const escapedQ = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -979,3 +986,46 @@ export const exportOrdersCsv = catchAsync(async (req: Request, res: Response, ne
   res.setHeader('Content-Disposition', 'attachment; filename=orders_export.csv');
   res.status(200).send(csvContent);
 });
+
+/**
+ * DELETE /api/admin/orders/:id/soft-delete
+ * Soft delete an order so it moves to the "Deleted Orders" tab.
+ */
+export const softDeleteOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order = await Order.findById(req.params.id);
+  
+  if (!order) {
+    return next(new AppError('Order not found', 404));
+  }
+
+  order.isDeleted = true;
+  await order.save({ validateBeforeSave: false });
+
+  res.status(200).json({
+    success: true,
+    message: 'Order moved to deleted orders list',
+    order
+  });
+});
+
+/**
+ * PATCH /api/admin/orders/:id/restore
+ * Restore a soft deleted order so it returns to the main listings.
+ */
+export const restoreOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order = await Order.findById(req.params.id);
+  
+  if (!order) {
+    return next(new AppError('Order not found', 404));
+  }
+
+  order.isDeleted = false;
+  await order.save({ validateBeforeSave: false });
+
+  res.status(200).json({
+    success: true,
+    message: 'Order restored successfully',
+    order
+  });
+});
+

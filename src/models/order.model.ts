@@ -139,6 +139,7 @@ export interface IOrder extends mongoose.Document {
   tags?: string[];
   adminNotes?: string;
   comments?: { text: string; createdAt: Date }[];
+  isDeleted?: boolean;
 
   // ── Validation ───────────────────────────────────────────────────────────────
   addressValidation?: {
@@ -313,6 +314,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
       text: { type: String, required: true },
       createdAt: { type: Date, default: Date.now }
     }],
+    isDeleted: { type: Boolean, default: false },
 
     // ── Validation ───────────────────────────────────────────────────────────────
     addressValidation: {
