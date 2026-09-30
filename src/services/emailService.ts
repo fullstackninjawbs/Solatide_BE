@@ -158,7 +158,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
     <body>
       <div class="container">
         <div style="padding: 20px 40px;">
-          <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 35px;" />
+          <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 62px;" />
           <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${order.orderNumber}</span>
         </div>
         
@@ -264,7 +264,7 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
   const country = order.shippingAddressObj?.country || '';
   const isDomestic = country.toLowerCase() === 'au' || country.toLowerCase() === 'australia';
   const methodName = (order.shippingMethodName || '').toLowerCase();
-  
+
   let displayMethod = 'Australia Post';
   if (isDomestic) {
     displayMethod = 'Australia Post - Express';

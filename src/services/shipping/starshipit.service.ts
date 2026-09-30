@@ -124,7 +124,7 @@ export class StarshipitService {
         state: state,
         post_code: postCode,
         country: country,
-        phone: order.customer?.phone || '',
+        phone: order.customer?.phone || (order.shippingAddressObj as any)?.phone || (order.billingAddressObj as any)?.phone || '',
         email: order.customer?.email || order.customerEmail || ''
       },
       items: (order.lineItems && order.lineItems.length > 0)
