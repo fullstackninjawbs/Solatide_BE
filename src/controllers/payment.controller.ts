@@ -596,12 +596,16 @@ export const tagadaWebhook = catchAsync(async (
     if (fullOrder.customer || dAny.customer || dAny.user_data) {
       const cust = fullOrder.customer || dAny.customer || dAny.user_data || {};
       const saForPhone = fullOrder.shippingAddress || fullOrder.shipping_address || dAny.shippingAddress || dAny.shipping_address || {};
+      // Tagada may use: phone | phoneNumber | phone_number (on customer OR shipping address)
+      const resolvedPhone =
+        cust.phone ?? cust.phoneNumber ?? cust.phone_number ??
+        saForPhone.phone ?? saForPhone.phoneNumber ?? saForPhone.phone_number ??
+        dAny.phone ?? dAny.phoneNumber ?? dAny.phone_number ?? undefined;
       order.customer = {
         firstName: cust.firstName ?? cust.first_name ?? '',
         lastName: cust.lastName ?? cust.last_name ?? '',
         email: cust.email ?? dAny.email ?? dAny.user_data?.email ?? '',
-        // Tagada puts phone on the shipping address form, so fallback to that
-        phone: cust.phone ?? saForPhone.phone ?? dAny.phone ?? undefined,
+        phone: resolvedPhone,
       };
       // Backfill legacy fields for any code still reading them
       order.customerEmail = order.customer.email ?? order.customerEmail;
@@ -626,12 +630,13 @@ export const tagadaWebhook = catchAsync(async (
         state: sa.province ?? sa.state ?? undefined,
         zip: saZip,
         country: sa.country ?? undefined,
-        // Save phone from shipping address — Tagada collects it here
-        phone: sa.phone ?? undefined,
+        // Save phone — Tagada may use phone | phoneNumber | phone_number
+        phone: sa.phone ?? sa.phoneNumber ?? sa.phone_number ?? undefined,
       };
       // Also backfill customer.phone if it's empty and we got it from the address
-      if (sa.phone && !order.customer?.phone) {
-        order.customer = { ...(order.customer as any), phone: sa.phone };
+      const addressPhone = sa.phone ?? sa.phoneNumber ?? sa.phone_number;
+      if (addressPhone && !order.customer?.phone) {
+        order.customer = { ...(order.customer as any), phone: addressPhone };
       }
       // Backfill legacy string field
       order.shippingAddress = [
