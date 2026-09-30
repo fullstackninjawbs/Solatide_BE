@@ -3,7 +3,7 @@ import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
-import { sendShipmentConfirmationEmail, sendOrderConfirmationEmail } from '../../services/emailService';
+import { sendShipmentConfirmationEmail, sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../../services/emailService';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -815,6 +815,13 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     } catch (err) {
       console.error('[Admin Order] Failed to send order confirmation email:', err);
     }
+  }
+
+  // Send admin notification
+  try {
+    await sendAdminNewOrderNotificationEmail(order);
+  } catch (err) {
+    console.error('[Admin Order] Failed to send admin order notification email:', err);
   }
 
   res.status(201).json({

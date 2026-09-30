@@ -477,3 +477,182 @@ export const sendNewsletterWelcomeEmail = async (email: string) => {
     html,
   });
 };
+
+export const sendAdminNewOrderNotificationEmail = async (order: any) => {
+  const adminNotificationEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'drivbotwbs@gmail.com';
+  if (!adminNotificationEmail) {
+    console.log('[Admin Email] No admin notification email configured. Skipping.');
+    return;
+  }
+
+  const clientUrl = process.env.CLIENT_URL || 'https://solatidebiosciences.com.au';
+  const adminOrderUrl = `${clientUrl}/admin/orders/${order._id}`;
+  const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
+  const currency = order.currency || 'AUD';
+
+  const formatPrice = (amount: number) => {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
+  };
+
+  const customerName = order.customerName || (order.customer?.firstName ? `${order.customer.firstName} ${order.customer.lastName || ''}`.trim() : (order.shippingAddressObj?.name || 'Customer'));
+  const customerEmail = order.customerEmail || order.customer?.email || 'N/A';
+  const customerPhone = order.customer?.phone || (order.shippingAddressObj as any)?.phone || (order.billingAddressObj as any)?.phone || 'Not provided';
+
+  const country = order.shippingAddressObj?.country || order.shippingAddress?.country || '';
+  const isDomesticAU = country.toLowerCase() === 'australia' || country.toUpperCase() === 'AU';
+  const displayShippingMethod = order.shippingMethodName || (isDomesticAU ? 'Australia Post Express Shipping' : 'Standard Shipping');
+
+  const lineItemsHtml = (order.lineItems || []).map((item: any) => `
+    <tr>
+      <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; width: 55px;">
+        ${item.productImageUrl ? `<img src="${item.productImageUrl}" style="width: 45px; height: 45px; border-radius: 4px; border: 1px solid #e2e8f0; object-fit: contain;" />` : `<div style="width: 45px; height: 45px; border-radius: 4px; border: 1px solid #e2e8f0; background: #f8fafc;"></div>`}
+      </td>
+      <td style="padding: 12px 15px; border-bottom: 1px solid #e2e8f0; text-align: left;">
+        <span style="font-weight: 600; color: #1e293b; display: block; font-size: 14px;">${item.title}</span>
+        ${item.variantTitle ? `<span style="color: #64748b; font-size: 13px; display: block; margin-top: 2px;">${item.variantTitle}</span>` : ''}
+        <span style="color: #64748b; font-size: 13px; display: block; margin-top: 2px;">Qty: ${item.quantity} ${item.sku ? `(SKU: ${item.sku})` : ''}</span>
+      </td>
+      <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; text-align: right; color: #1e293b; font-weight: 600; font-size: 14px; vertical-align: top;">
+        ${formatPrice(item.subtotal || (item.unitPrice * item.quantity))}
+      </td>
+    </tr>
+  `).join('');
+
+  const shippingAddrHtml = order.shippingAddressObj ? `
+    ${order.shippingAddressObj.name || customerName}<br>
+    ${order.shippingAddressObj.street1 || ''}<br>
+    ${order.shippingAddressObj.street2 ? order.shippingAddressObj.street2 + '<br>' : ''}
+    ${order.shippingAddressObj.city || ''}, ${order.shippingAddressObj.state || ''} ${order.shippingAddressObj.zip || ''}<br>
+    ${order.shippingAddressObj.country || 'AU'}
+  ` : (order.shippingAddress || 'Not specified');
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>New Order Notification #${order.orderNumber}</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+        .container { max-width: 600px; margin: 25px auto; padding: 0 10px; }
+        .card { background-color: #ffffff; padding: 35px 35px 40px 35px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .badge { background-color: #ecfdf5; color: #047857; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; }
+        .button { background-color: #1e40af; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; font-size: 15px; display: inline-block; }
+        table { width: 100%; border-collapse: collapse; }
+        .totals-table { width: 100%; border-top: 1px solid #e2e8f0; margin-top: 15px; margin-bottom: 25px; }
+        .totals-label { text-align: left; padding: 6px 0; color: #64748b; font-size: 14px; }
+        .totals-value { text-align: right; padding: 6px 0; font-size: 14px; color: #1e293b; font-weight: 600; }
+        .grand-total { font-weight: 800; font-size: 18px; color: #0f172a; border-top: 2px solid #0f172a; padding-top: 12px; margin-top: 8px; }
+        .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 25px; overflow: hidden; }
+        .info-cell { padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13.5px; }
+        .info-label { width: 30%; color: #64748b; font-weight: 600; vertical-align: top; }
+        .info-value { color: #0f172a; line-height: 1.5; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="card">
+          <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 25px;">
+            <table width="100%">
+              <tr>
+                <td><img src="${companyLogo}" alt="Solatide Biosciences" style="height: 50px;" /></td>
+                <td style="text-align: right;">
+                  <span class="badge">Paid • ${order.paymentMethod === 'tagada' ? 'TagadaPay' : (order.paymentMethod || 'Online')}</span>
+                  <div style="color: #64748b; font-size: 13px; font-weight: 600; margin-top: 6px;">ORDER #${order.orderNumber}</div>
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <h2 style="color: #0f172a; font-size: 22px; font-weight: 700; margin: 0 0 8px 0;">New Order Placed! 🎉</h2>
+          <p style="color: #475569; font-size: 14.5px; line-height: 1.5; margin: 0 0 25px 0;">
+            A new order has been placed on <strong>Solatide Biosciences</strong>. Review the details below or view it in the admin dashboard to manage shipment.
+          </p>
+
+          <div style="margin: 25px 0 35px 0; text-align: center;">
+            <a href="${adminOrderUrl}" class="button">View Order in Admin Hub →</a>
+          </div>
+
+          <h3 style="font-size: 15px; color: #0f172a; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 30px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Order Summary</h3>
+          <table>
+            ${lineItemsHtml}
+          </table>
+
+          <table class="totals-table">
+            <tr>
+              <td class="totals-label">Subtotal</td>
+              <td class="totals-value">${formatPrice(order.subtotal || 0)}</td>
+            </tr>
+            ${order.discountAmount ? `
+            <tr>
+              <td class="totals-label">Discount ${order.couponCode ? `(${order.couponCode})` : ''}</td>
+              <td class="totals-value" style="color: #16a34a;">-${formatPrice(order.discountAmount)}</td>
+            </tr>` : ''}
+            <tr>
+              <td class="totals-label">Shipping</td>
+              <td class="totals-value">${formatPrice(order.shippingAmount || 0)}</td>
+            </tr>
+            <tr>
+              <td class="totals-label grand-total">Total Amount</td>
+              <td class="totals-value grand-total">${formatPrice(order.grandTotal || order.totalAmount || 0)} ${currency}</td>
+            </tr>
+          </table>
+
+          <h3 style="font-size: 15px; color: #0f172a; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 30px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Customer & Delivery Details</h3>
+          <div class="info-card">
+            <table>
+              <tr>
+                <td class="info-cell info-label">Customer</td>
+                <td class="info-cell info-value"><strong>${customerName}</strong></td>
+              </tr>
+              <tr>
+                <td class="info-cell info-label">Email</td>
+                <td class="info-cell info-value"><a href="mailto:${customerEmail}" style="color: #2563eb; text-decoration: none;">${customerEmail}</a></td>
+              </tr>
+              <tr>
+                <td class="info-cell info-label">Phone</td>
+                <td class="info-cell info-value"><strong>${customerPhone}</strong></td>
+              </tr>
+              <tr>
+                <td class="info-cell info-label">Ship To</td>
+                <td class="info-cell info-value">${shippingAddrHtml}</td>
+              </tr>
+              <tr>
+                <td class="info-cell info-label" style="border-bottom: none;">Shipping Method</td>
+                <td class="info-cell info-value" style="border-bottom: none;">${displayShippingMethod}</td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="text-align: center; margin-top: 35px;">
+            <a href="${adminOrderUrl}" style="color: #2563eb; font-size: 13.5px; font-weight: 600; text-decoration: none;">Open #${order.orderNumber} in Solatide Admin →</a>
+          </div>
+        </div>
+
+        <div style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 20px;">
+          Solatide Biosciences Admin Notification • Sent to ${adminNotificationEmail}
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const fromName = process.env.SMTP_FROM_NAME || 'Solatide Biosciences';
+  const fromEmail = process.env.SMTP_FROM_EMAIL || 'noreply@solatide.com';
+
+  const mailOptions = {
+    from: `"${fromName}" <${fromEmail}>`,
+    to: adminNotificationEmail,
+    subject: `🛒 New Order: #${order.orderNumber} - ${customerName} (${formatPrice(order.grandTotal || order.totalAmount || 0)})`,
+    html,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('[Admin Email] New order notification email sent to %s: %s', adminNotificationEmail, info.messageId);
+  } catch (error) {
+    console.error('[Admin Email] Error sending admin order notification email:', error);
+  }
+};
+

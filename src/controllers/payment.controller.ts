@@ -24,7 +24,7 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
 import config from '../config';
-import { sendOrderConfirmationEmail } from '../services/emailService';
+import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../services/emailService';
 import AddressValidationService from '../services/addressValidation.service';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -801,12 +801,20 @@ export const tagadaWebhook = catchAsync(async (
     // Run remaining post-payment side-effects asynchronously in the background
     if (newPaymentStatus === 'paid' && !wasAlreadyPaid) {
       (async () => {
-        // 1) Send order confirmation email
+        // 1) Send order confirmation email to customer
         try {
           await sendOrderConfirmationEmail(order);
           console.log(`[Email] Order confirmation sent for ${order.orderNumber}`);
         } catch (error) {
           console.error(`[Email] Failed to send order confirmation for ${order.orderNumber}:`, error);
+        }
+
+        // 1b) Send new order notification email to admin
+        try {
+          await sendAdminNewOrderNotificationEmail(order);
+          console.log(`[Admin Email] New order notification sent for ${order.orderNumber}`);
+        } catch (error) {
+          console.error(`[Admin Email] Failed to send admin order notification for ${order.orderNumber}:`, error);
         }
 
         // 2) Decrement Inventory for paid order items
