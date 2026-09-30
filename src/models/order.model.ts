@@ -11,6 +11,7 @@ export interface IAddressObj {
   state?: string;
   zip?: string;
   country?: string;
+  phone?: string;
 }
 
 export interface ICustomerSnapshot {
@@ -173,6 +174,7 @@ const addressSchema = new mongoose.Schema<IAddressObj>(
     state: { type: String, trim: true },
     zip: { type: String, trim: true },
     country: { type: String, trim: true },
+    phone: { type: String, trim: true },
   },
   { _id: false }
 );

@@ -595,11 +595,13 @@ export const tagadaWebhook = catchAsync(async (
     // ── Customer snapshot ──────────────────────────────────────────────────────
     if (fullOrder.customer || dAny.customer || dAny.user_data) {
       const cust = fullOrder.customer || dAny.customer || dAny.user_data || {};
+      const saForPhone = fullOrder.shippingAddress || fullOrder.shipping_address || dAny.shippingAddress || dAny.shipping_address || {};
       order.customer = {
         firstName: cust.firstName ?? cust.first_name ?? '',
         lastName: cust.lastName ?? cust.last_name ?? '',
         email: cust.email ?? dAny.email ?? dAny.user_data?.email ?? '',
-        phone: cust.phone ?? dAny.phone ?? undefined,
+        // Tagada puts phone on the shipping address form, so fallback to that
+        phone: cust.phone ?? saForPhone.phone ?? dAny.phone ?? undefined,
       };
       // Backfill legacy fields for any code still reading them
       order.customerEmail = order.customer.email ?? order.customerEmail;
@@ -624,7 +626,13 @@ export const tagadaWebhook = catchAsync(async (
         state: sa.province ?? sa.state ?? undefined,
         zip: saZip,
         country: sa.country ?? undefined,
+        // Save phone from shipping address — Tagada collects it here
+        phone: sa.phone ?? undefined,
       };
+      // Also backfill customer.phone if it's empty and we got it from the address
+      if (sa.phone && !order.customer?.phone) {
+        order.customer = { ...(order.customer as any), phone: sa.phone };
+      }
       // Backfill legacy string field
       order.shippingAddress = [
         order.shippingAddressObj.street1, order.shippingAddressObj.street2,
@@ -1001,11 +1009,13 @@ export const syncTagadaOrder = catchAsync(
     // Update Customer
     const cust = fullOrder.customer || fullOrder.user_data;
     if (cust) {
+      const saForPhone = fullOrder.shippingAddress || fullOrder.shipping_address || fullOrder.customer?.shippingAddress || {};
       order.customer = {
         firstName: cust.firstName ?? cust.first_name ?? '',
         lastName: cust.lastName ?? cust.last_name ?? '',
         email: cust.email ?? '',
-        phone: cust.phone ?? undefined,
+        // Tagada puts phone on the shipping address form, so fallback to that
+        phone: cust.phone ?? saForPhone.phone ?? undefined,
       };
       order.customerEmail = order.customer.email;
       order.customerName = [order.customer.firstName, order.customer.lastName].filter(Boolean).join(' ');
