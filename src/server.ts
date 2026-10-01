@@ -16,6 +16,7 @@ import AppError from './utils/appError';
 import analyticsRoutes from './routes/analytics.routes';
 import { generalLimiter, authLimiter, publicLimiter } from './middleware/rateLimit';
 import healthRoutes from './routes/health.routes';
+import pageRoutes from './routes/public.page.routes';
 
 // Handle uncaught exceptions before any other code executes
 process.on('uncaughtException', (err: Error) => {
@@ -84,6 +85,7 @@ app.use('/api/health', healthRoutes);
 
 // Register Direct and Versioned API Routes
 app.use('/api/products', publicLimiter, productRoutes);
+app.use('/api/pages', pageRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
 app.use('/api/payments', paymentRoutes);
