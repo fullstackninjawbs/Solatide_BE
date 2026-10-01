@@ -70,6 +70,17 @@ if (config.env === 'development') {
 // Apply global rate limiter (after body parsing, before routes)
 app.use(generalLimiter);
 
+// Enforce 301 Permanent Redirect for URLs with trailing slashes (SEO normalization for page routes only)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (!req.path.startsWith('/api/') && req.path.length > 1 && req.path.endsWith('/')) {
+    const query = req.url.slice(req.path.length);
+    const cleanPath = req.path.slice(0, -1);
+    res.redirect(301, cleanPath + query);
+    return;
+  }
+  next();
+});
+
 // Base legacy health/status endpoint for backward compatibility
 app.get('/api/status', (req: Request, res: Response) => {
   res.status(200).json({
