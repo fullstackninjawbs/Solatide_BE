@@ -479,7 +479,7 @@ export const sendNewsletterWelcomeEmail = async (email: string) => {
 };
 
 export const sendAdminNewOrderNotificationEmail = async (order: any) => {
-  const adminNotificationEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'drivbotwbs@gmail.com';
+  const adminNotificationEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'fullstackninja.wbs@gmail.com';
   if (!adminNotificationEmail) {
     console.log('[Admin Email] No admin notification email configured. Skipping.');
     return;
