@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import Product from '../models/product.model';
 import * as xlsx from 'xlsx';
 import { cacheDel } from '../utils/cache';
+import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 
 // @desc    Create a new review
 // @route   POST /api/v1/products/:productId/reviews
@@ -217,6 +218,9 @@ export const deleteReview = catchAsync(async (req: Request, res: Response, next:
     }
   }
 
+  // Trigger storefront rebuild in background to refresh aggregateRating in prerendered HTML
+  triggerStorefrontRebuild();
+
   res.status(200).json({
     success: true,
     data: {},
@@ -253,6 +257,9 @@ export const updateReviewStatus = catchAsync(async (req: Request, res: Response,
       await cacheDel('products:list*');
     }
   }
+
+  // Trigger storefront rebuild in background to refresh aggregateRating in prerendered HTML
+  triggerStorefrontRebuild();
 
   res.status(200).json({
     success: true,
