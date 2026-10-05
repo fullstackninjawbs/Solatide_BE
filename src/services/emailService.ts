@@ -167,7 +167,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
             <h2>${order.source === 'admin_manual' ? 'Your order has been placed!' : 'Thank you for your order!'}</h2>
             <p>${order.source === 'admin_manual' ? 'We have successfully placed an order on your behalf. We will notify you when it has been sent.' : "We're getting your order ready to be shipped. We will notify you when it has been sent."}</p>
             <a href="${orderUrl}" class="button">View your order</a>
-            <span style="color: #00bfef; margin-left: 15px; font-size: 14px;"><a href="${clientUrl}/shop" style="color: #00bfef; text-decoration: none;">or Visit our store</a></span>
+            <span style="color: #00bfef; margin-left: 15px; font-size: 14px;"><a href="${clientUrl}/collections/all" style="color: #00bfef; text-decoration: none;">or Visit our store</a></span>
           </div>
           
           <h3 class="summary-title">Order summary</h3>
