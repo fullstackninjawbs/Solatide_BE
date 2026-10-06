@@ -103,26 +103,26 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   // Build query
   let query = Product.find(queryObj);
 
-  // 7) Sorting
+  // 7) Sorting (deterministic pagination requires _id: 1 tie-breaker to avoid skipped/duplicated items)
   if (req.query.sort) {
     const sortType = req.query.sort as string;
     if (sortType === 'Price: Low to High' || sortType === 'Price, low to high') {
-      query = query.sort({ price: 1 });
+      query = query.sort({ price: 1, _id: 1 });
     } else if (sortType === 'Price: High to Low' || sortType === 'Price, high to low') {
-      query = query.sort({ price: -1 });
+      query = query.sort({ price: -1, _id: 1 });
     } else if (sortType === 'Newest' || sortType === 'Date, new to old') {
-      query = query.sort({ createdAt: -1 });
+      query = query.sort({ createdAt: -1, _id: 1 });
     } else if (sortType === 'Date, old to new') {
-      query = query.sort({ createdAt: 1 });
+      query = query.sort({ createdAt: 1, _id: 1 });
     } else if (sortType === 'Alphabetically, A-Z') {
-      query = query.sort({ name: 1 });
+      query = query.sort({ name: 1, _id: 1 });
     } else if (sortType === 'Alphabetically, Z-A') {
-      query = query.sort({ name: -1 });
+      query = query.sort({ name: -1, _id: 1 });
     } else {
-      query = query.sort({ rating: -1 });
+      query = query.sort({ rating: -1, _id: 1 });
     }
   } else {
-    query = query.sort({ rating: -1 });
+    query = query.sort({ rating: -1, _id: 1 });
   }
 
   // 8) Pagination & Limit
