@@ -44,6 +44,7 @@ export interface IProduct extends mongoose.Document {
   id: number; // numeric id for backward compatibility
   name: string;
   slug: string; // auto-generated from name
+  slugHistory?: string[];
   description: string;
   price: number;
   rating: number;
@@ -197,6 +198,10 @@ const productSchema = new mongoose.Schema<IProduct>(
       type: String,
       unique: true,
       sparse: true,
+    },
+    slugHistory: {
+      type: [String],
+      default: [],
     },
     description: {
       type: String,

@@ -216,6 +216,14 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
       .populate('reviews');
   }
 
+  // Try slugHistory for automatic redirects
+  if (!product) {
+    product = await Product.findOne({ slugHistory: idOrSlug })
+      .populate('currentBatchId')
+      .populate('variants.currentBatchId')
+      .populate('reviews');
+  }
+
   if (!product) {
     return next(new AppError('No product found with that ID or slug', 404));
   }
@@ -271,17 +279,20 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
 
 const calculateInStock = (productData: any): boolean => {
   let totalStock = 0;
+  let canContinue = productData.inventoryPolicy === 'continue' || productData.continueSellingWhenOutOfStock === true;
+
   if (productData.variants && Array.isArray(productData.variants) && productData.variants.length > 0) {
     totalStock = productData.variants.reduce((sum: number, v: any) => sum + (parseInt(v.stockQty) || 0), 0);
+    canContinue = canContinue || productData.variants.some((v: any) => v.inventoryPolicy === 'continue' || v.continueSellingWhenOutOfStock === true);
   } else {
     totalStock = parseInt(productData.stockQuantity) || 0;
   }
   
-  if (productData.inventoryPolicy === 'continue' || productData.continueSellingWhenOutOfStock === true) {
-    return true;
+  const inStock = canContinue || totalStock > 0;
+  if (!productData.status || productData.status === 'In Stock' || productData.status === 'Sold Out') {
+    productData.status = inStock ? ((productData.compareAtPrice && productData.compareAtPrice > productData.price) ? 'Sale' : 'In Stock') : 'Sold Out';
   }
-  
-  return totalStock > 0;
+  return inStock;
 };
 
 export const createProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -400,6 +411,15 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
   }
   
   productData.inStock = calculateInStock(productData);
+
+  // If slug changed, automatically save previous slug into slugHistory for 301 redirection
+  const existingProduct = await Product.findById(req.params.id);
+  if (existingProduct && productData.slug && productData.slug !== existingProduct.slug) {
+    if (!productData.$addToSet) {
+      productData.$addToSet = {};
+    }
+    productData.$addToSet.slugHistory = existingProduct.slug;
+  }
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, productData, {
     new: true,
