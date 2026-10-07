@@ -485,7 +485,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
     return;
   }
 
-  const clientUrl = process.env.VITE_ADMIN_URL || 'https://hub.solatidebiosciences.com.au';
+  const clientUrl = process.env.ADMIN_URL || 'https://hub.solatidebiosciences.com.au';
   const adminOrderUrl = `${clientUrl}/admin/orders/${order._id}`;
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
   const currency = order.currency || 'AUD';
