@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
 
-const uri = 'mongodb+srv://solatidebiosciences_db_user:seUUzWP9nq5zLygO@cluster-solatide.hjunoiw.mongodb.net/?appName=Cluster-Solatide';
+const uri = process.env.MONGO_URI;
+if (!uri) {
+  console.error('MONGO_URI environment variable is required');
+  process.exit(1);
+}
 
 async function run() {
   await mongoose.connect(uri);
