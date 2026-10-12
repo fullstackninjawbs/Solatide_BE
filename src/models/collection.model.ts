@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
 
 export interface ICollectionRule {
   field: string;
@@ -97,5 +98,6 @@ const collectionSchema = new mongoose.Schema<ICollection>(
     timestamps: true,
   }
 );
+registerStorefrontRebuildHooks(collectionSchema);
 export const Collection = mongoose.model<ICollection>('Collection', collectionSchema);
 export default Collection;

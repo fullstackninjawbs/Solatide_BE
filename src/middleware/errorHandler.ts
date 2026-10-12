@@ -68,14 +68,12 @@ const sendErrorProd = (err: AppError, res: Response) => {
       message: err.message,
     });
   } else {
-    // Expose error for debugging
+    // Programming or unknown error: log full detail server-side, never leak it
     console.error('[CRITICAL ERROR]', err);
     res.status(500).json({
       success: false,
       status: 'error',
-      message: err.message,
-      stack: err.stack,
-      error: err
+      message: 'Something went wrong',
     });
   }
 };
@@ -83,7 +81,7 @@ const sendErrorProd = (err: AppError, res: Response) => {
 /**
  * Centralized Global Error Handler Middleware
  */
-export const errorHandler = (
+export const buildErrorHandler = (env: string) => (
   err: any,
   req: Request,
   res: Response,
@@ -92,7 +90,11 @@ export const errorHandler = (
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
-  if (config.env === 'development') {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  if (env === 'development') {
     sendErrorDev(err, res);
   } else {
     let error = Object.assign(Object.create(Object.getPrototypeOf(err)), err);
@@ -103,9 +105,14 @@ export const errorHandler = (
     if (error.name === 'ValidationError') error = handleValidationErrorDB(error);
     if (error.name === 'JsonWebTokenError') error = handleJWTError();
     if (error.name === 'TokenExpiredError') error = handleJWTExpiredError();
+    if (err.type === 'entity.too.large') error = new AppError('Request body too large.', 413);
+    if (err.type === 'entity.parse.failed') error = new AppError('Malformed JSON body.', 400);
+    if (err.name === 'MulterError') error = new AppError(`Upload rejected: ${err.code || 'invalid file'}`, 400);
 
     sendErrorProd(error, res);
   }
 };
+
+export const errorHandler = buildErrorHandler(config.env);
 
 export default errorHandler;

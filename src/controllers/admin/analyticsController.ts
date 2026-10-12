@@ -2,38 +2,45 @@ import { Request, Response } from 'express';
 import Order from '../../models/order.model';
 import AnalyticsEvent from '../../models/analyticsEvent.model';
 import catchAsync from '../../utils/catchAsync';
+import { buildRevenueMatch, netRevenueExpr, grossRevenueExpr } from '../../domain/revenue';
+
+/** Trusted purchase events only (client-sent purchase events are spoofable). */
+const PURCHASE_EVENT = { eventType: 'purchase', clientReported: { $ne: true } };
 
 const buildMatchFilter = (req: Request) => {
   const { from, to, paymentMethod } = req.query;
   const match: any = {};
-  
+
   if (from || to) {
     match.createdAt = {};
     if (from) match.createdAt.$gte = new Date(from as string);
     if (to) match.createdAt.$lte = new Date(to as string);
   }
-  
+
   if (paymentMethod && paymentMethod !== 'All') {
     match.paymentMethod = paymentMethod;
   }
-  
+
   match.isDeleted = { $ne: true };
 
   return match;
 };
 
 export const getSummary = catchAsync(async (req: Request, res: Response) => {
-  const match = buildMatchFilter(req);
-  
+  // Revenue-bearing orders only (paid / partially_refunded / refunded, not deleted); net of refunds.
+  const match = buildRevenueMatch(buildMatchFilter(req));
+
   const pipeline = [
     { $match: match },
     {
       $group: {
         _id: null,
         totalOrders: { $sum: 1 },
-        totalRevenue: { $sum: { $ifNull: ["$grandTotal", "$totalAmount"] } },
+        totalRevenue: { $sum: netRevenueExpr },
+        grossRevenue: { $sum: grossRevenueExpr },
+        refundedAmount: { $sum: { $ifNull: ["$refundedAmount", 0] } },
         paidOrders: {
-          $sum: { $cond: [{ $eq: ["$paymentStatus", "paid"] }, 1, 0] }
+          $sum: { $cond: [{ $in: ["$paymentStatus", ["paid", "partially_refunded"]] }, 1, 0] }
         },
         refundedOrders: {
           $sum: { $cond: [{ $eq: ["$paymentStatus", "refunded"] }, 1, 0] }
@@ -43,22 +50,23 @@ export const getSummary = catchAsync(async (req: Request, res: Response) => {
   ];
 
   const result = await Order.aggregate(pipeline);
-  const data = result[0] || { totalOrders: 0, totalRevenue: 0, paidOrders: 0, refundedOrders: 0 };
+  const data = result[0] || { totalOrders: 0, totalRevenue: 0, grossRevenue: 0, refundedAmount: 0, paidOrders: 0, refundedOrders: 0 };
+  delete data._id;
   data.averageOrderValue = data.totalOrders > 0 ? data.totalRevenue / data.totalOrders : 0;
 
   res.json({ success: true, data });
 });
 
 export const getOrdersByDay = catchAsync(async (req: Request, res: Response) => {
-  const match = buildMatchFilter(req);
-  
+  const match = buildRevenueMatch(buildMatchFilter(req));
+
   const pipeline = [
     { $match: match },
     {
       $group: {
         _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
         ordersCount: { $sum: 1 },
-        revenue: { $sum: { $ifNull: ["$grandTotal", "$totalAmount"] } }
+        revenue: { $sum: netRevenueExpr }
       }
     },
     { $sort: { "_id": 1 } as any },
@@ -78,7 +86,7 @@ export const getOrdersByDay = catchAsync(async (req: Request, res: Response) => 
 
 export const getOrdersByStatus = catchAsync(async (req: Request, res: Response) => {
   const match = buildMatchFilter(req);
-  
+
   const pipeline = [
     { $match: match },
     {
@@ -101,8 +109,9 @@ export const getOrdersByStatus = catchAsync(async (req: Request, res: Response) 
 });
 
 export const getRevenueByProduct = catchAsync(async (req: Request, res: Response) => {
-  const match = buildMatchFilter(req);
-  
+  // Gross line revenue (refunds are not allocated to lines) for revenue-bearing orders only.
+  const match = buildRevenueMatch(buildMatchFilter(req));
+
   const pipeline = [
     { $match: match },
     { $unwind: "$lineItems" },
@@ -131,8 +140,8 @@ export const getRevenueByProduct = catchAsync(async (req: Request, res: Response
 });
 
 export const getTopCustomers = catchAsync(async (req: Request, res: Response) => {
-  const match = buildMatchFilter(req);
-  
+  const match = buildRevenueMatch(buildMatchFilter(req));
+
   const pipeline = [
     { $match: match },
     {
@@ -141,7 +150,7 @@ export const getTopCustomers = catchAsync(async (req: Request, res: Response) =>
         firstName: { $first: "$customer.firstName" },
         lastName: { $first: "$customer.lastName" },
         customerName: { $first: "$customerName" },
-        totalRevenue: { $sum: "$grandTotal" },
+        totalRevenue: { $sum: netRevenueExpr },
         ordersCount: { $sum: 1 }
       }
     },
@@ -216,29 +225,29 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       { $count: 'count' },
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid', isDeleted: { $ne: true } } },
-      { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
+      { $match: buildRevenueMatch({ createdAt: { $gte: from, $lte: to } }) },
+      { $group: { _id: null, total: { $sum: netRevenueExpr } } },
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid', isDeleted: { $ne: true } } },
-      { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
+      { $match: buildRevenueMatch({ createdAt: { $gte: prevFrom, $lte: prevTo } }) },
+      { $group: { _id: null, total: { $sum: netRevenueExpr } } },
     ]),
     AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: prevFrom, $lte: prevTo } }),
-    Order.countDocuments({ createdAt: { $gte: from, $lte: to }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
-    Order.countDocuments({ createdAt: { $gte: prevFrom, $lte: prevTo }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
+    Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: from, $lte: to } })),
+    Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: prevFrom, $lte: prevTo } })),
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: liveWindow } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: liveWindow } }),
-    AnalyticsEvent.distinct('sessionId', { eventType: 'purchase', timestamp: { $gte: liveWindow } }),
-    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: { $ne: 'paid' }, isDeleted: { $ne: true } }),
+    AnalyticsEvent.distinct('sessionId', { ...PURCHASE_EVENT, timestamp: { $gte: liveWindow } }),
+    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: 'pending', isDeleted: { $ne: true } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: from, $lte: to } }),
-    AnalyticsEvent.distinct('sessionId', { eventType: 'purchase', timestamp: { $gte: from, $lte: to } }),
+    AnalyticsEvent.distinct('sessionId', { ...PURCHASE_EVENT, timestamp: { $gte: from, $lte: to } }),
     Order.aggregate([
-      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: { $ne: 'paid' }, isDeleted: { $ne: true } } },
+      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: 'pending', isDeleted: { $ne: true } } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } }, count: { $sum: 1 } } }
     ]),
-    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: 'paid', isDeleted: { $ne: true } }),
+    Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: liveWindow } })),
     AnalyticsEvent.find({}).sort({ timestamp: -1 }).limit(15).lean(),
     AnalyticsEvent.aggregate([
       { $match: { timestamp: { $gte: from, $lte: to }, country: { $exists: true, $nin: [null, ''] } } },
@@ -255,7 +264,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   const totalSales = currentSalesAgg[0]?.total ?? 0;
   const prevTotalSales = prevSalesAgg[0]?.total ?? 0;
   const totalSalesChangePct = prevTotalSales > 0 ? Math.round(((totalSales - prevTotalSales) / prevTotalSales) * 100) : totalSales > 0 ? 100 : 0;
-  
+
   const sessions = currentSessionsList.length;
   const prevSessions = prevSessionsList.length;
   const sessionsChangePct = prevSessions > 0 ? Math.round(((sessions - prevSessions) / prevSessions) * 100) : sessions > 0 ? 100 : 0;
@@ -294,11 +303,11 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     const bTo = new Date(from.getTime() + (i + 1) * intervalMs);
     sparklinePromises.push(Promise.all([
       Order.aggregate([
-        { $match: { createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid', isDeleted: { $ne: true } } },
-        { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } } } },
+        { $match: buildRevenueMatch({ createdAt: { $gte: bFrom, $lt: bTo } }) },
+        { $group: { _id: null, total: { $sum: netRevenueExpr } } },
       ]),
       AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: bFrom, $lt: bTo } }),
-      Order.countDocuments({ createdAt: { $gte: bFrom, $lt: bTo }, paymentStatus: 'paid', isDeleted: { $ne: true } })
+      Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: bFrom, $lt: bTo } }))
     ]));
   }
 
@@ -356,11 +365,9 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
 });
 
 export const getAttributionStats = catchAsync(async (req: Request, res: Response) => {
-  const match = buildMatchFilter(req);
-  
-  // Only include paid orders for attribution revenue
-  match.paymentStatus = { $in: ['paid', 'succeeded'] };
-  
+  // Revenue-bearing orders only, net of refunds
+  const match = buildRevenueMatch(buildMatchFilter(req));
+
   const pipeline = [
     { $match: match },
     {
@@ -370,7 +377,7 @@ export const getAttributionStats = catchAsync(async (req: Request, res: Response
           channel: "$attribution.firstTouch.channel"
         },
         ordersCount: { $sum: 1 },
-        revenue: { $sum: { $ifNull: ["$grandTotal", "$totalAmount"] } }
+        revenue: { $sum: netRevenueExpr }
       }
     },
     {

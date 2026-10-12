@@ -5,6 +5,8 @@ import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
 import { uploadImageBuffer } from '../utils/cloudinary';
 import { cacheDel } from '../utils/cache';
+import { escapeRegex } from '../utils/collectionUtils';
+import { fetchCloudinaryCoa } from '../utils/coaProxy';
 
 const computeQcLevel = (tests: any) => {
   if (!tests) return 'none';
@@ -53,8 +55,9 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
     ];
   }
 
-  if (req.query.search) {
-    const searchRegex = new RegExp(req.query.search as string, 'i');
+  const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+  if (search) {
+    const searchRegex = new RegExp(escapeRegex(search), 'i');
     const matchedProducts = await Product.find({ name: searchRegex }).select('_id');
     const matchedProductIds = matchedProducts.map(p => p._id);
 
@@ -67,8 +70,8 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   }
 
   // Pagination params
-  const page = parseInt(req.query.page as string, 10) || 1;
-  const limit = parseInt(req.query.limit as string, 10) || 50;
+  const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
   const skip = (page - 1) * limit;
 
   const total = await Batch.countDocuments(filter);
@@ -116,23 +119,23 @@ export const getPublicCoas = catchAsync(async (req: Request, res: Response, next
   });
 });
 
+/**
+ * GET /api/admin/batches/proxy-coa?url=
+ * Streams a COA document from this account's Cloudinary only (SSRF-hardened, see utils/coaProxy.ts).
+ */
 export const proxyCoa = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { url } = req.query;
   if (!url || typeof url !== 'string') {
     return next(new AppError('Please provide a URL to proxy', 400));
   }
-  
-  const https = require('https');
-  https.get(url, (cloudinaryRes: any) => {
-    if (cloudinaryRes.statusCode !== 200) {
-      return next(new AppError('Failed to fetch from Cloudinary', cloudinaryRes.statusCode || 500));
-    }
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="coa.pdf"');
-    cloudinaryRes.pipe(res);
-  }).on('error', (err: any) => {
-    next(new AppError('Error proxying COA: ' + err.message, 500));
-  });
+  const result = await fetchCloudinaryCoa(url);
+  if (!result.ok) {
+    return next(new AppError(result.message, result.status));
+  }
+  res.setHeader('Content-Type', result.contentType);
+  res.setHeader('Content-Disposition', 'inline; filename="coa' + (result.contentType === 'application/pdf' ? '.pdf' : '') + '"');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.status(200).send(result.body);
 });
 
 export const getBatchById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {

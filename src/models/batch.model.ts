@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
 
 export interface IBatch extends Document {
   batchId: string;
@@ -162,6 +163,11 @@ const batchSchema = new Schema<IBatch>({
   timestamps: true
 });
 
+batchSchema.index({ products: 1, status: 1 });
+batchSchema.index({ productId: 1 });
+batchSchema.index({ status: 1, createdAt: -1 });
+
+registerStorefrontRebuildHooks(batchSchema);
 const Batch = mongoose.model<IBatch>('Batch', batchSchema);
 
 export default Batch;

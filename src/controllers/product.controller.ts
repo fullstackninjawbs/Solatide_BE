@@ -4,9 +4,67 @@ import Collection from '../models/collection.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { uploadImageBuffer, updateImageAltText } from '../utils/cloudinary';
-import { buildQueryFromRules } from '../utils/collectionUtils';
+import { buildQueryFromRules, escapeRegex } from '../utils/collectionUtils';
 import { cacheGet, cacheSet, cacheKey, TTL } from '../utils/cache';
 import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
+import { AuthenticatedRequest } from '../middleware/auth';
+import { isStaffRole } from '../config/roles';
+import { sanitizeProductHtmlFields } from '../utils/sanitizeHtml';
+
+/**
+ * Fields never sent to anonymous / customer callers. Each was checked against
+ * Client/src (storefront) usage before exclusion. stockQuantity / variants.stockQty
+ * are kept because the cart and product page use them to cap quantities.
+ */
+export const PUBLIC_PRODUCT_EXCLUDE = [
+  'costPerItem',
+  'variants.costPerItem',
+  'lowStockThreshold',
+  'tagadaSync',
+  'pendingBatchDocs',
+  'hsCode',
+  'slugHistory',
+  'barcode',
+  'images.cloudinarySync',
+  'variants.tagadaUpdatedAt',
+  '__v',
+];
+export const PUBLIC_PRODUCT_PROJECTION = PUBLIC_PRODUCT_EXCLUDE.map((f) => `-${f}`).join(' ');
+
+/** Remove internal fields from an already-materialised product object (defence in depth). */
+const stripInternalProductFields = (p: any) => {
+  if (!p || typeof p !== 'object') return p;
+  delete p.costPerItem;
+  delete p.lowStockThreshold;
+  delete p.tagadaSync;
+  delete p.pendingBatchDocs;
+  delete p.hsCode;
+  delete p.slugHistory;
+  delete p.barcode;
+  delete p.__v;
+  if (Array.isArray(p.images)) p.images.forEach((img: any) => img && delete img.cloudinarySync);
+  if (Array.isArray(p.variants)) {
+    p.variants.forEach((v: any) => {
+      if (v) {
+        delete v.costPerItem;
+        delete v.tagadaUpdatedAt;
+      }
+    });
+  }
+  return p;
+};
+
+const qStr = (v: unknown, max = 100): string | undefined => {
+  if (typeof v !== 'string') return undefined;
+  const t = v.trim();
+  return t ? t.slice(0, max) : undefined;
+};
+
+const clampInt = (v: unknown, def: number, min: number, max: number): number => {
+  const n = parseInt(typeof v === 'string' ? v : '', 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, n));
+};
 
 const slugify = (name: string): string =>
   name
@@ -30,41 +88,62 @@ export const getPublicCollections = catchAsync(async (req: Request, res: Respons
 });
 
 
-export const getAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  // Build cache key from all query params
-  const key = cacheKey('products:list', req.query as Record<string, unknown>);
-  const cached = await cacheGet(key);
-  if (cached) {
-    return res.status(200).json(cached);
+export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const isStaff = !!req.user && isStaffRole(req.user.role);
+
+  // Normalise + whitelist query params (bounded cache keys, no type confusion)
+  const q = {
+    category: qStr(req.query.category),
+    availability: qStr(req.query.availability, 20),
+    status: isStaff ? qStr(req.query.status, 20) : undefined,
+    tag: qStr(req.query.tag),
+    collection: qStr(req.query.collection),
+    search: qStr(req.query.search),
+    sort: qStr(req.query.sort, 40),
+    page: clampInt(req.query.page, 1, 1, 1000),
+    limit: clampInt(req.query.limit, 50, 1, isStaff ? 1000 : 100),
+  };
+
+  // Staff responses are never cached (they include drafts + internal fields)
+  const key = cacheKey('products:list', q as Record<string, unknown>);
+  if (!isStaff) {
+    const cached = await cacheGet(key);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
   }
 
   const queryObj: any = {};
 
-  if (req.query.category && req.query.category !== 'All Products') {
-    queryObj.researchCategory = req.query.category;
+  if (q.category && q.category !== 'All Products') {
+    queryObj.researchCategory = q.category;
   }
 
-  if (req.query.availability) {
-    if (req.query.availability === 'In Stock') {
+  if (q.availability) {
+    if (q.availability === 'In Stock') {
       queryObj.inStock = true;
-    } else if (req.query.availability === 'Out of Stock') {
+    } else if (q.availability === 'Out of Stock') {
       queryObj.inStock = false;
     }
   }
 
-
-  if (req.query.status && req.query.status !== 'all') {
-    queryObj.publishStatus = req.query.status;
+  if (isStaff) {
+    if (q.status && q.status !== 'all') {
+      queryObj.publishStatus = q.status;
+    }
+  } else {
+    // Public callers only ever see active products
+    queryObj.publishStatus = 'active';
   }
 
   // 4) Tag filter
-  if (req.query.tag) {
-    queryObj.tags = { $in: [req.query.tag] };
+  if (q.tag) {
+    queryObj.tags = { $in: [q.tag] };
   }
 
   // 5) Collection filter — find product IDs in that collection or build query if automated
-  if (req.query.collection) {
-    const colSlugOrId = req.query.collection as string;
+  if (q.collection) {
+    const colSlugOrId = q.collection;
     let col;
     if (colSlugOrId.match(/^[0-9a-fA-F]{24}$/)) {
         col = await Collection.findById(colSlugOrId).select('products type rules ruleRelation');
@@ -93,19 +172,27 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   }
 
   // 6) Search query
-  if (req.query.search) {
+  if (q.search) {
+    const safe = escapeRegex(q.search);
+    // Match what the user sees/types (name, SKU, slug) — not the long description, where a
+    // substring hits unrelated products ("reta" in "secretagogue", "BPC" in a blend's ingredients)
     queryObj.$or = [
-      { name: { $regex: req.query.search, $options: 'i' } },
-      { description: { $regex: req.query.search, $options: 'i' } },
+      { name: { $regex: safe, $options: 'i' } },
+      { sku: { $regex: safe, $options: 'i' } },
+      { 'variants.sku': { $regex: safe, $options: 'i' } },
+      { slug: { $regex: safe, $options: 'i' } },
     ];
   }
 
   // Build query
-  let query = Product.find(queryObj);
+  let query: any = Product.find(queryObj);
+  if (!isStaff) {
+    query = query.select(PUBLIC_PRODUCT_PROJECTION);
+  }
 
   // 7) Sorting
-  if (req.query.sort) {
-    const sortType = req.query.sort as string;
+  if (q.sort) {
+    const sortType = q.sort;
     if (sortType === 'Price: Low to High' || sortType === 'Price, low to high') {
       query = query.sort({ price: 1 });
     } else if (sortType === 'Price: High to Low' || sortType === 'Price, high to low') {
@@ -126,8 +213,8 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
   }
 
   // 8) Pagination & Limit
-  const page = parseInt(req.query.page as string, 10) || 1;
-  const limit = parseInt(req.query.limit as string, 10) || 50;
+  const page = q.page;
+  const limit = q.limit;
   const skip = (page - 1) * limit;
 
   const total = await Product.countDocuments(queryObj);
@@ -150,7 +237,7 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
       p.rating = 0;
     }
     delete p.reviews;
-    return p;
+    return isStaff ? p : stripInternalProductFields(p);
   });
 
   const payload = {
@@ -170,50 +257,54 @@ export const getAllProducts = catchAsync(async (req: Request, res: Response, nex
     },
   };
 
-  // Cache the response
-  await cacheSet(key, payload, TTL.PRODUCTS_LIST);
+  // Cache the (public) response
+  if (!isStaff) {
+    await cacheSet(key, payload, TTL.PRODUCTS_LIST);
+  }
 
   res.status(200).json(payload);
 });
 
-export const getProductById = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const idOrSlug = req.params.id;
+export const getProductById = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const idOrSlug = String(req.params.id || '');
+  const isStaff = !!req.user && isStaffRole(req.user.role);
 
-  // Check cache first
-  const key = `products:detail:${idOrSlug}`;
-  const cached = await cacheGet(key);
-  if (cached) {
-    return res.status(200).json(cached);
+  if (!idOrSlug || idOrSlug.length > 200) {
+    return next(new AppError('No product found with that ID or slug', 404));
   }
 
-  let product: any;
+  // Check cache first (public responses only)
+  const key = `products:detail:${idOrSlug.toLowerCase()}`;
+  if (!isStaff) {
+    const cached = await cacheGet(key);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+  }
 
-  // Try ObjectId first
-  if (idOrSlug.match(/^[0-9a-fA-F]{24}$/)) {
-    product = await Product.findById(idOrSlug)
+  // Public callers: active products only, internal fields projected out
+  const findOne = (filter: Record<string, unknown>) => {
+    let query: any = Product.findOne(isStaff ? filter : { ...filter, publishStatus: 'active' });
+    if (!isStaff) query = query.select(PUBLIC_PRODUCT_PROJECTION);
+    return query
       .populate('currentBatchId')
       .populate('variants.currentBatchId')
       .populate('reviews');
-  }
+  };
 
-  // Try numeric id
-  if (!idOrSlug.match(/^[a-fA-F0-9]{24}$/)) {
-    // Only parse as numeric ID if the entire string is digits
-    if (/^\d+$/.test(idOrSlug)) {
-      const numericId = parseInt(idOrSlug, 10);
-      product = await Product.findOne({ id: numericId })
-        .populate('currentBatchId')
-        .populate('variants.currentBatchId')
-        .populate('reviews');
-    }
+  let product: any;
+
+  if (/^[0-9a-fA-F]{24}$/.test(idOrSlug)) {
+    // ObjectId
+    product = await findOne({ _id: idOrSlug });
+  } else if (/^\d+$/.test(idOrSlug)) {
+    // Numeric legacy id
+    product = await findOne({ id: parseInt(idOrSlug, 10) });
   }
 
   // Try slug
   if (!product) {
-    product = await Product.findOne({ slug: idOrSlug })
-      .populate('currentBatchId')
-      .populate('variants.currentBatchId')
-      .populate('reviews');
+    product = await findOne({ slug: idOrSlug });
   }
 
   if (!product) {
@@ -256,14 +347,17 @@ export const getProductById = catchAsync(async (req: Request, res: Response, nex
     productObj.rating = 0;
   }
   delete productObj.reviews;
+  if (!isStaff) stripInternalProductFields(productObj);
 
   const payload = {
     success: true,
     data: { product: productObj },
   };
 
-  // Cache the detail response
-  await cacheSet(key, payload, TTL.PRODUCT_DETAIL);
+  // Cache the (public) detail response
+  if (!isStaff) {
+    await cacheSet(key, payload, TTL.PRODUCT_DETAIL);
+  }
 
   res.status(200).json(payload);
 });
@@ -286,6 +380,7 @@ const calculateInStock = (productData: any): boolean => {
 
 export const createProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { collections, tags, tag, ...productData } = req.body;
+  sanitizeProductHtmlFields(productData);
 
   // Merge tags: prefer tags[] array; fall back to splitting tag string
   if (tags && Array.isArray(tags)) {
@@ -300,10 +395,11 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
     productData.slug = slugify(productData.name);
   }
 
-  // Set publishStatus from published if not provided
+  // Set publishStatus from published if not provided; keep the legacy flag in sync with it
   if (!productData.publishStatus) {
     productData.publishStatus = productData.published !== false ? 'active' : 'draft';
   }
+  productData.published = productData.publishStatus === 'active';
 
   // Map variants to restore currentBatchId if currentBatch is passed
   if (productData.variants && Array.isArray(productData.variants)) {
@@ -352,6 +448,7 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
 
 export const updateProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { collections, tags, tag, ...productData } = req.body;
+  sanitizeProductHtmlFields(productData);
 
   if (tags && Array.isArray(tags)) {
     productData.tags = tags;
@@ -365,6 +462,10 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
 
   if (productData.published !== undefined && !productData.publishStatus) {
     productData.publishStatus = productData.published ? 'active' : 'draft';
+  }
+  // publishStatus is the source of truth (storefront filter); keep the legacy flag in sync
+  if (productData.publishStatus) {
+    productData.published = productData.publishStatus === 'active';
   }
 
   // Map variants to restore currentBatchId if currentBatch is passed
@@ -470,7 +571,7 @@ export const deleteAllProducts = catchAsync(async (req: Request, res: Response, 
 
 export const uploadProductImage = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
+    return next(new AppError('No file uploaded', 400));
   }
   
   const result = await uploadImageBuffer(req.file.buffer, 'products');

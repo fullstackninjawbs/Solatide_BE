@@ -1,50 +1,67 @@
-import { Request, Response } from 'express';
-import sanitizeHtml from 'sanitize-html';
+import { Request, Response, NextFunction } from 'express';
 import Page from '../models/Page';
 import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
-
-// Helper to sanitize HTML content
-const sanitizePageContent = (html: string) => {
-  return sanitizeHtml(html, {
-    allowedTags: [
-      'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 'u', 's', 'a', 'ul', 'ol', 'li', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'hr', 'pre', 'code', 'br', 'span', 'div'
-    ],
-    allowedAttributes: {
-      'a': ['href', 'name', 'target', 'rel'],
-      'img': ['src', 'alt', 'title', 'width', 'height'],
-      '*': ['class', 'id', 'style'] // allow some styling
-    },
-    allowedStyles: {
-      '*': {
-        'color': [/^.*$/],
-        'text-align': [/^.*$/],
-        'background-color': [/^.*$/],
-        'padding': [/^.*$/],
-        'margin': [/^.*$/],
-        'border': [/^.*$/]
-      }
-    },
-    allowProtocolRelative: false
-  });
-};
+import { sanitizeRichHtml } from '../utils/sanitizeHtml';
+import { escapeRegex } from '../utils/collectionUtils';
 
 const reservedHandles = [
   'admin', 'product', 'products', 'cart', 'checkout', 'login',
   'register', 'account', 'search', 'collections', 'page', 'api'
 ];
 
+export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const SLUG_MAX = 150;
+
+/** Trim + lowercase; returns null when the slug is not a valid URL handle. */
+export const normalizeSlug = (raw: unknown): string | null => {
+  if (typeof raw !== 'string') return null;
+  const slug = raw.trim().toLowerCase();
+  if (!slug || slug.length > SLUG_MAX || !SLUG_RE.test(slug)) return null;
+  return slug;
+};
+
+const INVALID_SLUG_MESSAGE =
+  'URL handle must be lowercase letters, numbers and single hyphens (e.g. "my-page"), max 150 characters.';
+
+/** True if another page already uses `slug` as its slug or in its slug history. */
+const slugTakenByOtherPage = async (slug: string, excludeId?: unknown): Promise<boolean> => {
+  const filter: any = { $or: [{ slug }, { slugHistory: slug }] };
+  if (excludeId) filter._id = { $ne: excludeId };
+  const other = await Page.findOne(filter).select('_id');
+  return !!other;
+};
+
+const optString = (v: unknown, max: number): string | undefined =>
+  typeof v === 'string' ? v.slice(0, max) : undefined;
+
+/** Fields the storefront (DynamicPage.jsx / prerender) needs from a public page. */
+const toPublicPage = (page: any) => ({
+  _id: page._id,
+  title: page.title,
+  slug: page.slug,
+  content: { html: page.content?.html || '' },
+  seoTitle: page.seoTitle,
+  metaDescription: page.metaDescription,
+  status: page.status,
+  publishedAt: page.publishedAt,
+  createdAt: page.createdAt,
+  updatedAt: page.updatedAt,
+});
+
 /**
  * ADMIN: Get all pages
  */
-export const getAllPages = async (req: Request, res: Response): Promise<void> => {
+export const getAllPages = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { search, status } = req.query;
-    let query: any = {};
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+    const status = typeof req.query.status === 'string' ? req.query.status : '';
+    const query: any = {};
 
     if (search) {
+      const safe = escapeRegex(search);
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { slug: { $regex: search, $options: 'i' } }
+        { title: { $regex: safe, $options: 'i' } },
+        { slug: { $regex: safe, $options: 'i' } }
       ];
     }
     if (status && status !== 'all') {
@@ -53,15 +70,15 @@ export const getAllPages = async (req: Request, res: Response): Promise<void> =>
 
     const pages = await Page.find(query).sort({ updatedAt: -1 });
     res.json(pages);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
 /**
  * ADMIN: Get single page by ID
  */
-export const getPageById = async (req: Request, res: Response): Promise<void> => {
+export const getPageById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const page = await Page.findById(req.params.id);
     if (!page) {
@@ -69,106 +86,119 @@ export const getPageById = async (req: Request, res: Response): Promise<void> =>
       return;
     }
     res.json(page);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
 /**
  * ADMIN: Create new page
  */
-export const createPage = async (req: Request, res: Response): Promise<void> => {
+export const createPage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { title, slug, content, seoTitle, metaDescription, status } = req.body;
-    
-    if (!title || !slug) {
+    const { title, content, seoTitle, metaDescription, status } = req.body || {};
+
+    if (typeof title !== 'string' || !title.trim() || req.body?.slug === undefined) {
       res.status(400).json({ message: 'Title and URL handle are required.' });
       return;
     }
 
-    if (reservedHandles.includes(slug.toLowerCase())) {
+    const slug = normalizeSlug(req.body.slug);
+    if (!slug) {
+      res.status(400).json({ message: INVALID_SLUG_MESSAGE });
+      return;
+    }
+
+    if (reservedHandles.includes(slug)) {
       res.status(400).json({ message: 'This URL handle is reserved and cannot be used.' });
       return;
     }
 
-    const existingPage = await Page.findOne({ slug });
-    if (existingPage) {
+    if (await slugTakenByOtherPage(slug)) {
       res.status(400).json({ message: 'This URL handle is already in use.' });
       return;
     }
 
-    const sanitizedHtml = content?.html ? sanitizePageContent(content.html) : '';
+    const sanitizedHtml = sanitizeRichHtml(content?.html);
+    const pageStatus = status === 'published' ? 'published' : 'draft';
 
     const newPage = new Page({
-      title,
+      title: title.trim(),
       slug,
       content: {
         html: sanitizedHtml,
         json: content?.json || null
       },
-      seoTitle,
-      metaDescription,
-      status: status || 'draft',
-      publishedAt: status === 'published' ? new Date() : null,
+      seoTitle: optString(seoTitle, 300),
+      metaDescription: optString(metaDescription, 500),
+      status: pageStatus,
+      publishedAt: pageStatus === 'published' ? new Date() : null,
       createdBy: (req as any).user?._id
     });
 
     await newPage.save();
-    
+
     // Trigger storefront rebuild automatically in the background
     triggerStorefrontRebuild();
-    
+
     res.status(201).json(newPage);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
 /**
  * ADMIN: Update page
  */
-export const updatePage = async (req: Request, res: Response): Promise<void> => {
+export const updatePage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { title, slug, content, seoTitle, metaDescription, status } = req.body;
-    
+    const { title, content, seoTitle, metaDescription, status } = req.body || {};
+
     const page = await Page.findById(req.params.id);
     if (!page) {
       res.status(404).json({ message: 'Page not found' });
       return;
     }
 
-    if (slug && slug !== page.slug) {
-      if (reservedHandles.includes(slug.toLowerCase())) {
-        res.status(400).json({ message: 'This URL handle is reserved and cannot be used.' });
+    if (req.body?.slug !== undefined && req.body.slug !== page.slug) {
+      const slug = normalizeSlug(req.body.slug);
+      if (!slug) {
+        res.status(400).json({ message: INVALID_SLUG_MESSAGE });
         return;
       }
-      const existingPage = await Page.findOne({ slug });
-      if (existingPage) {
-        res.status(400).json({ message: 'This URL handle is already in use.' });
-        return;
+      if (slug !== page.slug) {
+        if (reservedHandles.includes(slug)) {
+          res.status(400).json({ message: 'This URL handle is reserved and cannot be used.' });
+          return;
+        }
+        if (await slugTakenByOtherPage(slug, page._id)) {
+          res.status(400).json({ message: 'This URL handle is already in use.' });
+          return;
+        }
+
+        // Save old slug to history for redirects; drop the new slug from history if reverting
+        if (!page.slugHistory.includes(page.slug)) {
+          page.slugHistory.push(page.slug);
+        }
+        page.slugHistory = page.slugHistory.filter((s) => s !== slug);
+        page.slug = slug;
       }
-      
-      // Save old slug to history for redirects
-      if (!page.slugHistory.includes(page.slug)) {
-        page.slugHistory.push(page.slug);
-      }
-      page.slug = slug;
     }
 
-    if (title !== undefined) page.title = title;
-    if (seoTitle !== undefined) page.seoTitle = seoTitle;
-    if (metaDescription !== undefined) page.metaDescription = metaDescription;
-    
+    if (typeof title === 'string' && title.trim()) page.title = title.trim();
+    if (seoTitle !== undefined) page.seoTitle = optString(seoTitle, 300);
+    if (metaDescription !== undefined) page.metaDescription = optString(metaDescription, 500);
+
     if (status !== undefined) {
-      page.status = status;
-      if (status === 'published' && !page.publishedAt) {
+      page.status = status === 'published' ? 'published' : 'draft';
+      if (page.status === 'published' && !page.publishedAt) {
         page.publishedAt = new Date();
       }
     }
 
     if (content) {
       if (content.html !== undefined) {
-        page.content.html = sanitizePageContent(content.html);
+        page.content.html = sanitizeRichHtml(content.html);
       }
       if (content.json !== undefined) {
         page.content.json = content.json;
@@ -182,67 +212,63 @@ export const updatePage = async (req: Request, res: Response): Promise<void> => 
     triggerStorefrontRebuild();
 
     res.json(page);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
 /**
  * ADMIN: Delete page
  */
-export const deletePage = async (req: Request, res: Response): Promise<void> => {
+export const deletePage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const page = await Page.findByIdAndDelete(req.params.id);
     if (!page) {
       res.status(404).json({ message: 'Page not found' });
       return;
     }
-    
+
     // Trigger storefront rebuild automatically in the background
     triggerStorefrontRebuild();
-    
+
     res.json({ message: 'Page deleted successfully' });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+  } catch (error) {
+    next(error);
   }
 };
 
 /**
- * PUBLIC: Get published page by slug
+ * PUBLIC: Get published page by slug.
+ * - exact slug → 200 with public fields only
+ * - old slug (in another page's slugHistory) → 200 { redirect: true, targetSlug }
+ * - otherwise 404. Never exposes internal error messages.
  */
 export const getPageBySlug = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { slug } = req.params;
-    
-    // First, try finding an exact match
-    let page = await Page.findOne({ slug });
-    let isRedirect = false;
-
-    // If not found, check if this slug is in the history of any page
-    if (!page) {
-      page = await Page.findOne({ slugHistory: slug });
-      if (page) {
-        isRedirect = true;
-      }
-    }
-
-    if (!page || page.status !== 'published') {
+    const raw = typeof req.params.slug === 'string' ? req.params.slug.trim() : '';
+    if (!raw || raw.length > SLUG_MAX) {
       res.status(404).json({ message: 'Page not found' });
       return;
     }
+    // Accept legacy (pre-normalisation) slugs as stored, plus the lowercase form
+    const candidates = Array.from(new Set([raw, raw.toLowerCase()]));
 
-    // If we matched based on history, instruct the frontend to redirect
-    if (isRedirect) {
-      res.status(301).json({ 
-        redirect: true, 
-        targetSlug: page.slug 
-      });
+    let page = await Page.findOne({ slug: { $in: candidates }, status: 'published' });
+    if (page) {
+      res.json(toPublicPage(page));
       return;
     }
 
-    res.json(page);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    page = await Page.findOne({ slugHistory: { $in: candidates }, status: 'published' });
+    if (page) {
+      res.status(200).json({ redirect: true, targetSlug: page.slug });
+      return;
+    }
+
+    res.status(404).json({ message: 'Page not found' });
+  } catch (error) {
+    console.error('[Pages] getPageBySlug failed:', error);
+    res.status(500).json({ message: 'Something went wrong' });
   }
 };
 
@@ -253,7 +279,8 @@ export const getPublicPagesList = async (req: Request, res: Response): Promise<v
   try {
     const pages = await Page.find({ status: 'published' }, 'slug title updatedAt').sort({ updatedAt: -1 });
     res.json(pages);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
+  } catch (error) {
+    console.error('[Pages] getPublicPagesList failed:', error);
+    res.status(500).json({ message: 'Something went wrong' });
   }
 };

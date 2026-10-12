@@ -1,12 +1,13 @@
 import express from 'express';
 import * as collectionController from '../../controllers/admin/collectionController';
-import { protect, restrictTo } from '../../middleware/auth';
+import { restrictTo } from '../../middleware/auth';
+import { ACCESS } from '../../config/roles';
 
 const router = express.Router();
 
 // Protect all routes and restrict to permitted admin roles
-router.use(protect);
-router.use(restrictTo('admin', 'super_admin', 'content_manager', 'operations'));
+// protect applied in routes/admin/index.ts
+router.use(restrictTo(...ACCESS.collections));
 
 router.route('/')
   .get(collectionController.getCollections)

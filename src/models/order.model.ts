@@ -37,6 +37,26 @@ export interface IOrderItem {
   product: mongoose.Types.ObjectId;
   quantity: number;
   price: number;
+  /** Selected variant (_id of product.variants[]) — resolved server-side (M-11) */
+  variant?: mongoose.Types.ObjectId | null;
+  tagadaVariantId?: string;
+  sku?: string;
+  title?: string;
+  variantTitle?: string;
+}
+
+export interface ISideEffectError {
+  step: string;
+  message: string;
+  at: Date;
+}
+
+export interface IOversell {
+  product?: mongoose.Types.ObjectId;
+  variant?: mongoose.Types.ObjectId | null;
+  sku?: string;
+  quantity: number;
+  at: Date;
 }
 
 // ─── Attribution ───────────────────────────────────────────────────────────────
@@ -112,18 +132,37 @@ export interface IOrder extends mongoose.Document {
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   fulfilmentStatus: 'unfulfilled' | 'fulfilled' | 'partial';
   paymentMethod?: 'tagada' | 'payid' | 'bank_transfer' | 'manual_offline';
-  paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
+  paymentStatus: 'pending' | 'paid' | 'failed' | 'cancelled' | 'partially_refunded' | 'refunded';
   source?: 'storefront' | 'admin_manual' | 'web';
   createdByAdmin?: {
     id: string;
     email: string;
     name?: string;
   };
-  tagadaPaymentId?: string;
-  tagadaPaymentStatus?: 'initiated' | 'authorized' | 'captured' | 'failed' | 'refunded' | 'succeeded' | 'pending' | 'unknown';
+  /** Tagada checkout-session id set at session creation (null, never 'unknown') */
+  tagadaPaymentId?: string | null;
+  /** Tagada Payment object id (pay_...) from payment/* webhooks — used for refunds */
+  tagadaProviderPaymentId?: string | null;
+  tagadaPaymentStatus?: string;
   tagadaEnv?: 'sandbox' | 'production';
+  /** Reserved + confirmed refunds (major units). Guarded so it never exceeds grandTotal. */
   refundedAmount: number;
+  /** Portion of refundedAmount still awaiting provider confirmation */
+  pendingRefundAmount?: number;
   refundStatus: 'none' | 'initiated' | 'partially_refunded' | 'refunded';
+
+  // ── Public (guest) access & post-payment bookkeeping ────────────────────────
+  publicAccessToken?: string;
+  paidAt?: Date | null;
+  sideEffectsClaimedAt?: Date | null;
+  sideEffectsCompletedAt?: Date | null;
+  sideEffectErrors?: ISideEffectError[];
+  inventoryDecrementedAt?: Date | null;
+  oversold?: boolean;
+  oversells?: IOversell[];
+  discountDescription?: string;
+  discountViolation?: { code: string; reason: string; at: Date } | null;
+  suppressConfirmationEmail?: boolean;
 
   // ── Shipping Providers ────────────────────────────────────────────────────────
   trackingNumber?: string;
@@ -226,6 +265,11 @@ const orderSchema = new mongoose.Schema<IOrder>(
         product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
         quantity: { type: Number, min: 1 },
         price: { type: Number },
+        variant: { type: mongoose.Schema.Types.ObjectId, default: null },
+        tagadaVariantId: { type: String },
+        sku: { type: String },
+        title: { type: String },
+        variantTitle: { type: String },
       },
     ],
 
@@ -264,7 +308,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
     paymentStatus: {
       type: String,
-      enum: ['pending', 'paid', 'failed', 'refunded'],
+      enum: ['pending', 'paid', 'failed', 'cancelled', 'partially_refunded', 'refunded'],
       default: 'pending',
     },
     source: {
@@ -279,10 +323,11 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
 
     // ── TagadaPay ────────────────────────────────────────────────────────────────
-    tagadaPaymentId: { type: String },
+    tagadaPaymentId: { type: String, default: null },
+    tagadaProviderPaymentId: { type: String, default: null },
     tagadaPaymentStatus: {
       type: String,
-      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'succeeded', 'pending', 'unknown'],
+      enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'partially_refunded', 'succeeded', 'pending', 'cancelled', 'unknown'],
     },
     tagadaEnv: {
       type: String,
@@ -293,11 +338,45 @@ const orderSchema = new mongoose.Schema<IOrder>(
       type: Number,
       default: 0
     },
+    pendingRefundAmount: { type: Number, default: 0, min: 0 },
     refundStatus: {
       type: String,
       enum: ['none', 'initiated', 'partially_refunded', 'refunded'],
       default: 'none'
     },
+
+    // ── Public access & post-payment bookkeeping (H-4 / M-13) ─────────────────
+    publicAccessToken: { type: String, select: false, index: true },
+    paidAt: { type: Date, default: null },
+    sideEffectsClaimedAt: { type: Date, default: null },
+    sideEffectsCompletedAt: { type: Date, default: null },
+    sideEffectErrors: {
+      type: [{
+        step: { type: String },
+        message: { type: String },
+        at: { type: Date },
+      }],
+      default: undefined,
+    },
+    inventoryDecrementedAt: { type: Date, default: null },
+    oversold: { type: Boolean, default: false },
+    oversells: {
+      type: [{
+        product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+        variant: { type: mongoose.Schema.Types.ObjectId, default: null },
+        sku: { type: String },
+        quantity: { type: Number },
+        at: { type: Date },
+      }],
+      default: undefined,
+    },
+    discountDescription: { type: String, trim: true },
+    discountViolation: {
+      code: { type: String },
+      reason: { type: String },
+      at: { type: Date },
+    },
+    suppressConfirmationEmail: { type: Boolean, default: false },
 
     // ── Shipping Providers ────────────────────────────────────────────────────────
     trackingNumber: { type: String },
@@ -377,7 +456,19 @@ const orderSchema = new mongoose.Schema<IOrder>(
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ fulfilmentStatus: 1 });
 orderSchema.index({ status: 1 });
-orderSchema.index({ tagadaPaymentId: 1 });
+// tagadaPaymentId is unique only among real string values (null / missing allowed many times).
+// Coexists with the old non-unique `tagadaPaymentId_1` index (nothing is dropped). Placeholder
+// 'unknown' values must be set to null first — see src/scripts/migrations/2026-10-payment-indexes.ts.
+orderSchema.index(
+  { tagadaPaymentId: 1 },
+  { name: 'tagadaPaymentId_unique_str', unique: true, partialFilterExpression: { tagadaPaymentId: { $type: 'string' } } }
+);
+orderSchema.index({ tagadaProviderPaymentId: 1 }, { sparse: true });
+orderSchema.index({ tagadaOrderId: 1 }, { sparse: true });
+orderSchema.index({ tagadaSessionId: 1 }, { sparse: true });
+orderSchema.index({ customerEmail: 1 });
+orderSchema.index({ user: 1 });
+orderSchema.index({ couponCode: 1, customerEmail: 1 }, { sparse: true });
 orderSchema.index({ 'customer.email': 1 });
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ 'attribution.firstTouch.source': 1 });

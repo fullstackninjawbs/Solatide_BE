@@ -1,4 +1,36 @@
 import { transporter } from '../config/email';
+import { escapeHtml as e, safeUrl } from '../utils/escapeHtml';
+import { Order } from '../models/order.model';
+import { generateOrderAccessToken } from '../domain/orderAccess';
+
+// Strip CR/LF so user-controlled values cannot inject mail headers via subject.
+const hdr = (v: unknown): string => String(v ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200);
+
+async function buildCustomerOrderUrl(order: any, clientUrl: string): Promise<string> {
+  const orderId = encodeURIComponent(String(order._id || order.id || ''));
+  let token = typeof order?.publicAccessToken === 'string' ? order.publicAccessToken.trim() : '';
+
+  if (!token && order?._id) {
+    try {
+      const doc = await Order.findById(order._id).select('+publicAccessToken');
+      if (doc) {
+        if (doc.publicAccessToken) {
+          token = doc.publicAccessToken;
+        } else {
+          token = generateOrderAccessToken();
+          doc.publicAccessToken = token;
+          await doc.save();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to resolve order access token for email link:', err);
+    }
+  }
+
+  return token
+    ? `${clientUrl}/order/${orderId}?accessToken=${encodeURIComponent(token)}`
+    : `${clientUrl}/order/${orderId}`;
+}
 
 export const sendVerificationEmail = async (
   email: string,
@@ -11,10 +43,11 @@ export const sendVerificationEmail = async (
   verificationToken: string
 ) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const verificationUrl = `${clientUrl}/review/verify/${verificationToken}`;
+  const verificationUrl = `${clientUrl}/review/verify/${encodeURIComponent(verificationToken)}`;
   const companyLogo = 'https://i.imgur.com/uC00Jid.png';
 
-  const starsHtml = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+  const safeRating = Math.min(5, Math.max(0, Math.round(Number(rating) || 0)));
+  const starsHtml = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
 
   const html = `
     <!DOCTYPE html>
@@ -45,25 +78,25 @@ export const sendVerificationEmail = async (
     <body>
       <div class="container">
         <div class="header">
-          <img src="${companyLogo}" alt="${process.env.SMTP_FROM_NAME || 'Solatide Biosciences'}" class="logo" />
+          <img src="${companyLogo}" alt="${e(process.env.SMTP_FROM_NAME || 'Solatide Biosciences')}" class="logo" />
         </div>
         
         <h2>Verify Your Email</h2>
-        <p>Hi ${reviewerName},</p>
+        <p>Hi ${e(reviewerName)},</p>
         <p>Please verify your email address to confirm that you submitted this review.</p>
         
         <div class="review-box">
           <div class="product-info">
-            ${productImage ? `<img src="${productImage}" alt="${productName}" class="product-image" />` : ''}
-            <p class="product-name">${productName}</p>
+            ${safeUrl(productImage) ? `<img src="${safeUrl(productImage)}" alt="${e(productName)}" class="product-image" />` : ''}
+            <p class="product-name">${e(productName)}</p>
           </div>
           <p class="stars">${starsHtml}</p>
-          ${reviewTitle ? `<p class="review-title">${reviewTitle}</p>` : ''}
-          <p class="review-content">"${reviewContent}"</p>
+          ${reviewTitle ? `<p class="review-title">${e(reviewTitle)}</p>` : ''}
+          <p class="review-content">"${e(reviewContent)}"</p>
         </div>
 
         <div class="button-container">
-          <a href="${verificationUrl}" class="button" style="color: #ffffff;">Verify My Review</a>
+          <a href="${e(verificationUrl)}" class="button" style="color: #ffffff;">Verify My Review</a>
         </div>
 
         <div class="footer">
@@ -80,7 +113,7 @@ export const sendVerificationEmail = async (
   const mailOptions = {
     from: `${fromName} <${fromEmail}>`,
     to: email,
-    subject: `Verify your review for ${productName}`,
+    subject: `Verify your review for ${hdr(productName)}`,
     html,
   };
 
@@ -95,7 +128,7 @@ export const sendVerificationEmail = async (
 
 export const sendOrderConfirmationEmail = async (order: any) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const orderUrl = `${clientUrl}/order/${order._id}`;
+  const orderUrl = await buildCustomerOrderUrl(order, clientUrl);
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
   const currency = order.currency || 'AUD';
 
@@ -113,12 +146,12 @@ export const sendOrderConfirmationEmail = async (order: any) => {
   const lineItemsHtml = (order.lineItems || []).map((item: any) => `
     <tr>
       <td style="padding: 15px 0; border-bottom: 1px solid #e5e5e5; width: 60px;">
-        ${item.productImageUrl ? `<img src="${item.productImageUrl}" style="width: 50px; height: 50px; border-radius: 4px; border: 1px solid #e5e5e5; object-fit: contain;" />` : `<div style="width: 50px; height: 50px; border-radius: 4px; border: 1px solid #e5e5e5; background: #f9f9f9;"></div>`}
+        ${safeUrl(item.productImageUrl) ? `<img src="${safeUrl(item.productImageUrl)}" style="width: 50px; height: 50px; border-radius: 4px; border: 1px solid #e5e5e5; object-fit: contain;" />` : `<div style="width: 50px; height: 50px; border-radius: 4px; border: 1px solid #e5e5e5; background: #f9f9f9;"></div>`}
       </td>
       <td style="padding: 15px 15px; border-bottom: 1px solid #e5e5e5; text-align: left;">
-        <span style="font-weight: 600; color: #333; display: block; font-size: 14px;">${item.title}</span>
-        ${item.variantTitle ? `<span style="color: #737373; font-size: 13px; display: block; margin-top: 4px;">${item.variantTitle}</span>` : ''}
-        <span style="color: #737373; font-size: 13px; display: block; margin-top: 4px;">Qty: ${item.quantity}</span>
+        <span style="font-weight: 600; color: #333; display: block; font-size: 14px;">${e(item.title)}</span>
+        ${item.variantTitle ? `<span style="color: #737373; font-size: 13px; display: block; margin-top: 4px;">${e(item.variantTitle)}</span>` : ''}
+        <span style="color: #737373; font-size: 13px; display: block; margin-top: 4px;">Qty: ${e(item.quantity)}</span>
       </td>
       <td style="padding: 15px 0; border-bottom: 1px solid #e5e5e5; text-align: right; color: #333; font-weight: 500; font-size: 14px; vertical-align: top;">
         ${formatPrice(item.subtotal || (item.unitPrice * item.quantity))}
@@ -159,15 +192,15 @@ export const sendOrderConfirmationEmail = async (order: any) => {
       <div class="container">
         <div style="padding: 20px 40px;">
           <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 62px;" />
-          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${order.orderNumber}</span>
+          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${e(order.orderNumber)}</span>
         </div>
         
         <div class="content">
           <div class="order-title">
             <h2>${order.source === 'admin_manual' ? 'Your order has been placed!' : 'Thank you for your order!'}</h2>
             <p>${order.source === 'admin_manual' ? 'We have successfully placed an order on your behalf. We will notify you when it has been sent.' : "We're getting your order ready to be shipped. We will notify you when it has been sent."}</p>
-            <a href="${orderUrl}" class="button">View your order</a>
-            <span style="color: #00bfef; margin-left: 15px; font-size: 14px;"><a href="${clientUrl}/collections/all" style="color: #00bfef; text-decoration: none;">or Visit our store</a></span>
+            <a href="${e(orderUrl)}" class="button">View your order</a>
+            <span style="color: #00bfef; margin-left: 15px; font-size: 14px;"><a href="${e(clientUrl)}/collections/all" style="color: #00bfef; text-decoration: none;">or Visit our store</a></span>
           </div>
           
           <h3 class="summary-title">Order summary</h3>
@@ -199,21 +232,21 @@ export const sendOrderConfirmationEmail = async (order: any) => {
             <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
               <tr>
                 <td style="padding: 15px 20px; border-bottom: 1px solid #e5e5e5; width: 25%; color: #737373; font-size: 13px;">Contact</td>
-                <td style="padding: 15px 20px; border-bottom: 1px solid #e5e5e5; color: #333; font-size: 14px;">${order.customerEmail || order.customer?.email}</td>
+                <td style="padding: 15px 20px; border-bottom: 1px solid #e5e5e5; color: #333; font-size: 14px;">${e(order.customerEmail || order.customer?.email)}</td>
               </tr>
               <tr>
                 <td style="padding: 15px 20px; border-bottom: 1px solid #e5e5e5; width: 25%; color: #737373; font-size: 13px; vertical-align: top;">Ship to</td>
                 <td style="padding: 15px 20px; border-bottom: 1px solid #e5e5e5; color: #333; font-size: 14px; line-height: 1.5;">
-                  ${order.shippingAddressObj?.name || order.customer?.firstName + ' ' + order.customer?.lastName}<br>
-                  ${order.shippingAddressObj?.street1 || ''}<br>
-                  ${order.shippingAddressObj?.street2 ? order.shippingAddressObj.street2 + '<br>' : ''}
-                  ${order.shippingAddressObj?.city || ''}, ${order.shippingAddressObj?.state || ''} ${order.shippingAddressObj?.zip || ''}<br>
-                  ${order.shippingAddressObj?.country || ''}
+                  ${e(order.shippingAddressObj?.name || `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`.trim())}<br>
+                  ${e(order.shippingAddressObj?.street1)}<br>
+                  ${order.shippingAddressObj?.street2 ? e(order.shippingAddressObj.street2) + '<br>' : ''}
+                  ${e(order.shippingAddressObj?.city)}, ${e(order.shippingAddressObj?.state)} ${e(order.shippingAddressObj?.zip)}<br>
+                  ${e(order.shippingAddressObj?.country)}
                 </td>
               </tr>
               <tr>
                 <td style="padding: 15px 20px; width: 25%; color: #737373; font-size: 13px;">Method</td>
-                <td style="padding: 15px 20px; color: #333; font-size: 14px;">${displayShippingMethod}</td>
+                <td style="padding: 15px 20px; color: #333; font-size: 14px;">${e(displayShippingMethod)}</td>
               </tr>
             </table>
           </div>
@@ -239,7 +272,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
   const mailOptions = {
     from: `${fromName} <${fromEmail}>`,
     to: customerEmail,
-    subject: `Order #${order.orderNumber} confirmed`,
+    subject: `Order #${hdr(order.orderNumber)} confirmed`,
     html,
   };
 
@@ -254,7 +287,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
 
 export const sendShipmentConfirmationEmail = async (order: any) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const orderUrl = `${clientUrl}/order/${order._id}`;
+  const orderUrl = await buildCustomerOrderUrl(order, clientUrl);
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 
   const customerName = order.customer?.firstName
@@ -301,28 +334,28 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
       <div class="container">
         <div style="padding: 20px 40px;">
           <img src="${companyLogo}" alt="Solatide Biosciences" style="height: 35px;" />
-          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${order.orderNumber}</span>
+          <span style="float: right; color: #737373; font-size: 13px; padding-top: 10px;">ORDER #${e(order.orderNumber)}</span>
         </div>
         
         <div class="content">
           <h2>Your order is on the way!</h2>
-          <p>Hi ${customerName},</p>
-          <p>Great news! Your order <strong>#${order.orderNumber}</strong> has been shipped and is currently on its way to you.</p>
+          <p>Hi ${e(customerName)},</p>
+          <p>Great news! Your order <strong>#${e(order.orderNumber)}</strong> has been shipped and is currently on its way to you.</p>
           <p>It can take up to 24 hours for tracking information to become available.</p>
           
           <div style="margin-top: 30px; margin-bottom: 30px;">
-            ${order.trackingUrl ? `<a href="${order.trackingUrl}" class="button">Track Shipment</a>` : ''}
-            <a href="${orderUrl}" class="button-secondary">View Order</a>
+            ${safeUrl(order.trackingUrl) ? `<a href="${safeUrl(order.trackingUrl)}" class="button">Track Shipment</a>` : ''}
+            <a href="${e(orderUrl)}" class="button-secondary">View Order</a>
           </div>
           
           <div class="details-box">
             <div class="detail-row">
               <span class="detail-label">Shipping Method:</span>
-              <span class="detail-value">${displayMethod}</span>
+              <span class="detail-value">${e(displayMethod)}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Tracking Number:</span>
-              <span class="detail-value">${order.trackingNumber || 'N/A'}</span>
+              <span class="detail-value">${e(order.trackingNumber || 'N/A')}</span>
             </div>
           </div>
         </div>
@@ -347,7 +380,7 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
   const mailOptions = {
     from: `${fromName} <${fromEmail}>`,
     to: customerEmail,
-    subject: `Your order #${order.orderNumber} has been shipped`,
+    subject: `Your order #${hdr(order.orderNumber)} has been shipped`,
     html,
   };
 
@@ -362,7 +395,7 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
 
 export const sendResetPasswordEmail = async (email: string, resetToken: string, name: string) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const resetUrl = `${clientUrl}/admin/reset-password/${resetToken}`;
+  const resetUrl = `${clientUrl}/admin/reset-password/${encodeURIComponent(resetToken)}`;
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 
   const html = `
@@ -391,11 +424,11 @@ export const sendResetPasswordEmail = async (email: string, resetToken: string, 
         </div>
         
         <h2>Password Reset Request</h2>
-        <p>Hi ${name},</p>
+        <p>Hi ${e(name)},</p>
         <p>You requested to reset your password for the Solatide Biosciences Admin Portal. Click the button below to set a new password. This link is only valid for 10 minutes.</p>
 
         <div class="button-container">
-          <a href="${resetUrl}" class="button" style="color: #ffffff;">Reset Password</a>
+          <a href="${e(resetUrl)}" class="button" style="color: #ffffff;">Reset Password</a>
         </div>
 
         <p>If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
@@ -459,7 +492,7 @@ export const sendNewsletterWelcomeEmail = async (email: string) => {
         <p>Thank you for subscribing to our newsletter.</p>
         <p>You'll now be the first to know about our latest product releases, restocks, and exclusive research updates.</p>
         <div class="button-container">
-          <a href="${shopUrl}" class="button" style="color: #ffffff !important;">Browse Peptides</a>
+          <a href="${e(shopUrl)}" class="button" style="color: #ffffff !important;">Browse Peptides</a>
         </div>
         <div class="footer">
           <p>© ${new Date().getFullYear()} Solatide Biosciences. All rights reserved.</p>
@@ -486,7 +519,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
   }
 
   const clientUrl = process.env.ADMIN_URL || 'https://hub.solatidebiosciences.com.au';
-  const adminOrderUrl = `${clientUrl}/admin/orders/${order._id}`;
+  const adminOrderUrl = `${clientUrl}/admin/orders/${encodeURIComponent(String(order._id))}`;
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
   const currency = order.currency || 'AUD';
 
@@ -505,12 +538,12 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
   const lineItemsHtml = (order.lineItems || []).map((item: any) => `
     <tr>
       <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; width: 55px;">
-        ${item.productImageUrl ? `<img src="${item.productImageUrl}" style="width: 45px; height: 45px; border-radius: 4px; border: 1px solid #e2e8f0; object-fit: contain;" />` : `<div style="width: 45px; height: 45px; border-radius: 4px; border: 1px solid #e2e8f0; background: #f8fafc;"></div>`}
+        ${safeUrl(item.productImageUrl) ? `<img src="${safeUrl(item.productImageUrl)}" style="width: 45px; height: 45px; border-radius: 4px; border: 1px solid #e2e8f0; object-fit: contain;" />` : `<div style="width: 45px; height: 45px; border-radius: 4px; border: 1px solid #e2e8f0; background: #f8fafc;"></div>`}
       </td>
       <td style="padding: 12px 15px; border-bottom: 1px solid #e2e8f0; text-align: left;">
-        <span style="font-weight: 600; color: #1e293b; display: block; font-size: 14px;">${item.title}</span>
-        ${item.variantTitle ? `<span style="color: #64748b; font-size: 13px; display: block; margin-top: 2px;">${item.variantTitle}</span>` : ''}
-        <span style="color: #64748b; font-size: 13px; display: block; margin-top: 2px;">Qty: ${item.quantity} ${item.sku ? `(SKU: ${item.sku})` : ''}</span>
+        <span style="font-weight: 600; color: #1e293b; display: block; font-size: 14px;">${e(item.title)}</span>
+        ${item.variantTitle ? `<span style="color: #64748b; font-size: 13px; display: block; margin-top: 2px;">${e(item.variantTitle)}</span>` : ''}
+        <span style="color: #64748b; font-size: 13px; display: block; margin-top: 2px;">Qty: ${e(item.quantity)} ${item.sku ? `(SKU: ${e(item.sku)})` : ''}</span>
       </td>
       <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; text-align: right; color: #1e293b; font-weight: 600; font-size: 14px; vertical-align: top;">
         ${formatPrice(item.subtotal || (item.unitPrice * item.quantity))}
@@ -519,12 +552,12 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
   `).join('');
 
   const shippingAddrHtml = order.shippingAddressObj ? `
-    ${order.shippingAddressObj.name || customerName}<br>
-    ${order.shippingAddressObj.street1 || ''}<br>
-    ${order.shippingAddressObj.street2 ? order.shippingAddressObj.street2 + '<br>' : ''}
-    ${order.shippingAddressObj.city || ''}, ${order.shippingAddressObj.state || ''} ${order.shippingAddressObj.zip || ''}<br>
-    ${order.shippingAddressObj.country || 'AU'}
-  ` : (order.shippingAddress || 'Not specified');
+    ${e(order.shippingAddressObj.name || customerName)}<br>
+    ${e(order.shippingAddressObj.street1)}<br>
+    ${order.shippingAddressObj.street2 ? e(order.shippingAddressObj.street2) + '<br>' : ''}
+    ${e(order.shippingAddressObj.city)}, ${e(order.shippingAddressObj.state)} ${e(order.shippingAddressObj.zip)}<br>
+    ${e(order.shippingAddressObj.country || 'AU')}
+  ` : e(order.shippingAddress || 'Not specified');
 
   const html = `
     <!DOCTYPE html>
@@ -532,7 +565,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>New Order Notification #${order.orderNumber}</title>
+      <title>New Order Notification #${e(order.orderNumber)}</title>
       <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
         .container { max-width: 600px; margin: 25px auto; padding: 0 10px; }
@@ -558,8 +591,8 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
               <tr>
                 <td><img src="${companyLogo}" alt="Solatide Biosciences" style="height: 50px;" /></td>
                 <td style="text-align: right;">
-                  <span class="badge">Paid • ${order.paymentMethod === 'tagada' ? 'TagadaPay' : (order.paymentMethod || 'Online')}</span>
-                  <div style="color: #64748b; font-size: 13px; font-weight: 600; margin-top: 6px;">ORDER #${order.orderNumber}</div>
+                  <span class="badge">Paid • ${order.paymentMethod === 'tagada' ? 'TagadaPay' : e(order.paymentMethod || 'Online')}</span>
+                  <div style="color: #64748b; font-size: 13px; font-weight: 600; margin-top: 6px;">ORDER #${e(order.orderNumber)}</div>
                 </td>
               </tr>
             </table>
@@ -571,7 +604,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
           </p>
 
           <div style="margin: 25px 0 35px 0; text-align: center;">
-            <a href="${adminOrderUrl}" class="button">View Order in Admin Hub →</a>
+            <a href="${e(adminOrderUrl)}" class="button">View Order in Admin Hub →</a>
           </div>
 
           <h3 style="font-size: 15px; color: #0f172a; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 30px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Order Summary</h3>
@@ -586,7 +619,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
             </tr>
             ${order.discountAmount ? `
             <tr>
-              <td class="totals-label">Discount ${order.couponCode ? `(${order.couponCode})` : ''}</td>
+              <td class="totals-label">Discount ${order.couponCode ? `(${e(order.couponCode)})` : ''}</td>
               <td class="totals-value" style="color: #16a34a;">-${formatPrice(order.discountAmount)}</td>
             </tr>` : ''}
             <tr>
@@ -604,15 +637,15 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
             <table>
               <tr>
                 <td class="info-cell info-label">Customer</td>
-                <td class="info-cell info-value"><strong>${customerName}</strong></td>
+                <td class="info-cell info-value"><strong>${e(customerName)}</strong></td>
               </tr>
               <tr>
                 <td class="info-cell info-label">Email</td>
-                <td class="info-cell info-value"><a href="mailto:${customerEmail}" style="color: #2563eb; text-decoration: none;">${customerEmail}</a></td>
+                <td class="info-cell info-value"><a href="mailto:${e(customerEmail)}" style="color: #2563eb; text-decoration: none;">${e(customerEmail)}</a></td>
               </tr>
               <tr>
                 <td class="info-cell info-label">Phone</td>
-                <td class="info-cell info-value"><strong>${customerPhone}</strong></td>
+                <td class="info-cell info-value"><strong>${e(customerPhone)}</strong></td>
               </tr>
               <tr>
                 <td class="info-cell info-label">Ship To</td>
@@ -620,18 +653,18 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
               </tr>
               <tr>
                 <td class="info-cell info-label" style="border-bottom: none;">Shipping Method</td>
-                <td class="info-cell info-value" style="border-bottom: none;">${displayShippingMethod}</td>
+                <td class="info-cell info-value" style="border-bottom: none;">${e(displayShippingMethod)}</td>
               </tr>
             </table>
           </div>
 
           <div style="text-align: center; margin-top: 35px;">
-            <a href="${adminOrderUrl}" style="color: #2563eb; font-size: 13.5px; font-weight: 600; text-decoration: none;">Open #${order.orderNumber} in Solatide Admin →</a>
+            <a href="${e(adminOrderUrl)}" style="color: #2563eb; font-size: 13.5px; font-weight: 600; text-decoration: none;">Open #${e(order.orderNumber)} in Solatide Admin →</a>
           </div>
         </div>
 
         <div style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 20px;">
-          Solatide Biosciences Admin Notification • Sent to ${adminNotificationEmail}
+          Solatide Biosciences Admin Notification • Sent to ${e(adminNotificationEmail)}
         </div>
       </div>
     </body>
@@ -644,7 +677,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
   const mailOptions = {
     from: `"${fromName}" <${fromEmail}>`,
     to: adminNotificationEmail,
-    subject: `🛒 New Order: #${order.orderNumber} - ${customerName} (${formatPrice(order.grandTotal || order.totalAmount || 0)})`,
+    subject: `🛒 New Order: #${hdr(order.orderNumber)} - ${hdr(customerName)} (${formatPrice(order.grandTotal || order.totalAmount || 0)})`,
     html,
   };
 

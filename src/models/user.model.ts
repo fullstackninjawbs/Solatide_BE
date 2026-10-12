@@ -8,6 +8,8 @@ export interface IUser extends mongoose.Document {
   role: 'super_admin' | 'operations' | 'content_manager' | 'support' | 'user' | 'admin';
   passwordResetToken?: string;
   passwordResetExpires?: Date;
+  /** Set whenever the password changes; tokens issued before it should be rejected by auth middleware */
+  passwordChangedAt?: Date;
   createdAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
@@ -34,7 +36,7 @@ const userSchema = new mongoose.Schema<IUser>(
     password: {
       type: String,
       required: [true, 'Please provide a password'],
-      minlength: [6, 'Password must be at least 6 characters long'],
+      minlength: [10, 'Password must be at least 10 characters long'],
       select: false, // Don't return by default
     },
     role: {
@@ -42,8 +44,10 @@ const userSchema = new mongoose.Schema<IUser>(
       enum: ['super_admin', 'operations', 'content_manager', 'support', 'user', 'admin'],
       default: 'user',
     },
-    passwordResetToken: String,
-    passwordResetExpires: Date,
+    // Never returned by default (L-10). Queries can still filter on them.
+    passwordResetToken: { type: String, select: false },
+    passwordResetExpires: { type: Date, select: false },
+    passwordChangedAt: { type: Date },
   },
   {
     timestamps: true,

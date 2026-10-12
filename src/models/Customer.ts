@@ -30,7 +30,7 @@ export interface ICustomer extends Document {
 
 const CustomerSchema = new Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   phone: String,
   defaultAddress: {
     name: String,

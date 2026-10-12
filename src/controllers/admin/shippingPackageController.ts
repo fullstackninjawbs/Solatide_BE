@@ -27,7 +27,7 @@ export const createPackage = async (req: Request, res: Response) => {
     res.status(201).json({ success: true, package: savedPackage });
   } catch (error: any) {
     console.error('Error creating shipping package:', error);
-    res.status(500).json({ success: false, message: 'Failed to create shipping package.', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to create shipping package.' });
   }
 };
 
@@ -57,7 +57,7 @@ export const updatePackage = async (req: Request, res: Response) => {
     res.status(200).json({ success: true, package: updatedPackage });
   } catch (error: any) {
     console.error('Error updating shipping package:', error);
-    res.status(500).json({ success: false, message: 'Failed to update shipping package.', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to update shipping package.' });
   }
 };
 
@@ -80,7 +80,7 @@ export const deletePackage = async (req: Request, res: Response) => {
     res.status(200).json({ success: true, message: 'Shipping package deleted successfully.' });
   } catch (error: any) {
     console.error('Error deleting shipping package:', error);
-    res.status(500).json({ success: false, message: 'Failed to delete shipping package.', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to delete shipping package.' });
   }
 };
 
@@ -99,6 +99,6 @@ export const setDefaultPackage = async (req: Request, res: Response) => {
     res.status(200).json({ success: true, package: updatedPackage });
   } catch (error: any) {
     console.error('Error setting default shipping package:', error);
-    res.status(500).json({ success: false, message: 'Failed to set default shipping package.', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to set default shipping package.' });
   }
 };

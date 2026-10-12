@@ -18,14 +18,19 @@ module.exports = {
       max_restarts: 10,
       min_uptime: '5s',
 
-      // Graceful shutdown — wait up to 10s for in-flight requests
-      kill_timeout: 10000,
+      // Graceful shutdown — PM2 sends SIGINT, then SIGKILL after kill_timeout.
+      // server.ts force-exits itself after 12s, so it always finishes before PM2's 15s kill.
+      // (server.ts also handles a 'shutdown' message, but we rely on signals: no shutdown_with_message.)
+      kill_timeout: 15000,
       listen_timeout: 5000,
-      shutdown_with_message: true,
 
       // Environment
+      // IMPORTANT: `pm2 start ecosystem.config.js` WITHOUT `--env production` uses `env`,
+      // not `env_production`. The live API was running with NODE_ENV=development because of
+      // this (dev error handler leaks stack traces). Both blocks are production-safe now;
+      // for local development run `npm run dev` instead of PM2.
       env: {
-        NODE_ENV: 'development',
+        NODE_ENV: 'production',
       },
       env_production: {
         NODE_ENV: 'production',

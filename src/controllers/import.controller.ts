@@ -4,6 +4,7 @@ import Product from '../models/product.model';
 import { parseCsvProducts } from '../utils/csvToProducts';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
+import { sanitizeRichHtml } from '../utils/sanitizeHtml';
 
 /**
  * Endpoint to preview CSV import file
@@ -46,7 +47,8 @@ export const importProductsCommit = catchAsync(async (req: Request, res: Respons
     return next(new AppError('Please upload a CSV file.', 400));
   }
 
-  const mode = req.body.mode || 'upsertByHandle'; // createOnly | upsertByHandle | skipExisting
+  const allowedModes = ['createOnly', 'upsertByHandle', 'skipExisting'];
+  const mode = allowedModes.includes(req.body.mode) ? req.body.mode : 'upsertByHandle';
   const publishDefault = req.body.publishDefault !== 'false';
 
   const stream = Readable.from(req.file.buffer);
@@ -89,17 +91,18 @@ export const importProductsCommit = catchAsync(async (req: Request, res: Respons
 
         // upsertByHandle: Update existing product details
         existing.name = parsedProduct.name;
-        existing.description = parsedProduct.description;
+        // parseCsvProducts already sanitizes; re-sanitize defensively on write
+        existing.description = sanitizeRichHtml(parsedProduct.description);
         existing.category = parsedProduct.category;
         existing.vendor = parsedProduct.vendor;
         existing.tag = parsedProduct.tag || existing.tag;
         existing.ratingCount = parsedProduct.ratingCount;
-        existing.overviewHtml = parsedProduct.overviewHtml;
-        existing.summaryHtml = parsedProduct.summaryHtml;
-        existing.researchApplicationsHtml = parsedProduct.researchApplicationsHtml;
+        existing.overviewHtml = sanitizeRichHtml(parsedProduct.overviewHtml);
+        existing.summaryHtml = sanitizeRichHtml(parsedProduct.summaryHtml);
+        existing.researchApplicationsHtml = sanitizeRichHtml(parsedProduct.researchApplicationsHtml);
         
         if (parsedProduct.technicalSpecs) {
-          existing.technicalSpecs = { rawHtml: parsedProduct.technicalSpecs.rawHtml };
+          existing.technicalSpecs = { rawHtml: sanitizeRichHtml(parsedProduct.technicalSpecs.rawHtml) };
         }
         
         if (parsedProduct.seo) {

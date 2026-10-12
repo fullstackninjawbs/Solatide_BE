@@ -14,16 +14,56 @@ import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 // @desc    Create a new review
 // @route   POST /api/v1/products/:productId/reviews
 // @access  Public (or protected depending on auth requirements)
+const REVIEW_EMAIL_RE = /^[^\s@<>()[\]\\,;:"]{1,64}@[^\s@<>()[\]\\,;:"]{1,189}\.[A-Za-z]{2,24}$/;
+const cleanStr = (v: unknown, max: number): string | undefined => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string') return undefined;
+  const t = v.trim();
+  return t ? t.slice(0, max) : undefined;
+};
+
 export const createReview = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const productId = req.params.productId || req.body.productId;
 
-  if (!productId) {
-    return next(new AppError('Please provide a product ID', 400));
+  if (!productId || typeof productId !== 'string' || !mongoose.Types.ObjectId.isValid(productId)) {
+    return next(new AppError('Please provide a valid product ID', 400));
   }
 
-  const { rating, title, review, name, email, anonymous, youtubeUrl } = req.body;
+  const { anonymous } = req.body;
+  const rating = Number(req.body.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return next(new AppError('Rating must be a whole number between 1 and 5', 400));
+  }
+  const title = cleanStr(req.body.title, 150);
+  const review = cleanStr(req.body.review, 5000);
+  const name = cleanStr(req.body.name, 80);
+  const email = cleanStr(req.body.email, 254)?.toLowerCase();
+  let youtubeUrl = cleanStr(req.body.youtubeUrl, 300);
 
-  // Handle image uploads
+  if (!review) {
+    return next(new AppError('Please provide your review text', 400));
+  }
+  if (email && !REVIEW_EMAIL_RE.test(email)) {
+    return next(new AppError('Please provide a valid email address', 400));
+  }
+  if (youtubeUrl) {
+    try {
+      const u = new URL(youtubeUrl);
+      const host = u.hostname.toLowerCase();
+      const okHost = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(host);
+      if (u.protocol !== 'https:' || !okHost) youtubeUrl = undefined;
+    } catch {
+      youtubeUrl = undefined;
+    }
+  }
+
+  // Product must exist (and be publicly listed) before we accept uploads
+  const product = await Product.findOne({ _id: productId, publishStatus: 'active' }).select('name images');
+  if (!product) {
+    return next(new AppError('Product not found', 404));
+  }
+
+  // Handle image uploads (type/size enforced by multer fileFilter + limits)
   const imageFiles = req.files as Express.Multer.File[];
   const imageUrls: string[] = [];
 
@@ -44,7 +84,7 @@ export const createReview = catchAsync(async (req: Request, res: Response, next:
 
   const newReview = await Review.create({
     product: productId,
-    rating: Number(rating),
+    rating,
     title,
     content: review,
     displayName,
@@ -58,12 +98,10 @@ export const createReview = catchAsync(async (req: Request, res: Response, next:
     verificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
   });
 
-  // Get product name for email
-  const product = await Product.findById(productId).select('name images');
   const productName = product?.name || 'our product';
-  const productImage = product?.images?.[0]?.url || '';
+  const productImage = (product as any)?.images?.[0]?.url || '';
 
-  // Send verification email
+  // Send verification email (template escapes all interpolated values)
   try {
     if (newReview.email) {
       await sendVerificationEmail(
@@ -82,10 +120,11 @@ export const createReview = catchAsync(async (req: Request, res: Response, next:
     // Don't fail the review creation if email fails
   }
 
+  // Never echo the verification token / email back to the client
   res.status(201).json({
     success: true,
     message: 'Review submitted successfully. Please verify your email before your review can be approved.',
-    data: newReview,
+    data: { _id: newReview._id, status: newReview.status },
   });
 });
 
@@ -100,8 +139,8 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
   }
 
   // Parse query params for pagination and sorting
-  const page = parseInt(req.query.page as string, 10) || 1;
-  const limit = parseInt(req.query.limit as string, 10) || 10;
+  const page = Math.min(1000, Math.max(1, parseInt(req.query.page as string, 10) || 1));
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
   const skip = (page - 1) * limit;
   const sortParam = req.query.sort as string || 'newest';
 
@@ -111,7 +150,8 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
   if (sortParam === 'lowest') sortObj = { rating: 1, createdAt: -1 };
 
   // Filter param (e.g., rating filter)
-  const ratingFilter = req.query.rating ? parseInt(req.query.rating as string, 10) : null;
+  const parsedRating = req.query.rating ? parseInt(req.query.rating as string, 10) : NaN;
+  const ratingFilter = Number.isInteger(parsedRating) && parsedRating >= 1 && parsedRating <= 5 ? parsedRating : null;
 
   const matchStage: any = {
     product: new mongoose.Types.ObjectId(productId),
@@ -156,6 +196,8 @@ export const getProductReviews = catchAsync(async (req: Request, res: Response, 
           { $sort: sortObj },
           { $skip: skip },
           { $limit: limit },
+          // Public output: never expose reviewer email or verification secrets
+          { $project: { email: 0, verificationToken: 0, verificationExpires: 0, __v: 0 } },
         ],
       },
     },

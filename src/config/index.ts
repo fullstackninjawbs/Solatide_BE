@@ -11,6 +11,7 @@ interface Config {
   jwtSecret: string;
   jwtExpiresIn: string;
   corsOrigin: string | string[];
+  trustProxy: boolean | number | string;
   // TagadaPay
   tagadaEnv: 'sandbox' | 'production';
   tagadaApiKeySandbox: string;
@@ -38,6 +39,35 @@ for (const envVar of requiredEnv) {
   }
 }
 
+const PLACEHOLDER_JWT_SECRETS = ['your_super_secret_jwt_key_here', 'changeme', 'secret'];
+
+if (process.env.NODE_ENV === 'production') {
+  const secret = process.env.JWT_SECRET || '';
+  if (secret.length < 32 || PLACEHOLDER_JWT_SECRETS.includes(secret)) {
+    throw new Error(
+      '[Config Error] JWT_SECRET is too weak for production (min 32 chars, must not be the .env.example placeholder).'
+    );
+  }
+}
+
+// Running under PM2 (pm_id is set) but not in production mode is almost always a
+// deployment mistake (pm2 start without --env production). Warn loudly.
+if (process.env.pm_id !== undefined && process.env.NODE_ENV !== 'production') {
+  console.warn(
+    `[Config Warning] Running under PM2 with NODE_ENV=${process.env.NODE_ENV || '(unset)'} — ` +
+      'development error output is enabled. Set NODE_ENV=production in ecosystem.config.js.'
+  );
+}
+
+/** express 'trust proxy' setting: number of hops, or true/false/'loopback' etc. */
+const parseTrustProxy = (raw: string | undefined): boolean | number | string => {
+  if (raw === undefined || raw === '') return 1;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (/^\d+$/.test(raw)) return parseInt(raw, 10);
+  return raw;
+};
+
 export const config: Config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '5000', 10),
@@ -47,6 +77,7 @@ export const config: Config = {
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
     : 'http://localhost:5173',
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   // TagadaPay
   tagadaEnv: (process.env.TAGADA_ENV as 'sandbox' | 'production') || 'sandbox',
   tagadaApiKeySandbox: process.env.TAGADA_API_KEY_SANDBOX || '',

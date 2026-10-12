@@ -1,12 +1,13 @@
 import express from 'express';
 import * as contentController from '../../controllers/admin/contentController';
 import * as pageController from '../../controllers/cms.page.controller';
-import { protect, restrictTo } from '../../middleware/auth';
+import { restrictTo } from '../../middleware/auth';
+import { ACCESS } from '../../config/roles';
 
 const router = express.Router();
 
-// All admin content routes require authentication
-router.use(protect);
+// protect applied in routes/admin/index.ts
+router.use(restrictTo(...ACCESS.content));
 
 // FAQ Management Routes
 router.route('/faqs')
@@ -25,6 +26,6 @@ router.route('/pages')
 router.route('/pages/:id')
   .get(pageController.getPageById)
   .patch(pageController.updatePage)
-  .delete(restrictTo('super_admin', 'admin', 'content_manager', 'operations'), pageController.deletePage);
+  .delete(restrictTo('super_admin', 'admin', 'content_manager'), pageController.deletePage);
 
 export default router;

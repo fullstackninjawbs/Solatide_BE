@@ -61,7 +61,7 @@ const bundleSchema = new mongoose.Schema<IBundle>(
   }
 );
 
-bundleSchema.index({ sku: 1 }, { unique: true });
+// sku unique index is declared on the field (unique: true)
 
 export const Bundle = mongoose.model<IBundle>('Bundle', bundleSchema);
 export default Bundle;

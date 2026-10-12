@@ -1,4 +1,6 @@
 import express from 'express';
+import { protect, restrictTo } from '../../middleware/auth';
+import { ACCESS, STAFF_ROLES } from '../../config/roles';
 import authRoutes from './auth.routes';
 import dashboardRoutes from './dashboard.routes';
 import productRoutes from './product.routes';
@@ -19,22 +21,31 @@ import shippingRoutes from './shipping.routes';
 
 const router = express.Router();
 
+/**
+ * SECURITY: every /api/admin/* route requires a valid JWT and a staff role.
+ * There are intentionally NO public admin routes (admin login lives at
+ * /api/v1/auth/login). Per-area role restrictions are applied below and inside
+ * each sub-router. Role lists live in src/config/roles.ts.
+ */
+router.use(protect);
+router.use(restrictTo(...STAFF_ROLES));
+
 router.use('/auth', authRoutes);
-router.use('/dashboard', dashboardRoutes);
-router.use('/product', productRoutes);
-router.use('/batches', batchRoutes);
-router.use('/collection', collectionRoutes);
+router.use('/dashboard', restrictTo(...ACCESS.dashboard), dashboardRoutes);
+router.use('/product', restrictTo(...ACCESS.products), productRoutes);
+router.use('/batches', restrictTo(...ACCESS.batches), batchRoutes);
+router.use('/collection', restrictTo(...ACCESS.collections), collectionRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/coa', coaRoutes);
-router.use('/order', orderRoutes);
-router.use('/customer', customerRoutes);
-router.use('/discount', discountRoutes);
-router.use('/content', contentRoutes);
-router.use('/growth', growthRoutes);
-router.use('/analytics', analyticsRoutes);
-router.use('/settings', settingsRoutes);
-router.use('/users', userRoutes);
-router.use('/tagada', tagadaProductSyncRoutes);
-router.use('/shipping', shippingRoutes);
+router.use('/order', restrictTo(...ACCESS.orders), orderRoutes);
+router.use('/customer', restrictTo(...ACCESS.customers), customerRoutes);
+router.use('/discount', restrictTo(...ACCESS.discounts), discountRoutes);
+router.use('/content', restrictTo(...ACCESS.content), contentRoutes);
+router.use('/growth', growthRoutes); // per-route restrictions inside
+router.use('/analytics', restrictTo(...ACCESS.analytics), analyticsRoutes);
+router.use('/settings', restrictTo(...ACCESS.settingsRead), settingsRoutes); // narrower per-route inside
+router.use('/users', restrictTo(...ACCESS.adminUsers), userRoutes);
+router.use('/tagada', restrictTo(...ACCESS.tagadaSync), tagadaProductSyncRoutes);
+router.use('/shipping', restrictTo(...ACCESS.shippingPackages), shippingRoutes);
 
 export default router;

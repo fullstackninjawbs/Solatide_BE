@@ -1,5 +1,6 @@
 import express from 'express';
-import { protect, restrictTo } from '../../middleware/auth';
+import { restrictTo } from '../../middleware/auth';
+import { ACCESS } from '../../config/roles';
 import {
   getAdminUsers,
   createAdminUser,
@@ -10,8 +11,8 @@ import {
 const router = express.Router();
 
 // Only super_admin or admin can manage admin users
-router.use(protect);
-router.use(restrictTo('super_admin', 'admin'));
+// protect applied in routes/admin/index.ts
+router.use(restrictTo(...ACCESS.adminUsers));
 
 router.get('/', getAdminUsers);
 router.post('/', createAdminUser);

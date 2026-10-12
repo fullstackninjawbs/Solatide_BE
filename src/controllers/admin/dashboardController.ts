@@ -5,6 +5,7 @@ import Product from '../../models/product.model';
 import COA from '../../models/coa.model';
 import Review from '../../models/review.model';
 import catchAsync from '../../utils/catchAsync';
+import { buildRevenueMatch, netRevenueExpr } from '../../domain/revenue';
 
 export const getDashboardAnalytics = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const timeFilter = (req.query.timeFilter as string) || 'Today';
@@ -65,18 +66,8 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   // Helper to aggregate revenue
   const getRevenue = async (start: Date, end: Date) => {
     const result = await Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: start, $lte: end },
-          paymentStatus: 'paid'
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$totalAmount' }
-        }
-      }
+      { $match: buildRevenueMatch({ createdAt: { $gte: start, $lte: end } }) },
+      { $group: { _id: null, total: { $sum: netRevenueExpr } } }
     ]);
     return result[0]?.total || 0;
   };
@@ -84,8 +75,8 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   const currentRevenue = await getRevenue(startDate, endDate);
   const prevRevenue = await getRevenue(prevStartDate, prevEndDate);
 
-  const currentOrders = await Order.countDocuments({ createdAt: { $gte: startDate, $lte: endDate }, paymentStatus: 'paid' });
-  const prevOrders = await Order.countDocuments({ createdAt: { $gte: prevStartDate, $lte: prevEndDate }, paymentStatus: 'paid' });
+  const currentOrders = await Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: startDate, $lte: endDate } }));
+  const prevOrders = await Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: prevStartDate, $lte: prevEndDate } }));
 
   const currentAOV = currentOrders > 0 ? currentRevenue / currentOrders : 0;
   const prevAOV = prevOrders > 0 ? prevRevenue / prevOrders : 0;
@@ -123,11 +114,11 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   }));
 
   // Recent Orders
-  const recentOrders = await Order.find({ paymentStatus: 'paid', isDeleted: { $ne: true } })
+  const recentOrders = await Order.find(buildRevenueMatch())
     .sort({ createdAt: -1 })
     .limit(5)
     .populate('customer', 'name email')
-    .select('orderNumber createdAt totalAmount currency status paymentStatus customer customerName customerEmail');
+    .select('orderNumber createdAt grandTotal totalAmount refundedAmount currency status paymentStatus customer customerName customerEmail');
 
   // Recent Customers
   const recentCustomers = await Customer.find()

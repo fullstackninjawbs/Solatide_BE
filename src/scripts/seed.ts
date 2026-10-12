@@ -82,6 +82,19 @@ const mockProducts = [
 ];
 
 const seedDB = async (): Promise<void> => {
+  // Safety guards: never run against production unless explicitly allowed, and never
+  // use a hard-coded admin password.
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_ALLOW_PRODUCTION !== 'yes') {
+    console.error('[Seeder] Refusing to run with NODE_ENV=production (this deletes all products). Set SEED_ALLOW_PRODUCTION=yes to override.');
+    process.exit(1);
+  }
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || '';
+  if (adminPassword.length < 16) {
+    console.error('[Seeder] SEED_ADMIN_PASSWORD env var is required and must be at least 16 characters.');
+    process.exit(1);
+  }
+  const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@solatide.com').toLowerCase();
+
   try {
     console.log('[Seeder] Connecting to database...');
     await mongoose.connect(config.mongoUri);
@@ -98,17 +111,16 @@ const seedDB = async (): Promise<void> => {
 
     // 3) Create an admin user if it doesn't exist for test purposes
     console.log('[Seeder] Checking for default admin user...');
-    const adminEmail = 'admin@solatide.com';
     const adminExists = await User.findOne({ email: adminEmail });
     if (!adminExists) {
       console.log('[Seeder] Admin user not found. Creating default admin...');
       await User.create({
         name: 'Admin Developer',
         email: adminEmail,
-        password: 'adminpassword123',
+        password: adminPassword,
         role: 'admin',
       });
-      console.log(`[Seeder] Default Admin created successfully. Credentials: Email: ${adminEmail} | Password: adminpassword123`);
+      console.log(`[Seeder] Default Admin created successfully (${adminEmail}). Password taken from SEED_ADMIN_PASSWORD (not printed).`);
     } else {
       console.log('[Seeder] Admin user already exists.');
     }

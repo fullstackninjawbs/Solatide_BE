@@ -14,6 +14,7 @@
 
 import config from '../config';
 import PaymentSettings from '../models/PaymentSettings';
+import AppError from '../utils/appError';
 
 let TagadaSDK: any = null;
 
@@ -41,7 +42,9 @@ export async function buildTagadaClient(opts?: {
       ? (opts?.apiKeyProd || config.tagadaApiKeyProd)
       : (opts?.apiKeySandbox || config.tagadaApiKeySandbox);
 
-  return new TagadaSDK(apiKey);
+  // Bounded requests (L-9). The SDK retries failed requests itself (default 2 retries),
+  // so non-idempotent calls (refunds) must pass an idempotencyKey.
+  return new TagadaSDK({ apiKey, timeout: 15000, maxRetries: 2 });
 }
 
 /**
@@ -72,14 +75,25 @@ export async function initializeTagadaClientFromDB(): Promise<void> {
       await rebuildTagadaClient();
     }
   } catch (err) {
-    console.error('[TagadaPay] Failed to initialize client from DB', err);
-    await rebuildTagadaClient();
+    console.error('[TagadaPay] Failed to initialize client from DB settings:', (err as Error)?.message);
+    try {
+      await rebuildTagadaClient();
+    } catch (fallbackErr) {
+      // Never crash the API on startup because payment credentials are missing/invalid —
+      // payment endpoints fail individually via getTagadaClient() instead.
+      tagadaClient = null;
+      console.error('[TagadaPay] Client not configured — payment endpoints will be unavailable:', (fallbackErr as Error)?.message);
+    }
   }
 }
 
 export async function getTagadaClient() {
   if (!tagadaClient) {
-    await rebuildTagadaClient();
+    try {
+      await rebuildTagadaClient();
+    } catch (err) {
+      throw new AppError('Payments are temporarily unavailable.', 503);
+    }
   }
   return tagadaClient;
 }

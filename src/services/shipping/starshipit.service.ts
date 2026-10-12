@@ -56,7 +56,7 @@ function getNormalizedShippingMethod(order: IOrder): string {
   }
 
   const country = order.shippingAddressObj?.country?.toUpperCase() || 'AU';
-  
+
   if (country !== 'AU') {
     if (methodName.startsWith('Standard - $')) {
       return 'Standard';
@@ -69,8 +69,15 @@ function getNormalizedShippingMethod(order: IOrder): string {
   return methodName;
 }
 
+/** All Starshipit HTTP calls are bounded (L-9). */
+const STARSHIPIT_TIMEOUT_MS = 15000;
+
 export class StarshipitService {
   private readonly baseUrl = 'https://api.starshipit.com/api';
+
+  private get requestConfig() {
+    return { headers: this.headers, timeout: STARSHIPIT_TIMEOUT_MS };
+  }
 
   private get headers() {
     const apiKey = process.env.STARSHIPIT_API_KEY;
@@ -96,7 +103,7 @@ export class StarshipitService {
   }> {
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
-    
+
     const defaultPackage = await ShippingPackage.findOne({ isDefault: true, active: true });
 
     const street = order.shippingAddressObj?.street1 || (typeof order.shippingAddress === 'string' ? order.shippingAddress : undefined);
@@ -163,8 +170,9 @@ export class StarshipitService {
 
     try {
       if (!starshipitOrderId) {
-        console.log('Sending payload to Starshipit /orders:', JSON.stringify(payload, null, 2));
-        const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, { headers: this.headers });
+        // Payload contains customer PII (name/address/phone/email) — log identifiers only (L-11).
+        console.log(`Sending order ${payload.order_number} to Starshipit /orders (${payload.items.length} items, country=${country})`);
+        const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, this.requestConfig);
 
         console.log('Starshipit POST /orders HTTP Status:', response.status);
 
@@ -215,10 +223,9 @@ export class StarshipitService {
         console.log(`Calling POST /orders/shipment for order_id: ${starshipitOrderId}`);
         const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, {
           order_id: parseInt(starshipitOrderId)
-        }, { headers: this.headers });
+        }, this.requestConfig);
 
-        console.log('Starshipit POST /orders/shipment HTTP Status:', labelResponse.status);
-        console.log('Starshipit POST /orders/shipment Response Data:', JSON.stringify(labelResponse.data, null, 2));
+        console.log(`Starshipit POST /orders/shipment HTTP ${labelResponse.status} success=${labelResponse.data?.success}`);
 
         if (labelResponse.data && labelResponse.data.success === false) {
           const labelErrMsg = parseStarshipitError(labelResponse.data, 'Label generation failed in Starshipit');
@@ -242,7 +249,7 @@ export class StarshipitService {
         }
 
       } catch (labelError: any) {
-        console.warn('Starshipit POST /orders/shipment Warning:', labelError.response?.data || labelError.message);
+        console.warn(`Starshipit POST /orders/shipment warning: ${labelError.response?.status ?? ''} ${labelError.message}`);
         const warning = parseStarshipitError(labelError.response?.data, labelError.message || 'Auto-label generation pending in Starshipit dashboard');
         return {
           orderId: starshipitOrderId,
@@ -260,7 +267,7 @@ export class StarshipitService {
         labelUrl
       };
     } catch (error: any) {
-      console.error('Starshipit API Error:', error.response?.data || error.message);
+      console.error(`Starshipit API Error: ${error.response?.status ?? ''} ${error.message}`);
       const errMsg = parseStarshipitError(error.response?.data, error.message || 'Failed to create shipment with Starshipit');
       throw new Error(errMsg);
     }
@@ -274,8 +281,8 @@ export class StarshipitService {
     trackingUrl?: string;
   }> {
     try {
-      const response = await axios.get(`${this.baseUrl}/orders?order_id=${orderId}`, { headers: this.headers });
-      console.log('Starshipit GetShipmentDetails Response:', JSON.stringify(response.data, null, 2));
+      const response = await axios.get(`${this.baseUrl}/orders`, { ...this.requestConfig, params: { order_id: orderId } });
+      console.log(`Starshipit GetShipmentDetails order_id=${orderId} HTTP ${response.status}`);
       const order = response.data?.order || (response.data?.orders && response.data.orders[0]);
 
       if (!order) {
@@ -306,7 +313,7 @@ export class StarshipitService {
         shipmentStatus
       };
     } catch (error: any) {
-      console.error('Starshipit Get Shipment Details Error:', error.response?.data || error.message);
+      console.error(`Starshipit Get Shipment Details Error: ${error.response?.status ?? ''} ${error.message}`);
       throw new Error(error.response?.data?.message || 'Failed to fetch shipment details from Starshipit');
     }
   }

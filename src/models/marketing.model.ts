@@ -142,7 +142,7 @@ const affiliateSchema = new mongoose.Schema<IAffiliate>(
   }
 );
 
-newsletterSubscriberSchema.index({ email: 1 }, { unique: true });
+// email unique index is declared on the field (unique: true)
 restockAlertSchema.index({ product: 1, isNotified: 1 });
 export const NewsletterSubscriber = mongoose.model<INewsletterSubscriber>('NewsletterSubscriber', newsletterSubscriberSchema);
 export const RestockAlert = mongoose.model<IRestockAlert>('RestockAlert', restockAlertSchema);

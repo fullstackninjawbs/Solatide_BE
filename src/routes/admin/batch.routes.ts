@@ -1,21 +1,23 @@
 import { Router } from 'express';
-import { protect, restrictTo } from '../../middleware/auth';
+import { restrictTo } from '../../middleware/auth';
+import { ACCESS } from '../../config/roles';
+import { pdfOrImageFileFilter } from '../../middleware/uploadFilters';
 import * as batchController from '../../controllers/batch.controller';
 import multer from 'multer';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for PDFs
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 }, // 10MB limit for PDFs
+  fileFilter: pdfOrImageFileFilter,
 });
 
 const router = Router();
 
-// Public routes
-router.get('/proxy-coa', batchController.proxyCoa);
+// protect applied in routes/admin/index.ts (proxy-coa is no longer public —
+// the Client does not use it). Restrict to batch roles:
+router.use(restrictTo(...ACCESS.batches));
 
-// Protect all routes and restrict to admin
-router.use(protect);
-router.use(restrictTo('admin', 'super_admin'));
+router.get('/proxy-coa', batchController.proxyCoa);
 
 router.route('/')
   .get(batchController.getBatches)

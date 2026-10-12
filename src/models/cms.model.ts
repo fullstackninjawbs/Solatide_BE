@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
 
 // FAQ Schema
 export interface IFaqQuestion {
@@ -152,6 +153,7 @@ const researchLibraryEntrySchema = new mongoose.Schema<IResearchLibraryEntry>(
   }
 );
 
+registerStorefrontRebuildHooks(faqSectionSchema);
 export const FaqSection = mongoose.model<IFaqSection>('FaqSection', faqSectionSchema);
 export const StaticPage = mongoose.model<IStaticPage>('StaticPage', staticPageSchema);
 export const ResearchLibraryEntry = mongoose.model<IResearchLibraryEntry>('ResearchLibraryEntry', researchLibraryEntrySchema);

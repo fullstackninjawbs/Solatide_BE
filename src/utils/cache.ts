@@ -1,6 +1,9 @@
 import Redis from 'ioredis';
 
+// REDIS_URL=disabled turns Redis off entirely (used by tests). Unset keeps the
+// historical default of a local Redis on 6379.
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+const REDIS_DISABLED = process.env.REDIS_URL === 'disabled';
 
 let client: Redis | null = null;
 let isConnected = false;
@@ -10,6 +13,7 @@ let isConnected = false;
  * If Redis is unreachable, all cache methods become no-ops — the app never crashes.
  */
 function getClient(): Redis | null {
+  if (REDIS_DISABLED) return null;
   if (client) return client;
 
   try {
@@ -20,9 +24,14 @@ function getClient(): Redis | null {
       connectTimeout: 3000,
     });
 
-    client.on('connect', () => {
+    // 'ready' (not 'connect'): with enableOfflineQueue=false, commands sent between
+    // 'connect' and 'ready' are rejected.
+    client.on('ready', () => {
       isConnected = true;
       console.log('[Cache] Redis connected');
+    });
+    client.on('end', () => {
+      isConnected = false;
     });
 
     client.on('error', (err) => {
@@ -45,6 +54,18 @@ function getClient(): Redis | null {
   }
 
   return client;
+}
+
+/**
+ * Shared ioredis client (or null if disabled/failed). Used by the rate limiter store.
+ */
+export function getRedisClient(): Redis | null {
+  return getClient();
+}
+
+/** True once the shared Redis client has an open connection. */
+export function isRedisConnected(): boolean {
+  return isConnected;
 }
 
 /**

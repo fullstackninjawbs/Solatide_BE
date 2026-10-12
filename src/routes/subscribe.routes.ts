@@ -2,18 +2,29 @@ import { Router } from 'express';
 import { AppError } from '../utils/appError';
 import { sendNewsletterWelcomeEmail } from '../services/emailService';
 import { NewsletterSubscriber } from '../models/marketing.model';
+import { formSubmitLimiter } from '../middleware/rateLimit';
 
 const router = Router();
 
-router.post('/', async (req, res, next) => {
+// Pragmatic email check (RFC 5321 length limits, single @, dotted domain, no spaces/brackets)
+const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+export const isValidEmail = (email: unknown): email is string =>
+  typeof email === 'string' && email.length <= 254 && EMAIL_RE.test(email);
+
+router.post('/', formSubmitLimiter, async (req, res, next) => {
     try {
-        const { email } = req.body;
-        if (!email) {
+        const raw = req.body?.email;
+        if (!raw) {
             return next(new AppError('Email is required', 400));
+        }
+        const email = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+        if (!isValidEmail(email)) {
+            return next(new AppError('Please provide a valid email address', 400));
         }
 
         // Check if subscriber already exists
-        const existingSubscriber = await NewsletterSubscriber.findOne({ email: email.toLowerCase() });
+        const existingSubscriber = await NewsletterSubscriber.findOne({ email });
         if (existingSubscriber) {
             if (existingSubscriber.status === 'unsubscribed') {
                 existingSubscriber.status = 'active';
@@ -30,8 +41,8 @@ router.post('/', async (req, res, next) => {
         }
 
         // Create new subscriber in database
-        await NewsletterSubscriber.create({ 
-            email: email.toLowerCase(),
+        await NewsletterSubscriber.create({
+            email,
             source: 'homepage',
             status: 'active'
         });

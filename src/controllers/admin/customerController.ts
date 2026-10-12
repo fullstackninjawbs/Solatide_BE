@@ -3,6 +3,7 @@ import Customer from '../../models/Customer';
 import Order from '../../models/order.model';
 import catchAsync from '../../utils/catchAsync';
 import AppError from '../../utils/appError';
+import { escapeRegex } from '../../utils/collectionUtils';
 
 // GET /api/admin/customers
 export const getCustomers = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -11,12 +12,13 @@ export const getCustomers = catchAsync(async (req: Request, res: Response, next:
   const skip = (page - 1) * limit;
 
   // Basic searching by name or email
-  const search = req.query.search as string;
+  const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
   const filter: any = {};
   if (search) {
+    const safe = escapeRegex(search);
     filter.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } }
+      { name: { $regex: safe, $options: 'i' } },
+      { email: { $regex: safe, $options: 'i' } }
     ];
   }
 

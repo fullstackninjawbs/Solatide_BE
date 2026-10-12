@@ -4,6 +4,7 @@ import config from '../config';
 import User, { IUser } from '../models/user.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
+import { Role } from '../config/roles';
 
 export interface AuthenticatedRequest extends Request {
   user?: IUser;
@@ -15,36 +16,60 @@ interface JwtPayload {
   exp: number;
 }
 
+const extractBearerToken = (req: Request): string | undefined => {
+  const header = req.headers.authorization;
+  if (header && header.startsWith('Bearer ')) {
+    const token = header.slice(7).trim();
+    return token || undefined;
+  }
+  return undefined;
+};
+
+/**
+ * Verify a JWT (HS256 only) and load the user. Returns null when the token is
+ * invalid/expired, the user no longer exists, or the token predates the user's
+ * last password change.
+ */
+const resolveUserFromToken = async (token: string): Promise<IUser | null> => {
+  let decoded: JwtPayload;
+  try {
+    decoded = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] }) as JwtPayload;
+  } catch {
+    return null;
+  }
+  if (!decoded || typeof decoded.id !== 'string') return null;
+
+  const currentUser = await User.findById(decoded.id);
+  if (!currentUser) return null;
+
+  // Reject tokens issued before the last password change. `passwordChangedAt` is not
+  // (yet) declared on the User schema, so read it defensively.
+  const changedAt: unknown = (currentUser as any).passwordChangedAt ?? (currentUser as any).get?.('passwordChangedAt');
+  if (changedAt) {
+    const changedMs = new Date(changedAt as any).getTime();
+    if (!Number.isNaN(changedMs) && typeof decoded.iat === 'number' && decoded.iat * 1000 < changedMs - 1000) {
+      return null;
+    }
+  }
+
+  return currentUser;
+};
+
 /**
  * Protect middleware: Ensures the request is authenticated with a valid JWT
  */
 export const protect = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  let token: string | undefined;
-
-  // 1) Extract token from Authorization header
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
+  const token = extractBearerToken(req);
 
   if (!token) {
     return next(new AppError('You are not logged in! Please log in to get access.', 401));
   }
 
-  // 2) Verify JWT token
-  let decoded: JwtPayload;
-  try {
-    decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
-  } catch (error) {
+  const currentUser = await resolveUserFromToken(token);
+  if (!currentUser) {
     return next(new AppError('Your session is invalid or expired. Please log in again.', 401));
   }
 
-  // 3) Check if user still exists in the database
-  const currentUser = await User.findById(decoded.id);
-  if (!currentUser) {
-    return next(new AppError('The user belonging to this token no longer exists.', 401));
-  }
-
-  // 4) Grant access and save user on Request object
   req.user = currentUser;
   next();
 });
@@ -54,33 +79,30 @@ export const protect = catchAsync(async (req: AuthenticatedRequest, res: Respons
  * but allows the request to proceed as a guest if missing or invalid.
  */
 export const optionalAuth = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  let token: string | undefined;
-
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
-
+  const token = extractBearerToken(req);
   if (!token) return next();
 
   try {
-    const decoded = jwt.verify(token, config.jwtSecret) as JwtPayload;
-    const currentUser = await User.findById(decoded.id);
+    const currentUser = await resolveUserFromToken(token);
     if (currentUser) {
       req.user = currentUser;
     }
-  } catch (err) {
-    // Ignore JWT errors (e.g., invalid signature, expired) and proceed as guest
+  } catch {
+    // Proceed as guest on any lookup error
   }
 
   next();
 });
 
 /**
- * Restrict routes to specific user roles (e.g., admin)
+ * Restrict routes to specific user roles. Must run after `protect`.
  */
-export const restrictTo = (...roles: Array<'super_admin' | 'operations' | 'content_manager' | 'support' | 'user' | 'admin'>) => {
+export const restrictTo = (...roles: Role[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user) {
+      return next(new AppError('You are not logged in! Please log in to get access.', 401));
+    }
+    if (!roles.includes(req.user.role)) {
       return next(new AppError('You do not have permission to perform this action', 403));
     }
     next();

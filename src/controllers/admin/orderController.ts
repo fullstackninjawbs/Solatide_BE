@@ -10,9 +10,22 @@ import { getTagadaClient } from '../../services/tagadaClient';
 import config from '../../config';
 import Refund from '../../models/Refund';
 import Customer from '../../models/Customer';
-import { generateOrderNumber } from '../payment.controller';
 import AddressValidationService from '../../services/addressValidation.service';
 import axios from 'axios';
+import { PAYMENT_STATUSES, PaymentStatus } from '../../domain/orderTransitions';
+import { validateRefundRequest, refundsEnabled, toMinorUnits } from '../../domain/money';
+import { withTimeout, TAGADA_TIMEOUT_MS } from '../../domain/withTimeout';
+import { isUsableExternalId } from '../../domain/tagadaWebhook';
+import { generateOrderAccessToken } from '../../domain/orderAccess';
+import { transitionPaymentStatus } from '../../services/orders/paymentTransition';
+import { scheduleOnOrderPaid } from '../../services/orders/onOrderPaid';
+import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/tagadaSync';
+import { withOrderNumberRetry } from '../../services/orders/orderNumber';
+import { reserveRefund, releaseRefund, confirmReservedRefund, refundTargetStatus, extractRefundId } from '../../services/orders/refunds';
+import { decrementLineForOrder } from '../../services/orders/inventory';
+import { parseQuantity, CheckoutValidationError, MAX_LINE_QUANTITY } from '../../services/orders/checkoutItems';
+
+const STARSHIPIT_TIMEOUT_MS = 15000;
 
 /**
  * GET /api/admin/orders
@@ -145,38 +158,21 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
     }
   }
 
-  // If the order is still pending, proactively check TagadaPay for the latest status
-  if (order.paymentStatus === 'pending' && order.paymentMethod === 'tagada') {
-    const targetTagadaId = order.tagadaOrderId || order.tagadaSessionId || order.tagadaPaymentId;
-    if (targetTagadaId) {
-      try {
-        const client = await getTagadaClient();
-        let tagadaData: any = null;
-        if (targetTagadaId.startsWith('cs_')) {
-          tagadaData = await client.checkout.retrieveSession(targetTagadaId);
-        } else {
-          tagadaData = await client.orders.retrieve(targetTagadaId);
-        }
-
-        const fullOrder = tagadaData?.order || tagadaData?.session || tagadaData;
-        const rawStatus = fullOrder?.status || 'unknown';
-        const isPaid = ['succeeded', 'paid', 'captured'].includes(rawStatus.toLowerCase());
-
-        if (isPaid) {
-          order.paymentStatus = 'paid';
-          order.status = 'processing';
-          order.fulfilmentStatus = 'unfulfilled';
-          await order.save();
-        }
-      } catch (err) {
-        console.error('[getOrderById] Auto-sync failed for pending Tagada order:', err);
-      }
+  // If the order is still pending, proactively check TagadaPay for the latest status.
+  // Uses the guarded transition and the idempotent onOrderPaid side effects (H-4/H-5).
+  if (order.paymentStatus === 'pending' && order.paymentMethod === 'tagada' && pickTagadaLookupId(order)) {
+    try {
+      const result = await syncOrderFromTagada(order._id, { timeoutMs: 8000 });
+      if (result.order) order = result.order;
+      if (result.becamePaid) scheduleOnOrderPaid(req.params.id);
+    } catch (err: any) {
+      console.error(`[getOrderById] Auto-sync failed for pending Tagada order ${req.params.id}: ${err?.message}`);
     }
   }
 
   res.status(200).json({
     success: true,
-    data: { order: order.toObject ? order.toObject() : order },
+    data: { order: order?.toObject ? order.toObject() : order },
   });
 });
 
@@ -191,7 +187,7 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
 
   const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
   const validFulfilment = ['unfulfilled', 'fulfilled', 'partial'];
-  const validPaymentStatuses = ['pending', 'paid', 'failed', 'refunded'];
+  const validPaymentStatuses: string[] = PAYMENT_STATUSES;
 
   if (status && !validStatuses.includes(status)) {
     return next(new AppError(`Invalid status: ${status}`, 400));
@@ -206,22 +202,39 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
   const updateFields: Record<string, any> = {};
   if (status) updateFields.status = status;
   if (fulfilmentStatus) updateFields.fulfilmentStatus = fulfilmentStatus;
-  if (paymentStatus) updateFields.paymentStatus = paymentStatus;
-  if (adminNotes !== undefined) updateFields.adminNotes = adminNotes;
+  if (adminNotes !== undefined) updateFields.adminNotes = String(adminNotes).slice(0, 5000);
 
-  if (Object.keys(updateFields).length === 0) {
+  if (Object.keys(updateFields).length === 0 && !paymentStatus) {
     return next(new AppError('No valid fields to update', 400));
   }
 
-  const order = await Order.findByIdAndUpdate(
-    req.params.id,
-    { $set: updateFields },
-    { new: true, runValidators: false }
-  ).lean();
-
-  if (!order) {
+  const existing = await Order.findById(req.params.id).select('_id paymentStatus').lean();
+  if (!existing) {
     return next(new AppError('No order found with that ID', 404));
   }
+
+  // Payment status goes through the forward-only guard (H-5).
+  let becamePaid = false;
+  if (paymentStatus && paymentStatus !== existing.paymentStatus) {
+    const t = await transitionPaymentStatus(existing._id, paymentStatus as PaymentStatus);
+    if (t.result === 'rejected') {
+      return next(new AppError(`Cannot change payment status: ${t.reason}`, 409));
+    }
+    becamePaid = paymentStatus === 'paid' && t.result === 'applied';
+  }
+
+  let order: any;
+  if (Object.keys(updateFields).length > 0) {
+    order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    ).lean();
+  } else {
+    order = await Order.findById(req.params.id).lean();
+  }
+
+  if (becamePaid) scheduleOnOrderPaid(existing._id);
 
   res.status(200).json({
     success: true,
@@ -325,7 +338,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
         const labelResponse = await axios.post(
           'https://api.starshipit.com/api/orders/shipment',
           { order_id: parseInt(starshipitOrderId) },
-          { headers }
+          { headers, timeout: STARSHIPIT_TIMEOUT_MS }
         );
         if (labelResponse.data && labelResponse.data.success !== false) {
           const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];
@@ -338,7 +351,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
         }
       } catch (labelErr: any) {
         warning = `Label generation pending in Starshipit — check dashboard`;
-        console.warn('Label generation attempt failed (already imported):', labelErr.response?.data || labelErr.message);
+        console.warn(`Label generation attempt failed (already imported) for order ${order.orderNumber ?? order._id}: ${labelErr.response?.status ?? ''} ${labelErr.message}`);
       }
 
       // Always do a fresh getShipmentDetails to sync any new tracking data
@@ -393,7 +406,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   }
 
   const isManual = order.source === 'admin_manual';
-  
+
   if (!isManual && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
     return next(new AppError('Cannot create shipment: Payment is still pending', 400));
   }
@@ -500,7 +513,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       data: { order },
     });
   } catch (error: any) {
-    console.error('Starshipit Error:', error);
+    console.error(`Starshipit Error for order ${order.orderNumber ?? order._id}: ${error?.message}`);
     return next(new AppError(error.message || 'Failed to create shipment with Starshipit', 500));
   }
 });
@@ -511,91 +524,121 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
  * Process a refund for an order. If paid via Tagada, it calls the Tagada API.
  */
 export const refundOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const order = await Order.findById(req.params.id);
+  const order: any = await Order.findById(req.params.id).lean();
 
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
   }
 
-  // 1. Test Environment Guard
-  if (config.tagadaEnv !== 'sandbox' || (order.tagadaEnv && order.tagadaEnv !== 'sandbox')) {
-    return next(new AppError('Refunds are only permitted in the TEST (sandbox) environment for this funnel.', 403));
+  // 1. Explicit business switch (H-6). Default: enabled in sandbox, disabled in production.
+  if (!refundsEnabled(process.env, config.tagadaEnv)) {
+    return next(new AppError(
+      'Refunds from the admin panel are disabled (REFUNDS_ENABLED is not "true"). ' +
+      'Ask the business owner to enable them, or issue the refund in the Tagada dashboard — it will sync here via webhook.',
+      403
+    ));
+  }
+  if (order.paymentMethod === 'tagada' && order.tagadaEnv && order.tagadaEnv !== config.tagadaEnv) {
+    return next(new AppError(`This order was paid in the Tagada ${order.tagadaEnv} environment but the server is configured for ${config.tagadaEnv}.`, 409));
   }
 
-  if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
-    return next(new AppError('Order is not paid, cannot refund', 400));
+  if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'partially_refunded') {
+    return next(new AppError('Only paid or partially refunded orders can be refunded', 400));
   }
 
-  if (order.refundStatus === 'refunded') {
-    return next(new AppError('Order is already fully refunded', 400));
+  // 2. Validate amount (finite, > 0, <= remaining, <= 2 dp; full refund only with full:true)
+  const { amount, full, reason = 'Admin initiated refund' } = req.body ?? {};
+  const v = validateRefundRequest({ amount, full, grandTotal: order.grandTotal ?? order.totalAmount, refundedAmount: order.refundedAmount });
+  if (!v.ok) {
+    return next(new AppError(v.error, v.status));
   }
 
-  const { amount, reason = 'Admin initiated refund', type } = req.body;
-  const requestedAmount = amount ? Number(amount) : (order.grandTotal || 0);
-
-  // Validate amount
-  const maxRefundable = (order.grandTotal || 0) - (order.refundedAmount || 0);
-  if (requestedAmount > maxRefundable) {
-    return next(new AppError(`Refund amount (${requestedAmount}) exceeds the maximum refundable amount (${maxRefundable}).`, 400));
+  const isTagada = order.paymentMethod === 'tagada';
+  const tagadaPaymentRef = [order.tagadaProviderPaymentId, order.tagadaPaymentId].find(isUsableExternalId);
+  if (isTagada && !tagadaPaymentRef) {
+    return next(new AppError('No Tagada payment ID found for this order', 400));
   }
 
-  const refundType = type || (requestedAmount === order.grandTotal ? 'full' : 'partial');
+  // 3. Atomic reservation — concurrent refunds cannot exceed the order total.
+  const reserved = await reserveRefund(order._id, v.amount, { pending: true });
+  if (!reserved) {
+    return next(new AppError('Refund exceeds the remaining refundable amount (another refund may be in progress).', 409));
+  }
 
-  try {
-    // If the payment method was Tagada, process it via API
-    if (order.paymentMethod === 'tagada') {
-      const tagadaId = order.tagadaPaymentId;
-      if (!tagadaId) {
-        return next(new AppError('No Tagada Payment ID found for this order', 400));
-      }
+  const adminUser = (req as any).admin || (req as any).user;
+  const refund: any = await Refund.create({
+    order: order._id,
+    amount: v.amount,
+    reason: String(reason).slice(0, 500),
+    type: v.type,
+    status: 'pending',
+    source: 'admin',
+    initiatedBy: adminUser?.email,
+  });
 
+  // 4. Provider call (amount in minor units). Roll back the reservation on failure.
+  if (isTagada) {
+    try {
       const client = await getTagadaClient();
-
-      if (typeof client.payments?.refund === 'function') {
-        const payload: any = {
-          paymentIds: [tagadaId],
-          metadata: { reason }
-        };
-        // For partial refunds, pass the specific amount. 
-        // For full refunds, omit amount to let Tagada refund the whole remaining balance.
-        if (refundType === 'partial') {
-          payload.amount = requestedAmount;
-          // Note: if Tagada requires cents, we may need to multiply by 100 here.
-        }
-        await client.payments.refund(payload);
-      } else {
-        console.warn('TagadaClient does not natively expose payments.refund(). Cannot process refund.');
-        return next(new AppError('Tagada SDK does not support refunds in this version.', 500));
+      if (typeof client?.payments?.refund !== 'function') throw new Error('Tagada SDK does not support refunds in this version.');
+      // idempotencyKey: the SDK retries POSTs internally, so the key guarantees one refund per Refund doc.
+      const providerRes = await withTimeout(
+        client.payments.refund(
+          {
+            paymentIds: [tagadaPaymentRef as string],
+            amount: toMinorUnits(v.amount),
+            metadata: { reason: String(reason).slice(0, 200), orderId: String(order._id), refundId: String(refund._id) },
+          },
+          { idempotencyKey: `refund-${refund._id}`, timeout: TAGADA_TIMEOUT_MS }
+        ),
+        TAGADA_TIMEOUT_MS * 3 + 5000,
+        'tagada.payments.refund'
+      );
+      const tagadaRefundId = extractRefundId(providerRes);
+      if (tagadaRefundId) {
+        refund.tagadaRefundId = tagadaRefundId;
+        await refund.save();
       }
+      // Stays 'pending' until the refund webhook confirms it.
+    } catch (error: any) {
+      const isTimeout = error?.name === 'TimeoutError' || /timed out|timeout|abort/i.test(String(error?.name) + String(error?.message));
+      if (isTimeout) {
+        // Outcome unknown: the provider may still have processed it. Keep the reservation and the
+        // pending Refund; the refund webhook (or a manual check) reconciles it. Never roll back here.
+        refund.failureReason = 'Provider timeout — outcome unknown, awaiting webhook confirmation';
+        await refund.save();
+        console.error(`[Refund] order=${order._id} provider refund timed out — left pending`);
+        return res.status(202).json({
+          success: true,
+          message: 'Refund request timed out at TagadaPay; it is pending confirmation. Check the Tagada dashboard before retrying.',
+          data: { refund },
+        });
+      }
+      await releaseRefund(order._id, v.amount, { pending: true });
+      refund.status = 'failed';
+      refund.failureReason = String(error?.response?.data?.message || error?.message || 'Provider error').slice(0, 500);
+      await refund.save();
+      console.error(`[Refund] order=${order._id} provider refund failed: ${refund.failureReason}`);
+      const status = error?.name === 'TimeoutError' ? 504 : 502;
+      return next(new AppError(`Refund failed at TagadaPay: ${refund.failureReason}`, status));
     }
-
-    // Create refund record directly as succeeded since the API call didn't throw an error
-    const refund = await Refund.create({
-      order: order._id,
-      amount: requestedAmount,
-      reason,
-      type: refundType,
-      status: 'succeeded'
-    });
-
-    // Update order internally
-    order.refundedAmount = (order.refundedAmount || 0) + requestedAmount;
-    if (refundType === 'full' || order.refundedAmount >= (order.grandTotal || 0)) {
-      order.refundStatus = 'refunded';
-    } else {
-      order.refundStatus = 'partially_refunded';
-    }
-    await order.save({ validateBeforeSave: false });
-
-    res.status(200).json({
-      success: true,
-      message: 'Refund initiated successfully',
-      data: { order, refund },
-    });
-  } catch (error: any) {
-    console.error('Refund Error:', error);
-    return next(new AppError(error?.response?.data?.message || error.message || 'Failed to process refund via TagadaPay', 500));
+  } else {
+    // Offline/manual payment: nothing to call — the refund is recorded as done.
+    refund.status = 'succeeded';
+    await refund.save();
+    await confirmReservedRefund(order._id, v.amount);
   }
+
+  // 5. Payment status via the transition guard.
+  const latest: any = await Order.findById(order._id).lean();
+  await transitionPaymentStatus(order._id, refundTargetStatus(latest));
+  const updated = await Order.findById(order._id).lean();
+
+  res.status(200).json({
+    success: true,
+    message: isTagada ? 'Refund submitted to TagadaPay (pending confirmation)' : 'Refund recorded',
+    data: { order: updated, refund },
+  });
 });
 
 /**
@@ -642,19 +685,25 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
   if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
     return next(new AppError('At least one line item is required to create an order.', 400));
   }
+  if (lineItems.length > 50) {
+    return next(new AppError('At most 50 line items per order.', 400));
+  }
+  if (!['pending', 'paid'].includes(paymentStatus)) {
+    return next(new AppError("paymentStatus must be 'pending' or 'paid'.", 400));
+  }
 
-  const email = customer?.email?.trim();
+  const email = typeof customer?.email === 'string' ? customer.email.trim().toLowerCase() : '';
   if (!email) {
     return next(new AppError('Customer email is required.', 400));
   }
 
-  // 2. Resolve or create Customer record
+  // 2. Resolve or create Customer record (lifetime stats are updated by onOrderPaid)
   let customerDoc: any = null;
   if (customerId) {
     customerDoc = await Customer.findById(customerId);
   }
   if (!customerDoc) {
-    customerDoc = await Customer.findOne({ email: email.toLowerCase() });
+    customerDoc = await Customer.findOne({ email });
   }
 
   const customerName = `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim() || 'Guest Customer';
@@ -662,7 +711,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
   if (!customerDoc) {
     customerDoc = await Customer.create({
       name: customerName,
-      email: email.toLowerCase(),
+      email,
       phone: customer?.phone || '',
       defaultAddress: shippingAddressObj || billingAddressObj || {},
       country: shippingAddressObj?.country || 'AU',
@@ -671,8 +720,9 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     });
   }
 
-  // 3. Process line items & stock decrement
-  const processedLineItems = [];
+  // 3. Resolve line items (variant by _id / tagadaVariantId / sku; quantity 1..100)
+  const processedLineItems: any[] = [];
+  const stockLines: Array<{ product: unknown; variant: unknown | null; quantity: number; sku?: string; price: number }> = [];
   let calculatedSubtotal = 0;
 
   for (const item of lineItems) {
@@ -680,66 +730,51 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
       return next(new AppError('Line item must include a valid product or title.', 400));
     }
 
-    let productDoc: any = null;
-    if (item.productId) {
-      productDoc = await Product.findById(item.productId);
+    let qty: number;
+    try {
+      qty = parseQuantity(item.quantity ?? 1);
+    } catch (e) {
+      if (e instanceof CheckoutValidationError) return next(new AppError(`Quantity must be an integer between 1 and ${MAX_LINE_QUANTITY}.`, 400));
+      throw e;
     }
 
-    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
-    let unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice || '0');
+    let productDoc: any = null;
+    if (item.productId) {
+      productDoc = await Product.findById(item.productId).lean();
+      if (!productDoc) return next(new AppError(`Product ${item.productId} not found.`, 404));
+    }
+
+    const parsedPrice = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(item.unitPrice || '0');
+    let unitPrice = Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0;
     let title = item.title || productDoc?.name || 'Item';
     let variantTitle = item.variantTitle || '';
     let sku = item.sku || productDoc?.sku || '';
-    let productImageUrl = item.productImageUrl || productDoc?.images?.[0] || productDoc?.image || '';
+    const productImageUrl = item.productImageUrl || productDoc?.images?.[0] || productDoc?.image || productDoc?.imageUrl || '';
 
-    // Handle stock & pricing from product if available
     if (productDoc) {
       title = productDoc.name;
-
-      if (item.variantId && Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
-        const variant = productDoc.variants.find((v: any) => v._id?.toString() === item.variantId || v.sku === item.variantId);
-        if (variant) {
-          variantTitle = variant.name || variantTitle;
-          sku = variant.sku || sku;
-          if (unitPrice === 0 && variant.price) {
-            unitPrice = typeof variant.price === 'string' ? parseFloat(variant.price.replace(/[^0-9.]/g, '')) : variant.price;
-          }
-
-          // Decrement variant stock
-          if (typeof variant.stockQty === 'number') {
-            variant.stockQty = Math.max(0, variant.stockQty - qty);
-          }
-        }
-      }
-
-      if (unitPrice === 0 && productDoc.price) {
-        unitPrice = typeof productDoc.price === 'string' ? parseFloat(productDoc.price.replace(/[^0-9.]/g, '')) : productDoc.price;
-      }
-
-      // Decrement product overall stock quantity
+      let variant: any = null;
       if (Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
-        productDoc.stockQuantity = productDoc.variants.reduce((sum: number, v: any) => sum + (v.stockQty || 0), 0);
-      } else if (typeof productDoc.stockQuantity === 'number') {
-        productDoc.stockQuantity = Math.max(0, productDoc.stockQuantity - qty);
+        const key = item.variantId != null ? String(item.variantId) : '';
+        variant = key
+          ? productDoc.variants.find((v: any) => String(v._id) === key || v.tagadaVariantId === key || (v.sku && v.sku === key))
+          : (productDoc.variants.length === 1 ? productDoc.variants[0] : null);
+        if (!variant) {
+          return next(new AppError(`Please select a valid variant for '${productDoc.name}'.`, 400));
+        }
+        variantTitle = variant.title || variant.name || variantTitle;
+        sku = variant.sku || sku;
+        if (unitPrice === 0 && variant.price) unitPrice = Number(variant.price) || 0;
       }
-      productDoc.inStock = (productDoc.stockQuantity || 0) > 0;
-      await productDoc.save({ validateBeforeSave: false });
+      if (unitPrice === 0 && productDoc.price) unitPrice = Number(productDoc.price) || 0;
+      stockLines.push({ product: productDoc._id, variant: variant?._id ?? null, quantity: qty, sku, price: unitPrice });
     }
 
-    const lineDiscount = Math.max(0, parseFloat(item.discountAmount || 0));
+    const lineDiscount = Math.max(0, parseFloat(item.discountAmount || 0) || 0);
     const lineSubtotal = Math.max(0, (unitPrice * qty) - lineDiscount);
-
     calculatedSubtotal += lineSubtotal;
 
-    processedLineItems.push({
-      title,
-      variantTitle,
-      sku,
-      quantity: qty,
-      unitPrice,
-      subtotal: lineSubtotal,
-      productImageUrl,
-    });
+    processedLineItems.push({ title, variantTitle, sku, quantity: qty, unitPrice, subtotal: lineSubtotal, productImageUrl });
   }
 
   // 4. Financial calculations
@@ -747,10 +782,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
   const parsedDiscountTotal = Math.max(0, parseFloat(discountTotal) || 0);
   const grandTotal = Math.max(0, calculatedSubtotal - parsedDiscountTotal + parsedShippingCost);
 
-  // 5. Generate Order Number
-  const orderNumber = await generateOrderNumber();
-
-  // 6. Admin user credentials (audit log)
+  // 5. Admin user credentials (audit log)
   const adminUser = (req as any).admin;
   const createdByAdmin = adminUser ? {
     id: adminUser._id?.toString() || adminUser.id,
@@ -758,22 +790,26 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     name: adminUser.name || adminUser.email
   } : undefined;
 
-  // 7. Create Order document
+  // 6. Create Order document (order number retried on E11000)
   const isPaid = paymentStatus === 'paid';
-  const order = await Order.create({
+  const now = new Date();
+  const order: any = await withOrderNumberRetry((orderNumber) => Order.create({
     orderNumber,
     customer: {
       firstName: customer?.firstName || customerDoc.name?.split(' ')[0] || '',
       lastName: customer?.lastName || customerDoc.name?.split(' ').slice(1).join(' ') || '',
-      email: email.toLowerCase(),
+      email,
       phone: customer?.phone || customerDoc.phone || '',
     },
-    customerEmail: email.toLowerCase(),
+    customerEmail: email,
     customerName,
     shippingAddressObj: shippingAddressObj || billingAddressObj || {},
     billingAddressObj: billingAddressObj || shippingAddressObj || {},
     shippingAddress: shippingAddressObj ? `${shippingAddressObj.street1 || ''}, ${shippingAddressObj.city || ''} ${shippingAddressObj.state || ''} ${shippingAddressObj.zip || ''} ${shippingAddressObj.country || ''}` : '',
     lineItems: processedLineItems,
+    products: stockLines.map((l) => ({
+      product: l.product, variant: l.variant, quantity: l.quantity, price: l.price, sku: l.sku,
+    })),
     subtotal: calculatedSubtotal,
     discountAmount: parsedDiscountTotal,
     shippingAmount: parsedShippingCost,
@@ -785,49 +821,61 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     fulfilmentStatus: 'unfulfilled',
     paymentMethod: 'manual_offline',
     paymentStatus: isPaid ? 'paid' : 'pending',
+    paidAt: isPaid ? now : null,
+    publicAccessToken: generateOrderAccessToken(),
+    // Manual orders: customer confirmation email only when the admin asked for it.
+    suppressConfirmationEmail: isPaid ? !sendEmail : true,
+    // Stock is reserved below at creation, so onOrderPaid must not decrement again.
+    inventoryDecrementedAt: now,
     source: 'admin_manual',
     createdByAdmin,
-    adminNotes: notes,
+    adminNotes: String(notes).slice(0, 5000),
     comments: [{
       text: `Order created manually by admin (${adminUser?.email || 'admin'}). Payment status: ${isPaid ? 'Paid (manual)' : 'Pending'}.`,
-      createdAt: new Date(),
+      createdAt: now,
     }],
-  });
+  }));
 
-  // 8. Update Customer lifetime statistics
-  customerDoc.orderCount = (customerDoc.orderCount || 0) + 1;
-  if (isPaid) {
-    customerDoc.totalSpent = (customerDoc.totalSpent || 0) + grandTotal;
-  }
-  await customerDoc.save({ validateBeforeSave: false });
-
-  // 9. Trigger Google Address Validation asynchronously
-  if (order.shippingAddressObj) {
-    AddressValidationService.validateOrderAddress(order._id).catch(err => {
-      console.error('[Admin Order] Address Validation Error:', err);
-    });
-  }
-
-  // 10. Send order confirmation email if requested
-  if (sendEmail) {
+  // 7. Atomic stock decrement (manual orders reserve stock at creation, paid or not)
+  for (const line of stockLines) {
     try {
-      await sendOrderConfirmationEmail(order);
-    } catch (err) {
-      console.error('[Admin Order] Failed to send order confirmation email:', err);
+      await decrementLineForOrder(order._id, line);
+    } catch (err: any) {
+      console.error(`[Admin Order] Stock decrement failed for order ${order._id}: ${err?.message}`);
     }
   }
 
-  // Send admin notification
-  try {
-    await sendAdminNewOrderNotificationEmail(order);
-  } catch (err) {
-    console.error('[Admin Order] Failed to send admin order notification email:', err);
+  // 8. Trigger Google Address Validation asynchronously
+  if (order.shippingAddressObj) {
+    AddressValidationService.validateOrderAddress(order._id).catch((err: any) => {
+      console.error('[Admin Order] Address Validation Error:', err?.message);
+    });
   }
 
+  // 9. Pending manual order with "send email": legacy behaviour — send now.
+  if (sendEmail && !isPaid) {
+    try {
+      await sendOrderConfirmationEmail(order);
+    } catch (err: any) {
+      console.error('[Admin Order] Failed to send order confirmation email:', err?.message);
+    }
+  }
+
+  // Admin notification at creation (onOrderPaid skips it for admin_manual orders)
+  try {
+    await sendAdminNewOrderNotificationEmail(order);
+  } catch (err: any) {
+    console.error('[Admin Order] Failed to send admin order notification email:', err?.message);
+  }
+
+  // 10. Paid manual order → idempotent post-payment side effects (customer stats, email, analytics…)
+  if (isPaid) scheduleOnOrderPaid(order._id);
+
+  const fresh = await Order.findById(order._id).lean();
   res.status(201).json({
     success: true,
     message: 'Manual order created successfully',
-    data: { order },
+    data: { order: fresh ?? order },
   });
 });
 
@@ -1017,7 +1065,7 @@ export const exportOrdersCsv = catchAsync(async (req: Request, res: Response, ne
  */
 export const softDeleteOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const order = await Order.findById(req.params.id);
-  
+
   if (!order) {
     return next(new AppError('Order not found', 404));
   }
@@ -1038,7 +1086,7 @@ export const softDeleteOrder = catchAsync(async (req: Request, res: Response, ne
  */
 export const restoreOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const order = await Order.findById(req.params.id);
-  
+
   if (!order) {
     return next(new AppError('Order not found', 404));
   }

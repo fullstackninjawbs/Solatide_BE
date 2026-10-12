@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
 
 export interface IProductImage {
   url: string; // The primary secure_url or legacy URL
@@ -478,6 +479,11 @@ productSchema.pre('save', function (next) {
 
 // Indexes
 productSchema.index({ category: 1 });
+// Lookup indexes for checkout / inventory / webhook resolution (M-15).
+// variants.tagadaVariantId is already indexed via the variant sub-schema (index: true).
+// sku: indexed via the field's sparse option.
+productSchema.index({ 'variants.sku': 1 });
+productSchema.index({ tagadaVariantId: 1 }, { sparse: true });
 productSchema.index({ price: 1 });
 productSchema.index({ tags: 1 });
 productSchema.index({ publishStatus: 1 });
@@ -487,5 +493,6 @@ productSchema.index({ publishStatus: 1, isActive: 1 });
 productSchema.index({ category: 1, isActive: 1 });
 productSchema.index({ name: 'text' }, { weights: { name: 10 } });
 
+registerStorefrontRebuildHooks(productSchema);
 export const Product = mongoose.model<IProduct>('Product', productSchema);
 export default Product;

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import multer from 'multer';
 import {
   createReview,
   getProductReviews,
@@ -11,16 +10,11 @@ import {
   importReviews,
 } from '../controllers/review.controller';
 import { protect, restrictTo } from '../middleware/auth';
+import { ACCESS } from '../config/roles';
+import { formSubmitLimiter } from '../middleware/rateLimit';
+import { reviewImageUpload, spreadsheetUpload } from '../middleware/uploadFilters';
 
 const router = Router();
-
-// Multer memory storage configuration for file stream parsing
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // Capped at 10MB to prevent heap overflow
-  },
-});
 
 // ============================================
 // PUBLIC ROUTES
@@ -38,8 +32,9 @@ router.get('/verify/:token', verifyEmail);
 // Create a review
 // POST /api/v1/reviews
 router.post(
-  '/', 
-  upload.array('images', 5), // Allow up to 5 images
+  '/',
+  formSubmitLimiter, // 10 submissions / hour / IP
+  reviewImageUpload.array('images', 5), // up to 5 images, 5MB each, jpeg/png/webp/gif only
   createReview
 );
 
@@ -48,21 +43,21 @@ router.post(
 // ============================================
 
 router.use(protect); // Require auth for all routes below
-router.use(restrictTo('super_admin', 'operations', 'admin'));
+router.use(restrictTo(...ACCESS.reviews));
 
-// Get all reviews (Admin)
+// Get all reviews (Admin) — support may view & moderate
 router.get('/', getAllReviewsAdmin);
-
-// Import reviews from XLSX/CSV
-router.post('/import', upload.single('file'), importReviews);
-
-// Delete a review
-router.delete('/:id', deleteReview);
 
 // Update review status (approve/reject)
 router.patch('/:id/status', updateReviewStatus);
 
+// Import reviews from XLSX/CSV
+router.post('/import', restrictTo(...ACCESS.reviewsManage), spreadsheetUpload.single('file'), importReviews);
+
+// Delete a review
+router.delete('/:id', restrictTo(...ACCESS.reviewsManage), deleteReview);
+
 // Resend verification email
-router.post('/:id/resend-verification', resendVerificationEmailController);
+router.post('/:id/resend-verification', restrictTo(...ACCESS.reviewsManage), resendVerificationEmailController);
 
 export default router;

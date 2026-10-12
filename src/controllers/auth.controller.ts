@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import config from '../config';
 import User from '../models/user.model';
 import AppError from '../utils/appError';
@@ -8,132 +9,178 @@ import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { sendResetPasswordEmail } from '../services/emailService';
 
+export const MIN_PASSWORD_LENGTH = 10;
+export const MAX_PASSWORD_LENGTH = 128;
+
 /**
- * Generate a JWT token signed with the user ID
+ * Generate a JWT token signed with the user ID (HS256)
  */
 const signToken = (id: string): string => {
   return jwt.sign({ id }, config.jwtSecret, {
+    algorithm: 'HS256',
     expiresIn: config.jwtExpiresIn as any,
   });
 };
 
 /**
+ * Whitelisted, safe user representation for API responses — never includes the
+ * password hash or reset token/expiry.
+ */
+export const toSafeUser = (user: any) => {
+  if (!user) return null;
+  return {
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+};
+
+/**
+ * Mark the password as changed now so previously issued JWTs are rejected by
+ * `protect`. The User schema does not (yet) declare `passwordChangedAt`, so set it
+ * with strict:false so it is persisted either way.
+ */
+export const markPasswordChanged = (user: any) => {
+  // 1s in the past so the token issued right after (iat in whole seconds) stays valid
+  const when = new Date(Date.now() - 1000);
+  if (typeof user.set === 'function') {
+    user.set('passwordChangedAt', when, { strict: false });
+  } else {
+    user.passwordChangedAt = when;
+  }
+};
+
+export const validatePassword = (password: unknown): string | null => {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters long.`;
+  }
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return `Password must be at most ${MAX_PASSWORD_LENGTH} characters long.`;
+  }
+  return null;
+};
+
+const normEmail = (email: unknown): string | null =>
+  typeof email === 'string' && email.trim() && email.length <= 254 ? email.trim().toLowerCase() : null;
+
+/**
  * Helper to structure the auth response containing token and user details
  */
 const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
-  const token = signToken(user._id);
-
-  // Remove password from output
-  user.password = undefined;
+  const token = signToken(String(user._id));
 
   res.status(statusCode).json({
     success: true,
     token,
     data: {
-      user,
+      user: toSafeUser(user),
     },
   });
 };
 
+const GENERIC_REGISTER_MESSAGE =
+  'If this email address can be registered, your account is ready. Please log in to continue.';
+
 /**
- * Register a new user
+ * Register a new customer account.
+ * SECURITY: role is NEVER taken from the request — public registration always
+ * creates role 'user'. The response is identical whether or not the email was
+ * already registered (no account enumeration), and no token is issued here.
  */
 export const register = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const { name, email, password, role } = req.body;
+  const { name, password } = req.body || {};
+  const email = normEmail(req.body?.email);
 
-  // 1) Check if email is already taken
+  if (typeof name !== 'string' || !name.trim() || !email) {
+    return next(new AppError('Please provide a name, email and password.', 400));
+  }
+  const pwError = validatePassword(password);
+  if (pwError) return next(new AppError(pwError, 400));
+
   const existingUser = await User.findOne({ email });
   if (existingUser) {
-    return next(new AppError('Email address is already in use', 400));
+    // Equalise timing with the create path (bcrypt hash) to avoid enumeration via latency
+    await bcrypt.hash(password, 10);
+  } else {
+    try {
+      await User.create({
+        name: name.trim(),
+        email,
+        password,
+        role: 'user',
+      });
+    } catch (err: any) {
+      if (err?.code !== 11000) throw err; // concurrent duplicate → same generic response
+    }
   }
 
-  // 2) Create new user
-  const newUser = await User.create({
-    name,
-    email,
-    password,
-    role: role || 'user', // Default to user role
-  });
-
-  sendTokenResponse(newUser, 201, res); // 201 Created
+  res.status(201).json({ success: true, message: GENERIC_REGISTER_MESSAGE });
 });
 
 /**
  * Log in an existing user
  */
 export const login = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const { email, password } = req.body;
+  const { password } = req.body || {};
+  const email = normEmail(req.body?.email);
 
-  // 1) Verify input存在
-  if (!email || !password) {
+  if (!email || typeof password !== 'string' || !password) {
     return next(new AppError('Please provide email and password', 400));
   }
 
-  // 2) Find user and explicitly select password field (which is select: false)
   const user = await User.findOne({ email }).select('+password');
   if (!user || !(await user.comparePassword(password))) {
     return next(new AppError('Invalid email or password', 401));
   }
 
-  // 3) Emit token response
   sendTokenResponse(user, 200, res);
 });
 
 /**
- * Fetch currently logged in user context
+ * Fetch currently logged in user context (safe fields only)
  */
 export const getMe = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   res.status(200).json({
     success: true,
     data: {
-      user: req.user,
+      user: toSafeUser(req.user),
     },
   });
 });
 
+const GENERIC_FORGOT_MESSAGE = 'If an account exists for that email, a password reset link has been sent.';
+
 /**
- * Request password reset link
+ * Request password reset link. Always returns the same response.
  */
 export const forgotPassword = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const { email } = req.body;
+  const email = normEmail(req.body?.email);
 
   if (!email) {
     return next(new AppError('Please provide an email address.', 400));
   }
 
-  // 1) Find user
   const user = await User.findOne({ email });
-  if (!user) {
-    // For security, don't expose if email is registered or not in production
-    // But since this is admin, let's return error if user doesn't exist
-    return next(new AppError('No user found with that email address.', 404));
-  }
-
-  // 2) Generate random reset token
-  const resetToken = crypto.randomBytes(32).toString('hex');
-
-  // 3) Store hashed token in DB with 10 min expiry
-  user.passwordResetToken = crypto
-    .createHash('sha256')
-    .update(resetToken)
-    .digest('hex');
-  user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-  await user.save({ validateBeforeSave: false });
-
-  // 4) Send reset link to user email
-  try {
-    await sendResetPasswordEmail(user.email, resetToken, user.name);
-    res.status(200).json({
-      success: true,
-      message: 'Password reset link sent to email.',
-    });
-  } catch (err) {
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
+  if (user) {
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     await user.save({ validateBeforeSave: false });
-    return next(new AppError('There was an error sending the email. Try again later.', 500));
+
+    try {
+      await sendResetPasswordEmail(user.email, resetToken, user.name);
+    } catch (err) {
+      console.error('[Auth] Failed to send password reset email:', (err as Error).message);
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save({ validateBeforeSave: false });
+    }
   }
+
+  res.status(200).json({ success: true, message: GENERIC_FORGOT_MESSAGE });
 });
 
 /**
@@ -141,34 +188,30 @@ export const forgotPassword = catchAsync(async (req: Request, res: Response, nex
  */
 export const resetPassword = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { token } = req.params;
-  const { password } = req.body;
+  const { password } = req.body || {};
 
-  if (!password) {
-    return next(new AppError('Please provide a new password.', 400));
+  const pwError = validatePassword(password);
+  if (pwError) return next(new AppError(pwError, 400));
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/i.test(token)) {
+    return next(new AppError('Token is invalid or has expired.', 400));
   }
 
-  // 1) Hash token passed in from URL and match with DB token
-  const hashedToken = crypto
-    .createHash('sha256')
-    .update(token)
-    .digest('hex');
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
   const user = await User.findOne({
     passwordResetToken: hashedToken,
     passwordResetExpires: { $gt: new Date() },
   });
 
-  // 2) If token is invalid or expired, return error
   if (!user) {
     return next(new AppError('Token is invalid or has expired.', 400));
   }
 
-  // 3) Set new password and clear token fields
   user.password = password;
   user.passwordResetToken = undefined;
   user.passwordResetExpires = undefined;
-  await user.save(); // pre-save hook will hash it automatically
+  markPasswordChanged(user); // invalidates previously issued JWTs
+  await user.save(); // pre-save hook hashes the password
 
-  // 4) Send back JWT response so they are logged in immediately
   sendTokenResponse(user, 200, res);
 });

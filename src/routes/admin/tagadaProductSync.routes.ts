@@ -5,11 +5,12 @@ import {
   syncSingleProduct,
   getSyncHistory
 } from '../../controllers/admin/tagadaProductSync.controller';
+import { restrictTo } from '../../middleware/auth';
+import { ACCESS } from '../../config/roles';
 
 const router = express.Router();
-
-// Apply auth and permission checks if needed
-// e.g. router.use(restrictTo('admin', 'superadmin'));
+// protect applied in routes/admin/index.ts
+router.use(restrictTo(...ACCESS.tagadaSync));
 
 router.get('/products/sync-preview', getSyncPreview);
 router.post('/products/sync', runFullSync);

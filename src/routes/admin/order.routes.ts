@@ -1,5 +1,7 @@
-import express from 'express';
-import { protect } from '../../middleware/auth';
+import express, { Response, NextFunction } from 'express';
+import { restrictTo, AuthenticatedRequest } from '../../middleware/auth';
+import { ACCESS } from '../../config/roles';
+import AppError from '../../utils/appError';
 import {
   getOrders,
   getOrderById,
@@ -22,58 +24,57 @@ import {
 
 const router = express.Router();
 
-// All routes require authentication
-router.use(protect);
+// protect is applied in routes/admin/index.ts; base access for every order route:
+router.use(restrictTo(...ACCESS.orders));
 
-// GET  /api/admin/orders               — paginated, filterable list
+const shipping = restrictTo(...ACCESS.orderShipping);
+const privileged = restrictTo(...ACCESS.orderPrivileged);
+
+/** Only privileged roles may change paymentStatus via the status endpoint. */
+const guardPaymentStatusEdit = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.body && req.body.paymentStatus !== undefined && !ACCESS.orderPrivileged.includes(req.user!.role)) {
+    return next(new AppError('You do not have permission to change payment status', 403));
+  }
+  next();
+};
+
+// GET  /api/admin/order               — paginated, filterable list
 router.get('/', getOrders);
 
-// GET  /api/admin/orders/export/csv    — export orders to CSV
+// GET  /api/admin/order/export/csv    — export orders to CSV
 router.get('/export/csv', exportOrdersCsv);
 
-// GET /api/admin/orders/address/autocomplete
-router.get('/address/autocomplete', addressAutocomplete);
+// Address helpers + config — used by the manual order form
+router.get('/address/autocomplete', privileged, addressAutocomplete);
+router.get('/address/place-details', privileged, addressPlaceDetails);
+router.get('/new-config', privileged, getNewOrderConfig);
 
-// GET /api/admin/orders/address/place-details
-router.get('/address/place-details', addressPlaceDetails);
+// POST /api/admin/order               — create manual order
+router.post('/', privileged, createAdminOrder);
 
-// GET  /api/admin/orders/new-config     — form config options
-router.get('/new-config', getNewOrderConfig);
-
-// POST /api/admin/orders               — create manual order
-router.post('/', createAdminOrder);
-
-// GET  /api/admin/orders/:id           — full order detail
+// GET  /api/admin/order/:id           — full order detail
 router.get('/:id', getOrderById);
 
-// POST /api/admin/orders/bulk-soft-delete
-router.post('/bulk-soft-delete', bulkSoftDeleteOrders);
+// Bulk soft delete / restore
+router.post('/bulk-soft-delete', privileged, bulkSoftDeleteOrders);
+router.post('/bulk-restore', privileged, bulkRestoreOrders);
 
-// POST /api/admin/orders/bulk-restore
-router.post('/bulk-restore', bulkRestoreOrders);
+// Single soft delete / restore
+router.delete('/:id/soft-delete', privileged, softDeleteOrder);
+router.patch('/:id/restore', privileged, restoreOrder);
 
-// DELETE /api/admin/orders/:id/soft-delete
-router.delete('/:id/soft-delete', softDeleteOrder);
-
-// PATCH /api/admin/orders/:id/restore
-router.patch('/:id/restore', restoreOrder);
-
-// PATCH /api/admin/orders/:id          — update full order details
+// PATCH /api/admin/order/:id          — tags, comments, addresses, admin notes
 router.patch('/:id', updateOrder);
 
-// PATCH /api/admin/orders/:id/status   — update status / fulfilmentStatus / adminNotes
-router.patch('/:id/status', updateOrderStatus);
+// PATCH /api/admin/order/:id/status   — status / fulfilmentStatus / adminNotes (+ paymentStatus for privileged)
+router.patch('/:id/status', guardPaymentStatusEdit, updateOrderStatus);
 
-// POST /api/admin/orders/:id/refund      — process refund
-router.post('/:id/refund', refundOrder);
-
-// GET /api/admin/orders/:id/refunds      — list refunds
+// Refunds
+router.post('/:id/refund', restrictTo(...ACCESS.orderRefund), refundOrder);
 router.get('/:id/refunds', getOrderRefunds);
 
-// POST /api/admin/orders/:id/shipment — create shipment
-router.post('/:id/shipment', createShipment);
-
-// POST /api/admin/orders/:id/revalidate-address — force re-run address validation
-router.post('/:id/revalidate-address', revalidateOrderAddress);
+// Shipping labels
+router.post('/:id/shipment', shipping, createShipment);
+router.post('/:id/revalidate-address', shipping, revalidateOrderAddress);
 
 export default router;

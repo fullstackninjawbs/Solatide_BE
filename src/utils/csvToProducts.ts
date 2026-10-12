@@ -1,5 +1,6 @@
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
+import { sanitizeProductHtmlFields } from './sanitizeHtml';
 
 export interface IParsedVariant {
   title: string;
@@ -275,6 +276,8 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
           pObj.inStock = pObj.stockQuantity > 0;
           pObj.status = pObj.inStock ? 'In Stock' : 'Sold Out';
 
+          // Rich-HTML fields are rendered on the storefront: sanitize at import time
+          sanitizeProductHtmlFields(pObj);
           productsList.push(pObj);
         }
 
