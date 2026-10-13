@@ -78,7 +78,7 @@ const slugify = (name: string): string =>
 export const getPublicCollections = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const collections = await Collection.find({ status: 'active' })
     .sort({ sortOrder: 1, createdAt: -1 })
-    .select('name slug description bannerImage');
+    .select('name slug description bannerImage productSort seo');
   
   res.status(200).json({
     success: true,
@@ -142,7 +142,7 @@ export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: 
   }
 
   // 5) Collection filter — find product IDs in that collection or build query if automated
-  if (q.collection) {
+  if (q.collection && q.collection !== 'all' && q.collection !== 'all-products') {
     const colSlugOrId = q.collection;
     let col;
     if (colSlugOrId.match(/^[0-9a-fA-F]{24}$/)) {

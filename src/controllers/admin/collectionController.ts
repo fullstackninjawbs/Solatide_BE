@@ -25,7 +25,9 @@ export const getCollections = catchAsync(async (req: Request, res: Response, nex
   const collectionsWithCount = await Promise.all(
     collections.map(async (col) => {
       let productCount = 0;
-      if (col.type === 'automated') {
+      if (col.slug === 'all') {
+        productCount = await Product.countDocuments({ publishStatus: 'active' });
+      } else if (col.type === 'automated') {
         const query = buildQueryFromRules(col.rules, col.ruleRelation);
         productCount = await Product.countDocuments(query);
       } else {
@@ -97,7 +99,8 @@ export const createCollection = catchAsync(async (req: Request, res: Response, n
     sortOrder,
     productSort,
     displayOptions,
-    products
+    products,
+    seo
   } = req.body;
 
   if (!name) {
@@ -125,6 +128,7 @@ export const createCollection = catchAsync(async (req: Request, res: Response, n
     productSort: productSort || 'alpha-asc',
     displayOptions: displayOptions || { showFaqBlock: false },
     products: products || [],
+    seo: seo || {},
   });
 
   await cacheDel('products:list*');
@@ -157,11 +161,16 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
     sortOrder,
     productSort,
     displayOptions,
-    products
+    products,
+    seo
   } = req.body;
 
   if (name !== undefined) col.name = name;
   if (slug !== undefined) {
+    // Protect the system 'all' collection slug
+    if (col.slug === 'all' && slug !== 'all') {
+      return next(new AppError('The "all" collection slug cannot be modified.', 400));
+    }
     const nextSlug = slugify(slug);
     if (nextSlug !== col.slug) {
       const existing = await Collection.findOne({ slug: nextSlug });
@@ -184,6 +193,7 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
   if (productSort !== undefined) col.productSort = productSort;
   if (displayOptions !== undefined) col.displayOptions = displayOptions;
   if (products !== undefined) col.products = products;
+  if (seo !== undefined) col.seo = seo;
 
   await col.save();
 
@@ -199,11 +209,17 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
 // DELETE /api/admin/collection/:id
 export const deleteCollection = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const col = await Collection.findByIdAndDelete(id);
+  const col = await Collection.findById(id);
 
   if (!col) {
     return next(new AppError('No collection found with that ID', 404));
   }
+
+  if (col.slug === 'all') {
+    return next(new AppError('The "All Products" system collection cannot be deleted.', 400));
+  }
+
+  await Collection.findByIdAndDelete(id);
 
   await cacheDel('products:list*');
   await cacheDel('products:detail*');

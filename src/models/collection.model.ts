@@ -7,6 +7,12 @@ export interface ICollectionRule {
   value: string;
 }
 
+export interface ICollectionSeo {
+  title?: string;
+  description?: string;
+  canonicalUrl?: string;
+}
+
 export interface ICollection extends mongoose.Document {
   name: string;
   slug: string;
@@ -18,6 +24,7 @@ export interface ICollection extends mongoose.Document {
   rules: ICollectionRule[];
   sortOrder: number;
   productSort?: string;
+  seo?: ICollectionSeo;
   displayOptions: {
     showFaqBlock: boolean;
   };
@@ -97,7 +104,12 @@ const collectionSchema = new mongoose.Schema<ICollection>(
     themeTemplate: {
       type: String,
       default: 'default',
-    }
+    },
+    seo: {
+      title: { type: String, trim: true, default: '' },
+      description: { type: String, trim: true, default: '' },
+      canonicalUrl: { type: String, trim: true, default: '' },
+    },
   },
   {
     timestamps: true,
