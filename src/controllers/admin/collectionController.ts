@@ -60,12 +60,18 @@ export const getCollectionById = catchAsync(async (req: Request, res: Response, 
     const query = buildQueryFromRules(col.rules, col.ruleRelation);
     productsList = await Product.find(query).sort({ name: 1 });
   } else {
-    // Populate products
-    const populated = await Collection.findById(id).populate({
-      path: 'products',
-      options: { sort: { name: 1 } }
-    });
-    productsList = populated ? populated.products : [];
+    // Populate products and preserve manual collection sequence
+    const populated = await Collection.findById(id).populate('products');
+    const rawProducts = (populated ? populated.products : []) as any[];
+    if (col.products && col.products.length > 0) {
+      const orderMap = new Map(col.products.map((pid: any, index: number) => [String(pid), index]));
+      rawProducts.sort((a: any, b: any) => {
+        const idxA = orderMap.has(String(a._id)) ? orderMap.get(String(a._id))! : 999999;
+        const idxB = orderMap.has(String(b._id)) ? orderMap.get(String(b._id))! : 999999;
+        return idxA - idxB;
+      });
+    }
+    productsList = rawProducts;
   }
 
   res.status(200).json({
@@ -89,6 +95,7 @@ export const createCollection = catchAsync(async (req: Request, res: Response, n
     ruleRelation,
     rules,
     sortOrder,
+    productSort,
     displayOptions,
     products
   } = req.body;
@@ -115,6 +122,7 @@ export const createCollection = catchAsync(async (req: Request, res: Response, n
     ruleRelation: ruleRelation || 'all',
     rules: rules || [],
     sortOrder: sortOrder || 0,
+    productSort: productSort || 'alpha-asc',
     displayOptions: displayOptions || { showFaqBlock: false },
     products: products || [],
   });
@@ -147,6 +155,7 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
     ruleRelation,
     rules,
     sortOrder,
+    productSort,
     displayOptions,
     products
   } = req.body;
@@ -172,6 +181,7 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
   if (ruleRelation !== undefined) col.ruleRelation = ruleRelation;
   if (rules !== undefined) col.rules = rules;
   if (sortOrder !== undefined) col.sortOrder = sortOrder;
+  if (productSort !== undefined) col.productSort = productSort;
   if (displayOptions !== undefined) col.displayOptions = displayOptions;
   if (products !== undefined) col.products = products;
 

@@ -17,6 +17,7 @@ export interface ICollection extends mongoose.Document {
   ruleRelation: 'all' | 'any';
   rules: ICollectionRule[];
   sortOrder: number;
+  productSort?: string;
   displayOptions: {
     showFaqBlock: boolean;
   };
@@ -72,6 +73,10 @@ const collectionSchema = new mongoose.Schema<ICollection>(
     sortOrder: {
       type: Number,
       default: 0,
+    },
+    productSort: {
+      type: String,
+      default: 'alpha-asc',
     },
     displayOptions: {
       showFaqBlock: {
