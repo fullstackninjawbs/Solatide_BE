@@ -5,7 +5,7 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { uploadImageBuffer, updateImageAltText } from '../utils/cloudinary';
 import { buildQueryFromRules, escapeRegex } from '../utils/collectionUtils';
-import { cacheGet, cacheSet, cacheKey, TTL } from '../utils/cache';
+import { cacheGet, cacheSet, cacheKey, cacheIndexAdd, TTL } from '../utils/cache';
 import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { isStaffRole } from '../config/roles';
@@ -111,13 +111,12 @@ export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: 
     limit: clampInt(req.query.limit, 50, 1, isStaff ? 1000 : 100),
   };
 
-  // Staff responses are never cached (they include drafts + internal fields)
-  const key = cacheKey('products:list', q as Record<string, unknown>);
-  if (!isStaff) {
-    const cached = await cacheGet(key);
-    if (cached) {
-      return res.status(200).json(cached);
-    }
+  // Staff responses include drafts + internal fields: cached under their own key prefix
+  // (never served to public callers) for a short TTL. Every 'products:list*' clear covers both.
+  const key = cacheKey(isStaff ? 'products:list:staff' : 'products:list', q as Record<string, unknown>);
+  const cached = await cacheGet(key);
+  if (cached) {
+    return res.status(200).json(cached);
   }
 
   const queryObj: any = {};
@@ -264,10 +263,7 @@ export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: 
     },
   };
 
-  // Cache the (public) response
-  if (!isStaff) {
-    await cacheSet(key, payload, TTL.PRODUCTS_LIST);
-  }
+  await cacheSet(key, payload, isStaff ? TTL.STAFF_LIST : TTL.PRODUCTS_LIST);
 
   res.status(200).json(payload);
 });
@@ -361,9 +357,11 @@ export const getProductById = catchAsync(async (req: AuthenticatedRequest, res: 
     data: { product: productObj },
   };
 
-  // Cache the (public) detail response
+  // Cache the (public) detail response, indexed by product id so a change to this product
+  // clears only its own entries (see storefrontRebuildHooks)
   if (!isStaff) {
     await cacheSet(key, payload, TTL.PRODUCT_DETAIL);
+    await cacheIndexAdd(`products:detail-index:${product._id}`, key, TTL.PRODUCT_DETAIL);
   }
 
   res.status(200).json(payload);
@@ -530,10 +528,11 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
     );
   }
 
-  // Invalidate caches for this product and all lists
-  const { cacheDel } = await import('../utils/cache');
+  // Invalidate this product's cached detail entries (every slug/id variant, incl. a previous
+  // slug) and all lists. Detail responses never embed other products.
+  const { cacheDel, cacheDelIndexed } = await import('../utils/cache');
   await Promise.all([
-    cacheDel('products:detail*'),
+    cacheDelIndexed(`products:detail-index:${updatedProduct._id}`),
     cacheDel('products:list*'),
   ]);
   
@@ -554,10 +553,10 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
     return next(new AppError('No product found with that ID', 404));
   }
 
-  // Invalidate caches
-  const { cacheDel } = await import('../utils/cache');
+  // Invalidate this product's cached detail entries and all lists
+  const { cacheDel, cacheDelIndexed } = await import('../utils/cache');
   await Promise.all([
-    cacheDel('products:detail*'),
+    cacheDelIndexed(`products:detail-index:${deletedProduct._id}`),
     cacheDel('products:list*'),
   ]);
   

@@ -1,6 +1,6 @@
 import type { Schema } from 'mongoose';
 import { triggerStorefrontRebuild } from './rebuildStorefront';
-import { cacheDel, isRedisConnected } from './cache';
+import { cacheDel, cacheDelIndexed, isRedisConnected } from './cache';
 
 /**
  * Request a (debounced, single-flight) storefront rebuild whenever a document that is
@@ -46,7 +46,48 @@ const onChange = () => {
   triggerStorefrontRebuild();
 };
 
-export function registerStorefrontRebuildHooks(schema: Schema): void {
+/** Product ids touched by a write: from the returned doc, or the query's _id filter. null = unknown. */
+const productIdsFromWrite = (query: any, res: any): string[] | null => {
+  if (res && res._id) return [String(res._id)];
+  const id = query && typeof query.getFilter === 'function' ? query.getFilter()?._id : undefined;
+  if (!id) return null;
+  if (Array.isArray(id?.$in)) return id.$in.map(String);
+  if (typeof id === 'string' || (typeof id === 'object' && typeof id.toHexString === 'function')) return [String(id)];
+  return null;
+};
+
+/**
+ * Product writes (orders decrement stock several times a day) clear only that product's cached
+ * detail entries + the product lists, instead of every product's detail. Unknown targets
+ * (e.g. updateMany without an _id filter) fall back to clearing all product details.
+ * `contentEdit` (admin-style save / findOneAndUpdate) also refreshes the public COA list, which
+ * shows product names; plain stock updates do not.
+ */
+const onProductChange = (ids: string[] | null, contentEdit: boolean) => {
+  if (!enabled) return;
+  if (isRedisConnected()) {
+    const jobs: Promise<unknown>[] = [cacheDel('products:list*')];
+    if (ids && ids.length) ids.forEach((id) => jobs.push(cacheDelIndexed(`products:detail-index:${id}`)));
+    else jobs.push(cacheDel('products:detail*'));
+    if (contentEdit) jobs.push(cacheDel('public:coas'));
+    Promise.all(jobs).catch(() => undefined);
+  }
+  triggerStorefrontRebuild();
+};
+
+const CONTENT_EDIT_OPS = new Set(['findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete', 'deleteOne', 'deleteMany']);
+
+export function registerStorefrontRebuildHooks(schema: Schema, opts: { product?: boolean } = {}): void {
+  if (opts.product) {
+    schema.post('save', function (doc: any) { onProductChange(doc?._id ? [String(doc._id)] : null, true); });
+    schema.post('insertMany', function () { onProductChange([], true); }); // new products: lists only
+    for (const op of QUERY_WRITES) {
+      schema.post(op as any, function (this: any, res: any) {
+        if (changed(res)) onProductChange(productIdsFromWrite(this, res), CONTENT_EDIT_OPS.has(op));
+      });
+    }
+    return;
+  }
   schema.post('save', onChange);
   schema.post('insertMany', onChange);
   for (const op of QUERY_WRITES) {

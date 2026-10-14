@@ -493,6 +493,6 @@ productSchema.index({ publishStatus: 1, isActive: 1 });
 productSchema.index({ category: 1, isActive: 1 });
 productSchema.index({ name: 'text' }, { weights: { name: 10 } });
 
-registerStorefrontRebuildHooks(productSchema);
+registerStorefrontRebuildHooks(productSchema, { product: true });
 export const Product = mongoose.model<IProduct>('Product', productSchema);
 export default Product;

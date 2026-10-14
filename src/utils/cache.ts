@@ -146,4 +146,31 @@ export const TTL = {
   ANALYTICS: 2 * 60,         // 2 minutes
   SHORT: 60,                  // 1 minute
   PUBLIC_CONTENT: 10 * 60,   // 10 minutes (collections, FAQs, CMS pages, COAs); cleared on every write
+  STAFF_LIST: 60,            // 1 minute (admin product lists; separate keys, cleared on every write)
 } as const;
+
+/**
+ * Record that `key` holds data for one entity (e.g. a product), in the Redis set `indexKey`,
+ * so every cached variant of it (by slug, numeric id, ObjectId) can be cleared at once.
+ */
+export async function cacheIndexAdd(indexKey: string, key: string, ttlSeconds: number): Promise<void> {
+  try {
+    const redis = getClient();
+    if (!redis || !isConnected) return;
+    await redis.multi().sadd(indexKey, key).expire(indexKey, ttlSeconds + 60).exec();
+  } catch {
+    // Silent — caching is non-critical
+  }
+}
+
+/** Delete every key recorded in the index set `indexKey`, and the set itself. */
+export async function cacheDelIndexed(indexKey: string): Promise<void> {
+  try {
+    const redis = getClient();
+    if (!redis || !isConnected) return;
+    const keys = await redis.smembers(indexKey);
+    await redis.del(...keys, indexKey);
+  } catch {
+    // Silent — caching is non-critical
+  }
+}
