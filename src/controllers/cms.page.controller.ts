@@ -68,8 +68,28 @@ export const getAllPages = async (req: Request, res: Response, next: NextFunctio
       query.status = status;
     }
 
-    const pages = await Page.find(query).sort({ updatedAt: -1 });
-    res.json(pages);
+    // The list only shows these columns: never send each page's full HTML content
+    const LIST_FIELDS = 'title slug status updatedAt publishedAt createdAt';
+
+    // Legacy shape (plain array) when no paging is requested
+    if (req.query.page === undefined && req.query.limit === undefined) {
+      const pages = await Page.find(query).select(LIST_FIELDS).sort({ updatedAt: -1 }).lean();
+      res.json(pages);
+      return;
+    }
+
+    const page = Math.min(10000, Math.max(1, parseInt(String(req.query.page), 10) || 1));
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10) || 25));
+    const [total, pages] = await Promise.all([
+      Page.countDocuments(query),
+      Page.find(query)
+        .select(LIST_FIELDS)
+        .sort({ updatedAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+    ]);
+    res.json({ success: true, data: { pages }, total, page, limit, totalPages: Math.ceil(total / limit) });
   } catch (error) {
     next(error);
   }

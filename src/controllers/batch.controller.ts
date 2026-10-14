@@ -48,11 +48,21 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   // Optional filters
   if (req.query.status) filter.status = req.query.status;
   if (req.query.coaStatus) filter.coaStatus = req.query.coaStatus;
+  // Conditions that each need their own $or are combined with $and (they used to overwrite
+  // each other when a product filter and a search were used together)
+  const and: any[] = [];
   if (req.query.productId) {
-    filter.$or = [
+    and.push({ $or: [
       { productId: req.query.productId },
       { products: req.query.productId }
-    ];
+    ] });
+  }
+  // COA screen: only batches that have a COA document attached
+  if (req.query.hasCoa === 'true') {
+    and.push({ $or: [
+      { 'coaFile.url': { $exists: true, $nin: [null, ''] } },
+      { coaUrl: { $exists: true, $nin: [null, ''] } }
+    ] });
   }
 
   const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
@@ -61,13 +71,14 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
     const matchedProducts = await Product.find({ name: searchRegex }).select('_id');
     const matchedProductIds = matchedProducts.map(p => p._id);
 
-    filter.$or = [
+    and.push({ $or: [
       { batchId: searchRegex },
       { displayName: searchRegex },
       { productId: { $in: matchedProductIds } },
       { products: { $in: matchedProductIds } }
-    ];
+    ] });
   }
+  if (and.length) filter.$and = and;
 
   // Pagination params
   const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
