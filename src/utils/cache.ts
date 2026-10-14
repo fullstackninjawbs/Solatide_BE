@@ -145,4 +145,5 @@ export const TTL = {
   STORE_SETTINGS: 10 * 60,   // 10 minutes
   ANALYTICS: 2 * 60,         // 2 minutes
   SHORT: 60,                  // 1 minute
+  PUBLIC_CONTENT: 10 * 60,   // 10 minutes (collections, FAQs, CMS pages, COAs); cleared on every write
 } as const;

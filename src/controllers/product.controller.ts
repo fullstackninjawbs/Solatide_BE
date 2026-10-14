@@ -76,15 +76,22 @@ const slugify = (name: string): string =>
     .replace(/^-|-$/g, '');
 
 export const getPublicCollections = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const CACHE_KEY = 'public:collections';
+  const cached = await cacheGet(CACHE_KEY);
+  if (cached) return res.status(200).json(cached);
+
   const collections = await Collection.find({ status: 'active' })
     .sort({ sortOrder: 1, createdAt: -1 })
-    .select('name slug description bannerImage productSort seo');
+    .select('name slug description bannerImage productSort seo')
+    .lean();
   
-  res.status(200).json({
+  const payload = {
     success: true,
     results: collections.length,
     data: collections,
-  });
+  };
+  await cacheSet(CACHE_KEY, payload, TTL.PUBLIC_CONTENT);
+  res.status(200).json(payload);
 });
 
 

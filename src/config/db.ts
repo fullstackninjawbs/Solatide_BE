@@ -5,6 +5,7 @@ const connectDB = async (): Promise<void> => {
     const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/solatide';
     const conn = await mongoose.connect(mongoURI, {
       maxPoolSize: 20,                // up from default 5 — handles more concurrent requests
+      minPoolSize: 2,                 // keep warm connections: no new TLS handshake to Atlas after idle
       serverSelectionTimeoutMS: 5000, // fail fast if DB is unreachable
       socketTimeoutMS: 45000,         // prevent hanging queries
     });

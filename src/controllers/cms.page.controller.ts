@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { cacheGet, cacheSet, cacheDel, TTL } from '../utils/cache';
 import Page from '../models/Page';
 import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 import { sanitizeRichHtml } from '../utils/sanitizeHtml';
@@ -158,6 +159,8 @@ export const createPage = async (req: Request, res: Response, next: NextFunction
 
     await newPage.save();
 
+    // Public page caches (list + by slug) must not serve the old version
+    await cacheDel('public:page*');
     // Trigger storefront rebuild automatically in the background
     triggerStorefrontRebuild();
 
@@ -228,6 +231,8 @@ export const updatePage = async (req: Request, res: Response, next: NextFunction
     page.updatedBy = (req as any).user?._id;
     await page.save();
 
+    // Public page caches (list + by slug) must not serve the old version
+    await cacheDel('public:page*');
     // Trigger storefront rebuild automatically in the background
     triggerStorefrontRebuild();
 
@@ -248,6 +253,8 @@ export const deletePage = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
+    // Public page caches (list + by slug) must not serve the old version
+    await cacheDel('public:page*');
     // Trigger storefront rebuild automatically in the background
     triggerStorefrontRebuild();
 
@@ -270,18 +277,30 @@ export const getPageBySlug = async (req: Request, res: Response): Promise<void> 
       res.status(404).json({ message: 'Page not found' });
       return;
     }
+    // Cached per slug (found pages and redirects only; misses are not cached)
+    const CACHE_KEY = `public:page:${raw.toLowerCase()}`;
+    const cached = await cacheGet(CACHE_KEY);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+
     // Accept legacy (pre-normalisation) slugs as stored, plus the lowercase form
     const candidates = Array.from(new Set([raw, raw.toLowerCase()]));
 
     let page = await Page.findOne({ slug: { $in: candidates }, status: 'published' });
     if (page) {
-      res.json(toPublicPage(page));
+      const body = toPublicPage(page);
+      await cacheSet(CACHE_KEY, body, TTL.PUBLIC_CONTENT);
+      res.json(body);
       return;
     }
 
     page = await Page.findOne({ slugHistory: { $in: candidates }, status: 'published' });
     if (page) {
-      res.status(200).json({ redirect: true, targetSlug: page.slug });
+      const body = { redirect: true, targetSlug: page.slug };
+      await cacheSet(CACHE_KEY, body, TTL.PUBLIC_CONTENT);
+      res.status(200).json(body);
       return;
     }
 
@@ -297,7 +316,14 @@ export const getPageBySlug = async (req: Request, res: Response): Promise<void> 
  */
 export const getPublicPagesList = async (req: Request, res: Response): Promise<void> => {
   try {
-    const pages = await Page.find({ status: 'published' }, 'slug title updatedAt').sort({ updatedAt: -1 });
+    const CACHE_KEY = 'public:pages:list';
+    const cached = await cacheGet(CACHE_KEY);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+    const pages = await Page.find({ status: 'published' }, 'slug title updatedAt').sort({ updatedAt: -1 }).lean();
+    await cacheSet(CACHE_KEY, pages, TTL.PUBLIC_CONTENT);
     res.json(pages);
   } catch (error) {
     console.error('[Pages] getPublicPagesList failed:', error);

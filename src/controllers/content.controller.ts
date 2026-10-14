@@ -1,9 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
+import { cacheGet, cacheSet, TTL } from '../utils/cache';
 import { FaqSection } from '../models/cms.model';
 import catchAsync from '../utils/catchAsync';
 
 // GET /api/content/faqs
 export const getPublicFaqSections = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const CACHE_KEY = 'public:faqs';
+  const cached = await cacheGet(CACHE_KEY);
+  if (cached) return res.status(200).json(cached);
+
   // Fetch all sections
   const sections = await FaqSection.find().sort({ sortOrder: 1 });
   
@@ -17,10 +22,12 @@ export const getPublicFaqSections = catchAsync(async (req: Request, res: Respons
     return s;
   });
 
-  res.status(200).json({
+  const payload = {
     success: true,
     data: {
       faqSections: visibleSections
     }
-  });
+  };
+  await cacheSet(CACHE_KEY, payload, TTL.PUBLIC_CONTENT);
+  res.status(200).json(payload);
 });

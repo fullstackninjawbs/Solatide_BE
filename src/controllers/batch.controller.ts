@@ -4,7 +4,7 @@ import Product from '../models/product.model';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
 import { uploadImageBuffer } from '../utils/cloudinary';
-import { cacheDel } from '../utils/cache';
+import { cacheDel, cacheGet, cacheSet, TTL } from '../utils/cache';
 import { escapeRegex } from '../utils/collectionUtils';
 import { fetchCloudinaryCoa } from '../utils/coaProxy';
 
@@ -113,6 +113,10 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
 });
 
 export const getPublicCoas = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const CACHE_KEY = 'public:coas';
+  const cached = await cacheGet(CACHE_KEY);
+  if (cached) return res.status(200).json(cached);
+
   // Fetch active batches that have an approved COA document
   const filter: any = {
     status: 'active'
@@ -121,13 +125,16 @@ export const getPublicCoas = catchAsync(async (req: Request, res: Response, next
   const batches = await Batch.find(filter)
     .populate('productId', 'name slug')
     .populate('products', 'name slug')
-    .sort('-createdAt');
+    .sort('-createdAt')
+    .lean();
 
-  res.status(200).json({
+  const payload = {
     success: true,
     results: batches.length,
     data: { batches }
-  });
+  };
+  await cacheSet(CACHE_KEY, payload, TTL.PUBLIC_CONTENT);
+  res.status(200).json(payload);
 });
 
 /**

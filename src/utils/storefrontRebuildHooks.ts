@@ -19,10 +19,14 @@ export function enableStorefrontAutoRebuild(): void {
   enabled = true;
 }
 
-const QUERY_WRITES = ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace'] as const;
+const QUERY_WRITES = [
+  'updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace',
+  'deleteOne', 'deleteMany', 'findOneAndDelete',
+] as const;
 
 const changed = (res: any): boolean => {
   if (!res) return false;
+  if (typeof res.deletedCount === 'number') return res.deletedCount > 0;
   if (typeof res.modifiedCount === 'number' || typeof res.upsertedCount === 'number') {
     return (res.modifiedCount ?? 0) > 0 || (res.upsertedCount ?? 0) > 0;
   }
@@ -37,7 +41,7 @@ const changed = (res: any): boolean => {
 const onChange = () => {
   if (!enabled) return;
   if (isRedisConnected()) {
-    Promise.all([cacheDel('products:detail*'), cacheDel('products:list*')]).catch(() => undefined);
+    Promise.all([cacheDel('products:detail*'), cacheDel('products:list*'), cacheDel('public:*')]).catch(() => undefined);
   }
   triggerStorefrontRebuild();
 };
