@@ -184,7 +184,7 @@ export const toPublicOrder = (order: any) => {
     grandTotal: o.grandTotal,
     totalAmount: o.totalAmount,
     shippingMethodName: o.shippingMethodName,
-    shippingAddressObj: { name: ship.name, city: ship.city, country: ship.country },
+    shippingAddressObj: { name: ship.name, city: ship.city, state: ship.state, country: ship.country },
     trackingNumber: o.trackingNumber,
     trackingCarrier: o.trackingCarrier,
     trackingUrl: o.trackingUrl,

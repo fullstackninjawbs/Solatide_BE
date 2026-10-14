@@ -203,6 +203,10 @@ export async function onOrderPaid(orderId: unknown, deps?: Partial<OnOrderPaidDe
       eventType: 'purchase',
       orderId: order._id,
       cartValue: order.grandTotal ?? order.totalAmount ?? 0,
+      // Location from the shipping address (accurate, unlike IP-based city lookups)
+      country: order.shippingAddressObj?.country || undefined,
+      region: order.shippingAddressObj?.state || undefined,
+      city: order.shippingAddressObj?.city || undefined,
       clientReported: false,
       timestamp: order.paidAt ?? new Date(),
     });

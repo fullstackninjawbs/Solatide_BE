@@ -42,6 +42,10 @@ export const validateAnalyticsEvent = (body: any): string | null => {
  * - client-sent `purchase` events are stored with clientReported:true so revenue
  *   dashboards can exclude them (purchases should be derived from paid orders)
  */
+/** Crawlers / headless browsers / monitors that run JavaScript (they probe e.g. random /<uuid> URLs). */
+export const BOT_UA = /bot\b|crawler|spider|crawling|headless|lighthouse|pagespeed|gtmetrix|pingdom|uptime|monitor|preview|facebookexternalhit|slurp|bingpreview|ahrefs|semrush|mj12|dotbot|petalbot|yandex|baidu|python-requests|curl\/|wget\//i;
+export const isBotUserAgent = (ua: unknown): boolean => typeof ua !== 'string' || ua.trim() === '' || BOT_UA.test(ua);
+
 export const logEvent = async (req: Request, res: Response): Promise<void> => {
   const error = validateAnalyticsEvent(req.body);
   if (error) {
@@ -52,11 +56,14 @@ export const logEvent = async (req: Request, res: Response): Promise<void> => {
   // Respond immediately — never block the storefront
   res.status(200).json({ success: true });
 
+  // Bots and requests without a browser user agent are acknowledged but not stored
+  if (isBotUserAgent(req.headers['user-agent'])) return;
+
   try {
     const b = req.body;
     const header = (name: string) => clip(req.headers[name] as string | undefined, 100);
 
-    const detectedCountry = clip(b.country, 100) || header('cf-ipcountry') || header('x-country') || 'Australia';
+    const detectedCountry = clip(b.country, 100) || header('cf-ipcountry') || header('x-country') || 'Unknown';
     const detectedRegion = clip(b.region, 100) || header('cf-region');
     const detectedCity = clip(b.city, 100) || header('cf-ipcity');
     const eventPath = clip(b.path) || clip(b.page) || '/';
