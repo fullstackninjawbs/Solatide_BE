@@ -1,4 +1,5 @@
 import sanitizeHtmlLib from 'sanitize-html';
+import { repairEditorLinks } from './repairEditorLinks';
 
 /**
  * Single shared sanitize-html configuration for every admin-authored rich-HTML
@@ -62,10 +63,13 @@ export const RICH_HTML_OPTIONS: sanitizeHtmlLib.IOptions = {
   },
 };
 
-/** Sanitize one rich-HTML string. Non-strings become ''. */
+/**
+ * Sanitize one rich-HTML string. Non-strings become ''.
+ * First repairs nested empty links left by the Jodit editor (see repairEditorLinks).
+ */
 export const sanitizeRichHtml = (html: unknown): string => {
   if (typeof html !== 'string' || html === '') return '';
-  return sanitizeHtmlLib(html, RICH_HTML_OPTIONS);
+  return sanitizeHtmlLib(repairEditorLinks(html), RICH_HTML_OPTIONS);
 };
 
 /** Product fields that contain HTML rendered on the storefront. */
