@@ -45,6 +45,14 @@ export const getTagadaSettings = catchAsync(
 
 // ─── PUT /api/admin/settings/tagada ──────────────────────────────────────────
 
+/**
+ * A secret field is only updated when a NEW value is typed. The GET above returns masked values
+ * ("****abcd") and the form sends the whole form back, so a masked or empty value means
+ * "unchanged" — saving the page must never replace the real key with its mask.
+ */
+const isNewSecret = (v: unknown): v is string =>
+  typeof v === 'string' && v.trim() !== '' && !v.includes('****');
+
 export const updateTagadaSettings = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const {
@@ -66,9 +74,9 @@ export const updateTagadaSettings = catchAsync(
 
     // Only update fields that were actually sent
     if (tagadaEnv !== undefined) settings.tagadaEnv = tagadaEnv;
-    if (tagadaApiKeySandbox !== undefined) settings.tagadaApiKeySandbox = tagadaApiKeySandbox;
-    if (tagadaApiKeyProd !== undefined) settings.tagadaApiKeyProd = tagadaApiKeyProd;
-    if (tagadaWebhookSecret !== undefined) settings.tagadaWebhookSecret = tagadaWebhookSecret;
+    if (isNewSecret(tagadaApiKeySandbox)) settings.tagadaApiKeySandbox = tagadaApiKeySandbox.trim();
+    if (isNewSecret(tagadaApiKeyProd)) settings.tagadaApiKeyProd = tagadaApiKeyProd.trim();
+    if (isNewSecret(tagadaWebhookSecret)) settings.tagadaWebhookSecret = tagadaWebhookSecret.trim();
     if (tagadaEnabled !== undefined) settings.tagadaEnabled = tagadaEnabled;
 
     await settings.save();

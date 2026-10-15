@@ -5,7 +5,6 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  deleteAllProducts,
   updateMediaAltText,
 } from '../../controllers/product.controller';
 
@@ -16,6 +15,5 @@ export {
   createProduct,
   updateProduct,
   deleteProduct,
-  deleteAllProducts,
   updateMediaAltText,
 };

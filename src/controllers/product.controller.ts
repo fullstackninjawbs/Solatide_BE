@@ -546,8 +546,17 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
 });
 
 
+/**
+ * "Delete" archives the product instead of removing it: orders, reviews, COA batches and old
+ * links reference it, so it is hidden from the store (publishStatus 'archived') and kept in the
+ * database. Restore it by setting Status back to Active in the product form.
+ */
 export const deleteProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const deletedProduct = await Product.findByIdAndDelete(req.params.id);
+  const deletedProduct = await Product.findByIdAndUpdate(
+    req.params.id,
+    { $set: { publishStatus: 'archived', published: false } },
+    { new: true }
+  );
 
   if (!deletedProduct) {
     return next(new AppError('No product found with that ID', 404));
@@ -563,17 +572,9 @@ export const deleteProduct = catchAsync(async (req: Request, res: Response, next
   // Trigger storefront rebuild in background
   triggerStorefrontRebuild();
 
-  res.status(204).json({ success: true, data: null });
+  res.status(200).json({ success: true, message: 'Product archived', data: { product: deletedProduct } });
 });
 
-
-export const deleteAllProducts = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  await Product.deleteMany({});
-  res.status(200).json({
-    success: true,
-    message: 'All products have been deleted successfully.'
-  });
-});
 
 export const uploadProductImage = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   if (!req.file) {

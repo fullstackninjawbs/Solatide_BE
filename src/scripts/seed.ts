@@ -88,6 +88,13 @@ const seedDB = async (): Promise<void> => {
     console.error('[Seeder] Refusing to run with NODE_ENV=production (this deletes all products). Set SEED_ALLOW_PRODUCTION=yes to override.');
     process.exit(1);
   }
+  // NODE_ENV alone is not enough (a server .env may say development): the seeder wipes the
+  // product catalog, so it only ever runs against a database on this machine.
+  const dbHost = (() => { try { return new URL(config.mongoUri.replace(/^mongodb(\+srv)?:/, 'http:')).hostname; } catch { return ''; } })();
+  if (!['localhost', '127.0.0.1', '::1'].includes(dbHost)) {
+    console.error(`[Seeder] Refusing to run against a non-local database (${dbHost || 'unknown host'}). The seeder deletes all products.`);
+    process.exit(1);
+  }
   const adminPassword = process.env.SEED_ADMIN_PASSWORD || '';
   if (adminPassword.length < 16) {
     console.error('[Seeder] SEED_ADMIN_PASSWORD env var is required and must be at least 16 characters.');

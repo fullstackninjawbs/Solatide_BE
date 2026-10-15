@@ -5,7 +5,6 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  deleteAllProducts,
   uploadProductImage,
   getPublicCollections,
 } from '../controllers/product.controller';
@@ -45,7 +44,6 @@ router.post(
 // Protected Admin/Operations Product CRUD Routes
 router.post('/', protect, restrictTo(...ACCESS.productImport), createProduct);
 router.patch('/:id', protect, restrictTo(...ACCESS.productImport), updateProduct);
-router.delete('/', protect, restrictTo(...ACCESS.publicProductDelete), deleteAllProducts);
 router.delete('/:id', protect, restrictTo(...ACCESS.publicProductDelete), deleteProduct);
 
 // Upload Image Route

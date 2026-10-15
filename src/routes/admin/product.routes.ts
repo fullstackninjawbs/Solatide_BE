@@ -20,6 +20,4 @@ router.route('/:id')
 
 router.patch('/:productId/media/:mediaId/alt-text', restrictTo('admin', 'super_admin', 'operations'), productController.updateMediaAltText);
 
-router.delete('/', restrictTo('super_admin'), productController.deleteAllProducts);
-
 export default router;

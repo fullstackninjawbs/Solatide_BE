@@ -243,11 +243,12 @@ export const updatePage = async (req: Request, res: Response, next: NextFunction
 };
 
 /**
- * ADMIN: Delete page
+ * ADMIN: "Delete" archives the page (status 'archived') instead of removing it: it disappears
+ * from the website and sitemap but its content is kept. Restore it with Save draft / Publish.
  */
 export const deletePage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const page = await Page.findByIdAndDelete(req.params.id);
+    const page = await Page.findByIdAndUpdate(req.params.id, { $set: { status: 'archived' } }, { new: true });
     if (!page) {
       res.status(404).json({ message: 'Page not found' });
       return;
@@ -258,7 +259,7 @@ export const deletePage = async (req: Request, res: Response, next: NextFunction
     // Trigger storefront rebuild automatically in the background
     triggerStorefrontRebuild();
 
-    res.json({ message: 'Page deleted successfully' });
+    res.json({ message: 'Page archived' });
   } catch (error) {
     next(error);
   }

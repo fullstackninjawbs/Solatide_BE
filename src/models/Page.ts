@@ -9,7 +9,7 @@ export interface IPage extends Document {
   };
   seoTitle?: string;
   metaDescription?: string;
-  status: 'draft' | 'published';
+  status: 'draft' | 'published' | 'archived';
   slugHistory: string[];
   createdBy?: mongoose.Types.ObjectId;
   updatedBy?: mongoose.Types.ObjectId;
@@ -47,7 +47,7 @@ const PageSchema = new Schema<IPage>(
     },
     status: {
       type: String,
-      enum: ['draft', 'published'],
+      enum: ['draft', 'published', 'archived'],
       default: 'draft',
     },
     slugHistory: {

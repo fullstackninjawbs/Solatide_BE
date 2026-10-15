@@ -283,8 +283,13 @@ export const updateBatch = catchAsync(async (req: Request, res: Response, next: 
   });
 });
 
+/**
+ * "Delete" archives the batch (status 'inactive') instead of removing it, so its COA record is
+ * kept: the public COA list and product pages only show active batches. Restore it by setting
+ * Status back to Active in the batch form (and re-linking it as the product's current batch).
+ */
 export const deleteBatch = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const batch = await Batch.findByIdAndDelete(req.params.id);
+  const batch = await Batch.findByIdAndUpdate(req.params.id, { $set: { status: 'inactive' } }, { new: true });
 
   if (!batch) {
     return next(new AppError('No batch record found with that ID', 404));
@@ -318,7 +323,7 @@ export const deleteBatch = catchAsync(async (req: Request, res: Response, next: 
     }
   }
 
-  await cacheDel('products:list*');
+  await Promise.all([cacheDel('products:list*'), cacheDel('public:coas')]);
 
-  res.status(204).json({ success: true, data: null });
+  res.status(200).json({ success: true, message: 'Batch archived', data: { batch } });
 });
