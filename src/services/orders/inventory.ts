@@ -9,6 +9,10 @@ import mongoose from 'mongoose';
 import Product from '../../models/product.model';
 import Order from '../../models/order.model';
 import { isDenyPolicy } from './checkoutItems';
+import { STOCK_ONLY, notifyStockAvailabilityChanged } from '../../utils/storefrontRebuildHooks';
+
+/** Order stock writes skip the automatic storefront rebuild (see STOCK_ONLY). */
+const STOCK_WRITE = { [STOCK_ONLY]: true } as Record<string, unknown>;
 
 export type DecrementResult =
   | { ok: true; productId: string; variantId: string | null }
@@ -23,7 +27,7 @@ async function recomputeAggregate(productId: unknown): Promise<void> {
   await Product.updateOne({ _id: productId, 'variants.0': { $exists: true } }, [
     { $set: { stockQuantity: { $sum: '$variants.stockQty' } } },
     { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
-  ]);
+  ], STOCK_WRITE);
 }
 
 /**
@@ -42,12 +46,16 @@ export async function decrementStockAtomic(
   const pid = String(productId);
 
   if (variantId) {
-    const res = await Product.updateOne(
+    const updated: any = await Product.findOneAndUpdate(
       { _id: productId, variants: { $elemMatch: { _id: variantId, stockQty: { $gte: q } } } },
-      { $inc: { 'variants.$.stockQty': -q } }
-    );
-    if (res.modifiedCount === 1) {
+      { $inc: { 'variants.$.stockQty': -q } },
+      { ...STOCK_WRITE, new: true, projection: { variants: 1 } }
+    ).lean();
+    if (updated) {
       await recomputeAggregate(productId);
+      // Stock was >= q > 0 before, so reaching 0 means this variant just sold out
+      const v = (updated.variants ?? []).find((x: any) => sameId(x._id, variantId));
+      if (v && Number(v.stockQty) <= 0) notifyStockAvailabilityChanged(productId);
       return { ok: true, productId: pid, variantId: String(variantId) };
     }
     const product = await Product.findById(productId).select('variants inventoryPolicy continueSellingWhenOutOfStock').lean();
@@ -59,14 +67,18 @@ export async function decrementStockAtomic(
     return { ok: false, reason: 'oversold', productId: pid, variantId: String(variantId) };
   }
 
-  const res = await Product.updateOne(
+  const updated: any = await Product.findOneAndUpdate(
     { _id: productId, stockQuantity: { $gte: q } },
     [
       { $set: { stockQuantity: { $subtract: ['$stockQuantity', q] } } },
       { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
-    ]
-  );
-  if (res.modifiedCount === 1) return { ok: true, productId: pid, variantId: null };
+    ],
+    { ...STOCK_WRITE, new: true, projection: { stockQuantity: 1 } }
+  ).lean();
+  if (updated) {
+    if (Number(updated.stockQuantity) <= 0) notifyStockAvailabilityChanged(productId);
+    return { ok: true, productId: pid, variantId: null };
+  }
   const product = await Product.findById(productId).select('inventoryPolicy continueSellingWhenOutOfStock').lean();
   if (!product) return { ok: false, reason: 'not_found', productId: pid, variantId: null };
   if (!isDenyPolicy(product, null)) {

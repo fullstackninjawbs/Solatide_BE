@@ -5,7 +5,8 @@ import { cacheDel, cacheDelIndexed, isRedisConnected } from './cache';
 /**
  * Request a (debounced, single-flight) storefront rebuild whenever a document that is
  * rendered into the prerendered HTML / JSON-LD actually changes — no matter which code path
- * wrote it: admin edits, order stock decrements, CSV import, Tagada sync, batch/COA updates.
+ * wrote it: admin edits, CSV import, Tagada sync, batch/COA updates. Order stock decrements
+ * only rebuild when a product/variant runs out (see STOCK_ONLY below).
  *
  * Bursts (e.g. a multi-line order or a full import) collapse into one rebuild via the
  * 10 s debounce + cross-process lock in rebuildStorefront.ts. No-op updates are ignored.
@@ -77,13 +78,38 @@ const onProductChange = (ids: string[] | null, contentEdit: boolean) => {
 
 const CONTENT_EDIT_OPS = new Set(['findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete', 'deleteOne', 'deleteMany']);
 
+/**
+ * Query option for order stock decrements: `Product.updateOne(filter, update, { stockOnly: true })`.
+ * Such writes only clear that product's API cache — the product page fetches live stock anyway —
+ * and do NOT rebuild the storefront. The caller rebuilds via notifyStockAvailabilityChanged()
+ * only when a product/variant actually runs out (the prerendered "Sold out" + schema.org
+ * availability change). Admin edits, imports and Tagada sync are not tagged and rebuild as before.
+ */
+export const STOCK_ONLY = 'stockOnly';
+const isStockOnly = (query: any): boolean => !!(query && typeof query.getOptions === 'function' && query.getOptions()?.[STOCK_ONLY]);
+
+const clearProductCache = (ids: string[] | null) => {
+  if (!enabled || !isRedisConnected()) return;
+  const jobs: Promise<unknown>[] = [cacheDel('products:list*')];
+  if (ids && ids.length) ids.forEach((id) => jobs.push(cacheDelIndexed(`products:detail-index:${id}`)));
+  else jobs.push(cacheDel('products:detail*'));
+  Promise.all(jobs).catch(() => undefined);
+};
+
+/** A stock write made a product or variant run out (or come back): rebuild the storefront. */
+export function notifyStockAvailabilityChanged(productId: unknown): void {
+  onProductChange(productId ? [String(productId)] : null, false);
+}
+
 export function registerStorefrontRebuildHooks(schema: Schema, opts: { product?: boolean } = {}): void {
   if (opts.product) {
     schema.post('save', function (doc: any) { onProductChange(doc?._id ? [String(doc._id)] : null, true); });
     schema.post('insertMany', function () { onProductChange([], true); }); // new products: lists only
     for (const op of QUERY_WRITES) {
       schema.post(op as any, function (this: any, res: any) {
-        if (changed(res)) onProductChange(productIdsFromWrite(this, res), CONTENT_EDIT_OPS.has(op));
+        if (!changed(res)) return;
+        if (isStockOnly(this)) clearProductCache(productIdsFromWrite(this, res));
+        else onProductChange(productIdsFromWrite(this, res), CONTENT_EDIT_OPS.has(op));
       });
     }
     return;
