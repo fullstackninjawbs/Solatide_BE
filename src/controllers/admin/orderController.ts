@@ -172,9 +172,17 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
     }
   }
 
+  // The CRM customer record for this order (customers are keyed by lower-cased email; orders only
+  // carry the email), so the admin can open the customer's profile / order history.
+  const email = String(order?.customer?.email || order?.customerEmail || '').trim().toLowerCase();
+  const customerRecord = email ? await Customer.findOne({ email }).select('_id').lean() : null;
+
   res.status(200).json({
     success: true,
-    data: { order: order?.toObject ? order.toObject() : order },
+    data: {
+      order: order?.toObject ? order.toObject() : order,
+      customerId: customerRecord?._id ?? null,
+    },
   });
 });
 
