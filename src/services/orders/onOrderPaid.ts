@@ -229,10 +229,10 @@ export async function onOrderPaid(
       eventType: 'purchase',
       orderId: order._id,
       cartValue: order.grandTotal ?? order.totalAmount ?? 0,
-      // Location from the shipping address (accurate, unlike IP-based city lookups)
-      country: order.shippingAddressObj?.country || undefined,
-      region: order.shippingAddressObj?.state || undefined,
-      city: order.shippingAddressObj?.city || undefined,
+      // No location: analytics shows where the VISITOR is (the browser's purchase event carries
+      // that); the shipping address is where the order goes, not the visitor
+      page: `/order/${order._id}`,
+      path: `/order/${order._id}`,
       clientReported: false,
       timestamp: order.paidAt ?? new Date(),
     });

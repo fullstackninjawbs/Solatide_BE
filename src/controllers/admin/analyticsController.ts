@@ -248,7 +248,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } }, count: { $sum: 1 } } }
     ]),
     Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: liveWindow } })),
-    AnalyticsEvent.find({}).sort({ timestamp: -1 }).limit(15).lean(),
+    AnalyticsEvent.find({}).sort({ timestamp: -1 }).limit(40).lean(),
     AnalyticsEvent.aggregate([
       { $match: { timestamp: { $gte: from, $lte: to }, country: { $exists: true, $nin: [null, ''] } } },
       { $group: { _id: { country: '$country', session: '$sessionId' } } },
@@ -329,10 +329,23 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     if (orderCountries.length > 0) countryResult = orderCountries;
   }
 
-  // 5. Clean up recent events output
-  const recentEvents = (rawEvents as any[]).map((evt: any) => ({
+  // 5. Clean up recent events output.
+  // One card per purchase: the browser's event (visitor's location + page) is shown; the server's
+  // trusted event (used for revenue) only when the browser never reported it (e.g. tab closed).
+  const serverPurchaseOrderIds = (rawEvents as any[])
+    .filter((e: any) => e.eventType === 'purchase' && e.clientReported !== true && e.orderId)
+    .map((e: any) => e.orderId);
+  const browserReported = new Set(
+    serverPurchaseOrderIds.length
+      ? (await AnalyticsEvent.distinct('orderId', { eventType: 'purchase', clientReported: true, orderId: { $in: serverPurchaseOrderIds } })).map(String)
+      : []
+  );
+  const streamEvents = (rawEvents as any[])
+    .filter((e: any) => !(e.eventType === 'purchase' && e.clientReported !== true && e.orderId && browserReported.has(String(e.orderId))))
+    .slice(0, 15);
+  const recentEvents = streamEvents.map((evt: any) => ({
     ...evt,
-    country: evt.country && evt.country !== 'undefined' ? evt.country : 'India',
+    country: evt.country && evt.country !== 'undefined' ? evt.country : 'Unknown',
     path: evt.path || evt.page || '/',
     productName: evt.productName || (evt.page && evt.page.includes('/product/') ? evt.page.split('/product/')[1]?.replace(/-/g, ' ') : undefined)
   }));
