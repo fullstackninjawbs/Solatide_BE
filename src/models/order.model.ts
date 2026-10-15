@@ -162,6 +162,8 @@ export interface IOrder extends mongoose.Document {
   inventoryDecrementedAt?: Date | null;
   /** Set when the (opt-in) abandoned-checkout reminder email was sent for this pending order. */
   abandonedReminderSentAt?: Date | null;
+  /** Set when the "order shipped" email was sent (claimed atomically, so it is sent at most once). */
+  shipmentEmailSentAt?: Date | null;
   oversold?: boolean;
   oversells?: IOversell[];
   discountDescription?: string;
@@ -356,6 +358,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     sideEffectsCompletedAt: { type: Date, default: null },
     sideEffectStepsDone: { type: [String], default: undefined },
     abandonedReminderSentAt: { type: Date, default: null },
+    shipmentEmailSentAt: { type: Date, default: null },
     sideEffectErrors: {
       type: [{
         step: { type: String },

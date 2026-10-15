@@ -1,4 +1,4 @@
-import { sendShipmentConfirmationEmail } from '../emailService';
+import { buildTrackingUrl, isGenericTrackingUrl, sendShipmentEmailOnce } from './shipmentNotify';
 
 /** Tracking fields as reported by Starshipit (webhook payload or GET /orders details). */
 export interface StarshipitTrackingUpdate {
@@ -7,6 +7,7 @@ export interface StarshipitTrackingUpdate {
   carrier?: string;
   carrier_name?: string;
   label_url?: string;
+  tracking_url?: string;
 }
 
 const SHIPPED_STATUSES = new Set(['dispatched', 'shipped', 'printed']);
@@ -15,13 +16,16 @@ const SHIPPED_STATUSES = new Set(['dispatched', 'shipped', 'printed']);
  * Apply a Starshipit tracking update to an order document — shared by the webhook and the
  * scheduled tracking refresh so both behave identically:
  *  - tracking number / status / carrier (and label URL when provided) are updated
- *  - the first time the status becomes printed/dispatched/shipped, the order is marked
- *    shipped + fulfilled and the shipment confirmation email is sent (once)
+ *  - when the status becomes printed/dispatched/shipped the order is marked shipped + fulfilled;
+ *    the shipment email is only sent when THIS update ships the order (if admin "Create
+ *    shipment" already shipped it, that path sent the email) — and at most once per order
+ *    either way (sendShipmentEmailOnce), so a webhook racing the admin request can't duplicate it
  * Saves the order only when something changed. Returns what happened.
  */
 export async function applyStarshipitTrackingUpdate(order: any, update: StarshipitTrackingUpdate): Promise<{ changed: boolean; newlyShipped: boolean }> {
   let hasChanges = false;
   let isNewlyShipped = false;
+  const wasShipped = order.status === 'shipped';
 
   if (update.tracking_number && order.trackingNumber !== update.tracking_number) {
     order.trackingNumber = update.tracking_number;
@@ -53,19 +57,15 @@ export async function applyStarshipitTrackingUpdate(order: any, update: Starship
   }
 
   if (hasChanges) {
-    // Auto-generate generic tracking URL if we have a tracking number but no URL
-    if (order.trackingNumber && !order.trackingUrl) {
-      const carrier = order.trackingCarrier || '';
-      if (carrier.toLowerCase().includes('auspost') || carrier.toLowerCase().includes('australia post')) {
-        order.trackingUrl = `https://auspost.com.au/mypost/track/#/details/${order.trackingNumber}`;
-      } else {
-        order.trackingUrl = `https://www.google.com/search?q=${order.trackingNumber}`;
-      }
+    // Carrier tracking link (also replaces an old generic Google-search link)
+    if (order.trackingNumber && (!order.trackingUrl || isGenericTrackingUrl(order.trackingUrl))) {
+      const url = buildTrackingUrl(order.trackingCarrier, order.trackingNumber, update.tracking_url);
+      if (url) order.trackingUrl = url;
     }
     await order.save();
-    if (isNewlyShipped) {
-      sendShipmentConfirmationEmail(order).catch((err) => console.error('Failed to send shipment email:', err?.message ?? err));
-    }
+  }
+  if (isNewlyShipped && !wasShipped) {
+    await sendShipmentEmailOnce(order);
   }
   return { changed: hasChanges, newlyShipped: isNewlyShipped };
 }

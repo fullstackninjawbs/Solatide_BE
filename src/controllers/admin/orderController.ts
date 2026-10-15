@@ -3,7 +3,8 @@ import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
-import { sendShipmentConfirmationEmail, sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../../services/emailService';
+import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../../services/emailService';
+import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -327,6 +328,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       let labelUrl = order.labelUrl || '';
       let trackingUrl = order.trackingUrl || '';
       let shipmentStatus = order.shipmentStatus || 'Order Created in Starshipit';
+      // Orders already shipped (incl. before shipmentEmailSentAt existed) have had their email
+      const wasShippedBefore = order.status === 'shipped';
       let warning: string | undefined;
 
       try {
@@ -369,15 +372,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
         console.warn('getShipmentDetails failed for existing order:', detailsErr.message);
       }
 
-      // Build tracking URL if still missing
-      if (!trackingUrl && trackingNumber && trackingCarrier) {
-        const cl = trackingCarrier.toLowerCase();
-        if (cl.includes('australia post') || cl.includes('auspost') || cl.includes('mypost')) {
-          trackingUrl = `https://auspost.com.au/mypost/track/#/details/${trackingNumber}`;
-        } else {
-          trackingUrl = `https://www.google.com/search?q=${trackingNumber}`;
-        }
-      }
+      // Carrier tracking link (Starshipit's own URL preferred; no generic Google-search link)
+      trackingUrl = buildTrackingUrl(trackingCarrier, trackingNumber, trackingUrl);
 
       if (trackingNumber) order.trackingNumber = trackingNumber;
       if (trackingCarrier) order.trackingCarrier = trackingCarrier;
@@ -388,9 +384,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
 
       await order.save();
 
-      if (trackingNumber && !order.trackingNumber) {
-        sendShipmentConfirmationEmail(order).catch(err => console.error('Failed to send shipment email:', err));
-      }
+      // Only when this refresh ships the order, and at most once (the webhook may be racing it)
+      if (order.trackingNumber && !wasShippedBefore) await sendShipmentEmailOnce(order);
 
       return res.status(200).json({
         success: true,
@@ -480,14 +475,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       }
     }
 
-    if (!trackingUrl && trackingCarrier && trackingNumber) {
-      const carrierLower = trackingCarrier.toLowerCase();
-      if (carrierLower.includes('australia post') || carrierLower.includes('auspost') || carrierLower.includes('mypost')) {
-        trackingUrl = `https://auspost.com.au/mypost/track/#/details/${trackingNumber}`;
-      } else {
-        trackingUrl = `https://www.google.com/search?q=${trackingNumber}`;
-      }
-    }
+    // Carrier tracking link (Starshipit's own URL preferred; no generic Google-search link)
+    trackingUrl = buildTrackingUrl(trackingCarrier, trackingNumber, trackingUrl);
 
     // 2. Update Order
     order.starshipitOrderId = shippingResult.orderId;
@@ -506,9 +495,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
 
     await order.save();
 
-    if (order.trackingNumber) {
-      sendShipmentConfirmationEmail(order).catch(err => console.error('Failed to send shipment email:', err));
-    }
+    // At most once per order (Starshipit's "Printed" webhook can race this request)
+    if (order.trackingNumber) await sendShipmentEmailOnce(order);
 
     res.status(200).json({
       success: true,
