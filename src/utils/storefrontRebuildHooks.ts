@@ -102,8 +102,18 @@ export function notifyStockAvailabilityChanged(productId: unknown): void {
 }
 
 export function registerStorefrontRebuildHooks(schema: Schema, opts: { product?: boolean } = {}): void {
+  // Mongoose runs post('save') even when nothing was modified (no write happens): remember
+  // whether this save actually changes the document, so a no-op "Save" doesn't rebuild.
+  schema.pre('save', function (this: any, next: () => void) {
+    this.$locals.storefrontChanged = this.isNew || this.modifiedPaths().length > 0;
+    next();
+  });
+  const savedWithChanges = (doc: any) => doc?.$locals?.storefrontChanged !== false;
+
   if (opts.product) {
-    schema.post('save', function (doc: any) { onProductChange(doc?._id ? [String(doc._id)] : null, true); });
+    schema.post('save', function (doc: any) {
+      if (savedWithChanges(doc)) onProductChange(doc?._id ? [String(doc._id)] : null, true);
+    });
     schema.post('insertMany', function () { onProductChange([], true); }); // new products: lists only
     for (const op of QUERY_WRITES) {
       schema.post(op as any, function (this: any, res: any) {
@@ -114,7 +124,9 @@ export function registerStorefrontRebuildHooks(schema: Schema, opts: { product?:
     }
     return;
   }
-  schema.post('save', onChange);
+  schema.post('save', function (doc: any) {
+    if (savedWithChanges(doc)) onChange();
+  });
   schema.post('insertMany', onChange);
   for (const op of QUERY_WRITES) {
     schema.post(op as any, function (res: any) {
