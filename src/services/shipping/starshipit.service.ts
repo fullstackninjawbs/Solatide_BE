@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { starshipitRequest } from './starshipitHttp';
 import { IOrder } from '../../models/order.model';
 import ShippingPackage from '../../models/shippingPackage.model';
 import dotenv from 'dotenv';
@@ -172,7 +172,7 @@ export class StarshipitService {
       if (!starshipitOrderId) {
         // Payload contains customer PII (name/address/phone/email) — log identifiers only (L-11).
         console.log(`Sending order ${payload.order_number} to Starshipit /orders (${payload.items.length} items, country=${country})`);
-        const response = await axios.post(`${this.baseUrl}/orders`, { order: payload }, this.requestConfig);
+        const response = await starshipitRequest('post', `${this.baseUrl}/orders`, { order: payload }, this.requestConfig, { repeatable: false });
 
         console.log('Starshipit POST /orders HTTP Status:', response.status);
 
@@ -221,9 +221,9 @@ export class StarshipitService {
 
       try {
         console.log(`Calling POST /orders/shipment for order_id: ${starshipitOrderId}`);
-        const labelResponse = await axios.post(`${this.baseUrl}/orders/shipment`, {
+        const labelResponse = await starshipitRequest('post', `${this.baseUrl}/orders/shipment`, {
           order_id: parseInt(starshipitOrderId)
-        }, this.requestConfig);
+        }, this.requestConfig, { repeatable: true });
 
         console.log(`Starshipit POST /orders/shipment HTTP ${labelResponse.status} success=${labelResponse.data?.success}`);
 
@@ -281,7 +281,7 @@ export class StarshipitService {
     trackingUrl?: string;
   }> {
     try {
-      const response = await axios.get(`${this.baseUrl}/orders`, { ...this.requestConfig, params: { order_id: orderId } });
+      const response = await starshipitRequest('get', `${this.baseUrl}/orders`, undefined, { ...this.requestConfig, params: { order_id: orderId } }, { repeatable: true });
       console.log(`Starshipit GetShipmentDetails order_id=${orderId} HTTP ${response.status}`);
       const order = response.data?.order || (response.data?.orders && response.data.orders[0]);
 

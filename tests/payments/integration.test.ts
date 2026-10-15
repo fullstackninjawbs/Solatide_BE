@@ -256,6 +256,50 @@ itest('legacy paid order without paidAt is never re-processed', async () => {
   assert.equal(countFor(calls.confirmation, order._id), 0);
 });
 
+itest('queue retry (resume): only failed steps re-run, no duplicate emails or stock', async () => {
+  const product = await makeProduct(10);
+  const order = await makePendingOrder(product, { paymentStatus: 'paid', paidAt: new Date(), customerEmail: 'resume@example.com' });
+  const sent = { confirmation: 0, admin: 0, address: 0 };
+  let failConfirmation = true;
+  const deps = {
+    sendOrderConfirmationEmail: async () => { if (failConfirmation) throw new Error('SMTP down'); sent.confirmation++; },
+    sendAdminNewOrderNotificationEmail: async () => { sent.admin++; },
+    validateOrderAddress: async () => { sent.address++; },
+    deactivatePromotion: async () => undefined,
+    refreshOrderDetails: async () => undefined,
+  };
+
+  // 1st attempt: confirmation email fails → order not completed, error recorded
+  const first = await onOrderPaid(order._id, deps, { resume: true });
+  assert.equal(first.claimed, true);
+  assert.deepEqual(first.errors, ['confirmation_email']);
+  let doc = await Order.findById(order._id).lean();
+  assert.equal(doc.sideEffectsCompletedAt, null, 'not complete while a step failed');
+  assert.ok(doc.sideEffectStepsDone.includes('inventory') && doc.sideEffectStepsDone.includes('admin_notification'));
+  assert.ok(!doc.sideEffectStepsDone.includes('confirmation_email'));
+  assert.equal((await Product.findById(product._id).lean()).variants[0].stockQty, 8);
+
+  // Without resume (e.g. a webhook arriving again) nothing re-runs
+  assert.equal((await onOrderPaid(order._id, deps)).claimed, false);
+
+  // 2nd attempt (queue retry): only the failed step runs
+  failConfirmation = false;
+  const second = await onOrderPaid(order._id, deps, { resume: true });
+  assert.equal(second.claimed, true);
+  assert.equal(second.resumed, true);
+  assert.deepEqual(second.errors, []);
+  doc = await Order.findById(order._id).lean();
+  assert.ok(doc.sideEffectsCompletedAt, 'completed once all steps succeeded');
+  assert.equal(sent.confirmation, 1, 'confirmation sent exactly once');
+  assert.equal(sent.admin, 1, 'admin email not repeated');
+  assert.equal((await Product.findById(product._id).lean()).variants[0].stockQty, 8, 'stock not decremented twice');
+  assert.equal(await Customer.countDocuments({ email: 'resume@example.com' }), 1);
+  assert.equal((await Customer.findOne({ email: 'resume@example.com' }).lean()).orderCount, 1, 'customer orderCount not incremented twice');
+
+  // A further resume does nothing (already complete)
+  assert.equal((await onOrderPaid(order._id, deps, { resume: true })).claimed, false);
+});
+
 // ─── (2) duplicate webhook event ────────────────────────────────────────────
 itest('duplicate webhook delivery is processed once', async () => {
   const product = await makeProduct(10);

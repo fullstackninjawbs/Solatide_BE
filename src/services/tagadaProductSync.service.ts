@@ -8,6 +8,20 @@ import config from '../config';
 /**
  * Fetch all products from Tagada using pagination.
  */
+/** Retry a read-only Tagada call up to 3 times (2 s, 5 s backoff). */
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  const delays = [2000, 5000];
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (attempt > delays.length) throw err;
+      console.warn(`[TagadaSync] ${label} failed (${err?.message}); retry ${attempt}/${delays.length} in ${delays[attempt - 1]} ms`);
+      await new Promise((r) => setTimeout(r, delays[attempt - 1]));
+    }
+  }
+}
+
 export async function fetchTagadaProducts(): Promise<any[]> {
   const client = await getTagadaClient();
   let allProducts: any[] = [];
@@ -16,13 +30,13 @@ export async function fetchTagadaProducts(): Promise<any[]> {
 
   while (hasMore) {
     try {
-      // Pass storeId as required by Tagada SDK
-      const response = await client.products.list({
+      // Pass storeId as required by Tagada SDK. Read-only call: retried on transient failures.
+      const response: any = await withRetry<any>(() => client.products.list({
         storeId: config.tagadaStoreId,
         page,
         limit: 100,
         includeVariants: true
-      });
+      }), `tagada.products.list page ${page}`);
 
       // Tagada SDK usually returns an object like { data: [...], has_more: boolean } or similar
       const products = response.data || response;
@@ -248,10 +262,10 @@ export async function previewTagadaProductSync(): Promise<any> {
 /**
  * Run a full sync on all Tagada products and record the log.
  */
-export async function syncAllTagadaProducts(adminUserId: any): Promise<any> {
+export async function syncAllTagadaProducts(adminUserId: any, syncType: 'full' | 'scheduled' = 'full'): Promise<any> {
   const log = new TagadaProductSyncLog({
     initiatedBy: adminUserId,
-    syncType: 'full',
+    syncType,
     startedAt: new Date(),
     status: 'running',
     changes: []

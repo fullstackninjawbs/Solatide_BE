@@ -1,4 +1,6 @@
-import { transporter } from '../config/email';
+// Emails are sent through deliverMail: a queued, retried background job when the job queue is
+// available (SMTP hiccups are retried), otherwise sent directly as before.
+import { deliverMail } from '../queues/producers';
 import { escapeHtml as e, safeUrl } from '../utils/escapeHtml';
 import { Order } from '../models/order.model';
 import { generateOrderAccessToken } from '../domain/orderAccess';
@@ -118,8 +120,8 @@ export const sendVerificationEmail = async (
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Verification email sent: %s', info.messageId);
+    const info = await deliverMail(mailOptions);
+    console.log('Verification email %s: %s', info?.queued ? 'queued' : 'sent', info?.messageId ?? '');
   } catch (error) {
     console.error('Error sending verification email:', error);
     throw error;
@@ -277,8 +279,8 @@ export const sendOrderConfirmationEmail = async (order: any) => {
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Order confirmation email sent: %s', info.messageId);
+    const info = await deliverMail(mailOptions);
+    console.log('Order confirmation email %s: %s', info?.queued ? 'queued' : 'sent', info?.messageId ?? '');
   } catch (error) {
     console.error('Error sending order confirmation email:', error);
     throw error;
@@ -385,8 +387,8 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Shipment confirmation email sent: %s', info.messageId);
+    const info = await deliverMail(mailOptions);
+    console.log('Shipment confirmation email %s: %s', info?.queued ? 'queued' : 'sent', info?.messageId ?? '');
   } catch (error) {
     console.error('Error sending shipment confirmation email:', error);
     throw error;
@@ -452,7 +454,7 @@ export const sendResetPasswordEmail = async (email: string, resetToken: string, 
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await deliverMail(mailOptions);
     console.log(`Password reset email sent to ${email}`);
   } catch (error) {
     console.error('Error sending reset email:', error);
@@ -503,7 +505,7 @@ export const sendNewsletterWelcomeEmail = async (email: string) => {
     </html>
   `;
 
-  await transporter.sendMail({
+  await deliverMail({
     from: `"${process.env.SMTP_FROM_NAME || 'Solatide Biosciences'}" <${process.env.SMTP_FROM_EMAIL}>`,
     to: email,
     subject: 'Welcome to Solatide Biosciences!',
@@ -682,8 +684,8 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('[Admin Email] New order notification email sent to %s: %s', adminNotificationEmail, info.messageId);
+    const info = await deliverMail(mailOptions);
+    console.log('[Admin Email] New order notification email %s to %s: %s', info?.queued ? 'queued' : 'sent', adminNotificationEmail, info?.messageId ?? '');
   } catch (error) {
     console.error('[Admin Email] Error sending admin order notification email:', error);
   }

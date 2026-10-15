@@ -156,8 +156,12 @@ export interface IOrder extends mongoose.Document {
   paidAt?: Date | null;
   sideEffectsClaimedAt?: Date | null;
   sideEffectsCompletedAt?: Date | null;
+  /** Side-effect steps that already succeeded (a queue retry only re-runs the others). */
+  sideEffectStepsDone?: string[];
   sideEffectErrors?: ISideEffectError[];
   inventoryDecrementedAt?: Date | null;
+  /** Set when the (opt-in) abandoned-checkout reminder email was sent for this pending order. */
+  abandonedReminderSentAt?: Date | null;
   oversold?: boolean;
   oversells?: IOversell[];
   discountDescription?: string;
@@ -350,6 +354,8 @@ const orderSchema = new mongoose.Schema<IOrder>(
     paidAt: { type: Date, default: null },
     sideEffectsClaimedAt: { type: Date, default: null },
     sideEffectsCompletedAt: { type: Date, default: null },
+    sideEffectStepsDone: { type: [String], default: undefined },
+    abandonedReminderSentAt: { type: Date, default: null },
     sideEffectErrors: {
       type: [{
         step: { type: String },

@@ -4,6 +4,9 @@ import connectDB from './config/db';
 import app from './app';
 import { initializeTagadaClientFromDB } from './services/tagadaClient';
 import { enableStorefrontAutoRebuild } from './utils/storefrontRebuildHooks';
+import { shouldRunWorkersInApi, startWorkers, stopWorkers } from './queues/workers';
+import { closeQueues } from './queues/queues';
+import { closeProducerConnection } from './queues/connection';
 
 // Product/batch/collection/FAQ changes refresh the prerendered storefront — only in the API process.
 enableStorefrontAutoRebuild();
@@ -18,6 +21,10 @@ process.on('uncaughtException', (err: Error) => {
 // Connect to MongoDB Database and initialize DB-backed singletons
 connectDB().then(() => {
   initializeTagadaClientFromDB();
+  // Background job workers (BullMQ): first PM2 instance only, unless RUN_WORKERS says otherwise
+  if (shouldRunWorkersInApi()) {
+    startWorkers().catch((err) => console.error('[Queue] workers failed to start:', err?.message ?? err));
+  }
 });
 
 // Start the server
@@ -46,6 +53,10 @@ const gracefulShutdown = (signal: string, exitCode = 0) => {
   }, FORCE_EXIT_MS).unref();
 
   server.close(async () => {
+    // Stop background workers first (running jobs get a few seconds; unfinished ones are retried)
+    await stopWorkers().catch(() => undefined);
+    await closeQueues().catch(() => undefined);
+    await closeProducerConnection().catch(() => undefined);
     console.log('[Server] HTTP server closed — draining MongoDB connections...');
     try {
       await mongoose.connection.close();

@@ -11,6 +11,11 @@
  *
  * Each step is isolated: a failure is recorded in `sideEffectErrors`
  * (capped at 20) and the remaining steps still run.
+ *
+ * Retries (background queue, see queues/processors.ts): every step that succeeds is recorded in
+ * `sideEffectStepsDone`, and `sideEffectsCompletedAt` is only set once ALL steps succeeded.
+ * With { resume: true } an order that was claimed but not completed (crash mid-way, or a step
+ * failed) is picked up again and only the remaining steps run — no duplicate emails.
  */
 import Order from '../../models/order.model';
 import Customer from '../../models/Customer';
@@ -74,10 +79,15 @@ async function recordStepError(orderId: unknown, step: string, err: unknown) {
   }
 }
 
-export type OnOrderPaidResult = { claimed: false } | { claimed: true; errors: string[] };
+export type OnOrderPaidResult = { claimed: false } | { claimed: true; resumed?: boolean; errors: string[] };
 
-export async function onOrderPaid(orderId: unknown, deps?: Partial<OnOrderPaidDeps>): Promise<OnOrderPaidResult> {
-  const order: any = await Order.findOneAndUpdate(
+export async function onOrderPaid(
+  orderId: unknown,
+  deps?: Partial<OnOrderPaidDeps>,
+  opts: { resume?: boolean } = {}
+): Promise<OnOrderPaidResult> {
+  let resumed = false;
+  let order: any = await Order.findOneAndUpdate(
     {
       _id: orderId,
       paymentStatus: { $in: PAID_SIDE_EFFECT_STATUSES },
@@ -87,21 +97,37 @@ export async function onOrderPaid(orderId: unknown, deps?: Partial<OnOrderPaidDe
     { $set: { sideEffectsClaimedAt: new Date() } },
     { new: true }
   ).select('+publicAccessToken');
+  if (!order && opts.resume) {
+    // Claimed earlier but not completed: continue with the steps that have not succeeded yet.
+    // Only the queue worker resumes (one job per order), so this never runs concurrently.
+    order = await Order.findOne({
+      _id: orderId,
+      paymentStatus: { $in: PAID_SIDE_EFFECT_STATUSES },
+      paidAt: { $ne: null },
+      sideEffectsClaimedAt: { $ne: null },
+      sideEffectsCompletedAt: null,
+    }).select('+publicAccessToken');
+    resumed = !!order;
+  }
   if (!order) return { claimed: false };
+  const done = new Set<string>(Array.isArray(order.sideEffectStepsDone) ? order.sideEffectStepsDone : []);
 
   const complete = !!deps?.sendOrderConfirmationEmail && !!deps?.sendAdminNewOrderNotificationEmail && !!deps?.validateOrderAddress;
   const d: OnOrderPaidDeps = complete ? (deps as OnOrderPaidDeps) : { ...loadDefaultDeps(), ...(deps ?? {}) };
   const errors: string[] = [];
   const step = async (name: string, fn: () => Promise<unknown>) => {
+    if (done.has(name)) return; // succeeded in an earlier attempt
     try {
       await fn();
+      done.add(name);
+      await Order.updateOne({ _id: order._id }, { $addToSet: { sideEffectStepsDone: name } });
     } catch (err) {
       errors.push(name);
       await recordStepError(order._id, name, err);
     }
   };
 
-  console.log(`[onOrderPaid] order=${order._id} number=${order.orderNumber ?? '-'} claimed side effects`);
+  console.log(`[onOrderPaid] order=${order._id} number=${order.orderNumber ?? '-'} ${resumed ? 'resumed' : 'claimed'} side effects`);
 
   // 0) If the customer email is still missing (webhook arrived before Tagada populated it), try once more.
   if (!order.customerEmail && !order.customer?.email && d.refreshOrderDetails) {
@@ -212,13 +238,26 @@ export async function onOrderPaid(orderId: unknown, deps?: Partial<OnOrderPaidDe
     });
   });
 
-  await Order.updateOne({ _id: order._id }, { $set: { sideEffectsCompletedAt: new Date() } });
-  console.log(`[onOrderPaid] order=${order._id} side effects complete (errors: ${errors.length ? errors.join(',') : 'none'})`);
-  return { claimed: true, errors };
+  if (errors.length === 0) {
+    await Order.updateOne({ _id: order._id }, { $set: { sideEffectsCompletedAt: new Date() } });
+    console.log(`[onOrderPaid] order=${order._id} side effects complete`);
+  } else {
+    console.warn(`[onOrderPaid] order=${order._id} side effects incomplete (failed: ${errors.join(',')}) — will be retried by the queue when available`);
+  }
+  return { claimed: true, resumed, errors };
 }
 
-/** Fire-and-forget wrapper for request handlers. */
+/**
+ * Fire-and-forget wrapper for request handlers: queued background job (retried, survives
+ * restarts) when queues are available, otherwise in-process right after the response.
+ * Passing deps (tests / alternative wiring) always runs in-process.
+ */
 export function scheduleOnOrderPaid(orderId: unknown, deps?: Partial<OnOrderPaidDeps>): void {
+  if (!deps) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('../../queues/producers').enqueueOrderPaid(orderId);
+    return;
+  }
   setImmediate(() => {
     onOrderPaid(orderId, deps).catch((err) =>
       console.error(`[onOrderPaid] order=${orderId} unexpected failure:`, err?.message ?? err)

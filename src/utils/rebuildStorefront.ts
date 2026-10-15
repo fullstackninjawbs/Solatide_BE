@@ -18,7 +18,7 @@ import path from 'path';
 const DEBOUNCE_MS = 10_000;
 const STALE_LOCK_MS = 30 * 60 * 1000;
 const BUSY_RETRY_MS = 60_000;
-const EXIT_BUSY = 75;
+export const EXIT_BUSY = 75;
 
 let rebuildTimeout: NodeJS.Timeout | null = null;
 
@@ -94,7 +94,8 @@ function consumeDirty(dirtyPath: string): boolean {
   }
 }
 
-function runDeploy(): Promise<number> {
+/** Run deploy-store.sh once (also used by the 'storefront-rebuild' queue worker). */
+export function runDeploy(): Promise<number> {
   const { dir, logDir } = paths();
   fs.mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, `deploy-${new Date().toISOString().slice(0, 10)}.log`);
@@ -164,6 +165,20 @@ async function buildLoop(): Promise<void> {
 export const triggerStorefrontRebuild = () => {
   // Never deploy from tests; STOREFRONT_AUTO_REBUILD=false disables it explicitly (e.g. local dev).
   if (process.env.NODE_ENV === 'test' || process.env.STOREFRONT_AUTO_REBUILD === 'false') return;
+  // Preferred: a debounced job on the 'storefront-rebuild' queue (one build at a time across all
+  // PM2 workers, retried when busy, visible in admin queue stats). Fallback: the lock-file flow.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { enqueueStorefrontRebuild } = require('../queues/producers');
+  enqueueStorefrontRebuild()
+    .then((queued: boolean) => {
+      if (queued) console.log('🔄 Storefront rebuild queued (debounced 10 s).');
+      else debouncedLocalRebuild();
+    })
+    .catch(() => debouncedLocalRebuild());
+};
+
+/** Fallback when the job queue is unavailable: per-process debounce + cross-process lock file. */
+function debouncedLocalRebuild() {
   console.log('🔄 Storefront rebuild requested (debounced 10 s).');
   if (rebuildTimeout) clearTimeout(rebuildTimeout);
   rebuildTimeout = setTimeout(() => {

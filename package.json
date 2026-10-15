@@ -9,7 +9,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "seed": "ts-node src/scripts/seed.ts",
     "test": "node --test --test-concurrency=1 --require ts-node/register/transpile-only \"tests/*.test.ts\" \"tests/payments/unit.test.ts\"",
-    "test:integration": "node --test --test-concurrency=1 --require ts-node/register/transpile-only \"tests/payments/integration.test.ts\""
+    "test:integration": "node --test --test-concurrency=1 --require ts-node/register/transpile-only \"tests/payments/integration.test.ts\"",
+    "worker": "node dist/worker.js",
+    "dev:worker": "ts-node-dev --respawn --transpile-only src/worker.ts"
   },
   "keywords": [
     "express",
@@ -23,6 +25,7 @@
     "@tagadapay/node-sdk": "^2.4.0",
     "axios": "^1.18.1",
     "bcryptjs": "^2.4.3",
+    "bullmq": "6.3.8",
     "cloudinary": "^2.10.0",
     "compression": "^1.8.1",
     "cors": "^2.8.5",

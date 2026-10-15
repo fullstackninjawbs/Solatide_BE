@@ -12,6 +12,7 @@ import Refund from '../../models/Refund';
 import Customer from '../../models/Customer';
 import AddressValidationService from '../../services/addressValidation.service';
 import axios from 'axios';
+import { starshipitRequest } from '../../services/shipping/starshipitHttp';
 import { PAYMENT_STATUSES, PaymentStatus } from '../../domain/orderTransitions';
 import { validateRefundRequest, refundsEnabled, toMinorUnits } from '../../domain/money';
 import { withTimeout, TAGADA_TIMEOUT_MS } from '../../domain/withTimeout';
@@ -335,10 +336,12 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
           'Ocp-Apim-Subscription-Key': process.env.STARSHIPIT_SUBSCRIPTION_KEY || '',
           'Content-Type': 'application/json'
         };
-        const labelResponse = await axios.post(
+        const labelResponse = await starshipitRequest(
+          'post',
           'https://api.starshipit.com/api/orders/shipment',
           { order_id: parseInt(starshipitOrderId) },
-          { headers, timeout: STARSHIPIT_TIMEOUT_MS }
+          { headers, timeout: STARSHIPIT_TIMEOUT_MS },
+          { repeatable: true }
         );
         if (labelResponse.data && labelResponse.data.success !== false) {
           const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];

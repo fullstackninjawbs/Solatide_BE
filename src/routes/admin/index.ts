@@ -18,6 +18,7 @@ import settingsRoutes from './settings.routes';
 import userRoutes from './user.routes';
 import tagadaProductSyncRoutes from './tagadaProductSync.routes';
 import shippingRoutes from './shipping.routes';
+import { getQueueStats, retryFailedJobs } from '../../queues/stats';
 
 const router = express.Router();
 
@@ -47,5 +48,8 @@ router.use('/settings', restrictTo(...ACCESS.settingsRead), settingsRoutes); // 
 router.use('/users', restrictTo(...ACCESS.adminUsers), userRoutes);
 router.use('/tagada', restrictTo(...ACCESS.tagadaSync), tagadaProductSyncRoutes);
 router.use('/shipping', restrictTo(...ACCESS.shippingPackages), shippingRoutes);
+// Background job queues: counts, recent failures, schedules; retry failed jobs (never deletes)
+router.get('/queues', restrictTo('super_admin', 'admin'), getQueueStats);
+router.post('/queues/:name/retry-failed', restrictTo('super_admin', 'admin'), retryFailedJobs);
 
 export default router;
