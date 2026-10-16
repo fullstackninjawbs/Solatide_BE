@@ -165,7 +165,7 @@ export interface IOrder extends mongoose.Document {
   /** Set when the "order shipped" email was sent (claimed atomically, so it is sent at most once). */
   shipmentEmailSentAt?: Date | null;
   /** Parcel weight sent to Starshipit when the shipment was created (contents + package). */
-  shipmentWeight?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string; warnings?: string[]; calculatedAt?: Date };
+  shipmentWeight?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string; packageReason?: string; warnings?: string[]; calculatedAt?: Date };
   oversold?: boolean;
   oversells?: IOversell[];
   discountDescription?: string;
@@ -369,6 +369,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
       itemsGrams: { type: Number },
       packageGrams: { type: Number },
       packageName: { type: String },
+      packageReason: { type: String },
       warnings: { type: [String], default: undefined },
       calculatedAt: { type: Date },
     },

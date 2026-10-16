@@ -5,7 +5,7 @@ import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
 import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
-import { computeShipmentWeight } from '../../services/shipping/shipmentWeight';
+import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shipping/shipmentWeight';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -436,6 +436,9 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   // missing/invalid weights use a fallback and are reported to the admin
   const weight = await computeShipmentWeight(order);
   const weightKg = weight.itemsGrams / 1000;
+  // One parcel: the package selected on the order's products (largest wins), else the Default
+  const packageChoice = await chooseShipmentPackage(weight.lines);
+  const shipmentWarnings = [...weight.warnings, ...packageChoice.warnings];
 
   try {
     // 1. Create Shipment via Service (parcel weight = contents + empty default package)
@@ -444,6 +447,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       origin: settings.shippingOrigin,
       weightKg,
       weight,
+      packageChoice,
     });
 
     let { trackingNumber, trackingCarrier, labelUrl, warning } = shippingResult as any;
@@ -479,7 +483,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     if (trackingUrl) order.trackingUrl = trackingUrl;
     order.shipmentStatus = shipmentStatus;
     if (parcel) {
-      order.shipmentWeight = { ...parcel, warnings: weight.warnings, calculatedAt: new Date() };
+      order.shipmentWeight = { ...parcel, warnings: shipmentWarnings, calculatedAt: new Date() };
     }
 
     if (trackingNumber) {
@@ -495,7 +499,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     if (order.trackingNumber) await sendShipmentEmailOnce(order);
 
     // Shown to the admin as a warning toast (weight fallbacks and/or a Starshipit warning)
-    const warnings = [...weight.warnings, ...(warning ? [warning] : [])];
+    const warnings = [...shipmentWarnings, ...(warning ? [warning] : [])];
     res.status(200).json({
       success: true,
       message: warning ? `Order imported to Starshipit (ID: ${shippingResult.orderId}). Note: ${warning}` : 'Shipment created successfully',

@@ -1,7 +1,7 @@
 import { starshipitRequest } from './starshipitHttp';
 import { IOrder } from '../../models/order.model';
 import ShippingPackage from '../../models/shippingPackage.model';
-import { ShipmentWeight, packageTareGrams } from './shipmentWeight';
+import { ShipmentWeight, PackageChoice, packageTareGrams } from './shipmentWeight';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -95,23 +95,25 @@ export class StarshipitService {
     };
   }
 
-  public async createShipment({ order, origin, weightKg, weight }: { order: IOrder, origin: any, weightKg: number, weight?: ShipmentWeight }): Promise<{
+  public async createShipment({ order, origin, weightKg, weight, packageChoice }: { order: IOrder, origin: any, weightKg: number, weight?: ShipmentWeight, packageChoice?: PackageChoice }): Promise<{
     orderId: string;
     trackingNumber?: string;
     trackingCarrier?: string;
     labelUrl?: string;
     warning?: string;
-    parcel?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string };
+    parcel?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string; packageReason?: string };
   }> {
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
 
-    const defaultPackage = await ShippingPackage.findOne({ isDefault: true, active: true });
+    // The package chosen for this order (product-selected packages, largest wins; else Default).
+    // Without a choice (older callers) the Default package is used, as before.
+    const defaultPackage: any = packageChoice ? packageChoice.pkg : await ShippingPackage.findOne({ isDefault: true, active: true });
     // Parcel weight = contents + empty package (previously only the empty package was sent, so
     // Starshipit quoted/rated a parcel of a few grams)
     const itemsGrams = weight ? weight.itemsGrams : Math.round(weightKg * 1000);
     const packageGrams = packageTareGrams(defaultPackage);
-    const parcel = { totalGrams: itemsGrams + packageGrams, itemsGrams, packageGrams, packageName: defaultPackage?.name };
+    const parcel = { totalGrams: itemsGrams + packageGrams, itemsGrams, packageGrams, packageName: defaultPackage?.name, packageReason: packageChoice?.reason };
 
     const street = order.shippingAddressObj?.street1 || (typeof order.shippingAddress === 'string' ? order.shippingAddress : undefined);
     const suburb = order.shippingAddressObj?.city || order.shippingAddressObj?.street2;
