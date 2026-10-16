@@ -10,6 +10,7 @@ import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { isStaffRole } from '../config/roles';
 import { sanitizeProductHtmlFields } from '../utils/sanitizeHtml';
+import { slugify } from '../utils/slug';
 
 /**
  * Fields never sent to anonymous / customer callers. Each was checked against
@@ -66,14 +67,13 @@ const clampInt = (v: unknown, def: number, min: number, max: number): number => 
   return Math.min(max, Math.max(min, n));
 };
 
-const slugify = (name: string): string =>
-  name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+/** "This URL handle is already used by …" when another product has the slug, else null. */
+const slugTakenMessage = async (slug: string, exceptId?: string): Promise<string | null> => {
+  const filter: any = { slug };
+  if (exceptId) filter._id = { $ne: exceptId };
+  const other: any = await Product.findOne(filter).select('name').lean();
+  return other ? `This URL handle is already used by "${other.name}". Please choose a different one.` : null;
+};
 
 export const getPublicCollections = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const CACHE_KEY = 'public:collections';
@@ -386,10 +386,13 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
     productData.tag = tag;
   }
 
-  // Auto-generate slug if not provided
-  if (!productData.slug && productData.name) {
-    productData.slug = slugify(productData.name);
+  // URL handle: the one provided, else generated from the name; must be valid and unique
+  productData.slug = slugify(productData.slug || productData.name);
+  if (!productData.slug) {
+    return next(new AppError('A URL handle (or a name to generate it from) is required.', 400));
   }
+  const takenOnCreate = await slugTakenMessage(productData.slug);
+  if (takenOnCreate) return next(new AppError(takenOnCreate, 400));
 
   // Set publishStatus from published if not provided; keep the legacy flag in sync with it
   if (!productData.publishStatus) {
@@ -452,8 +455,21 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
     productData.tags = tag.split(',').map((t: string) => t.trim()).filter(Boolean);
     productData.tag = tag;
   }
-  if (productData.name && !productData.slug) {
-    productData.slug = slugify(productData.name);
+  // URL handle: changes ONLY when explicitly sent — never derived from a name change.
+  // An empty value keeps the current URL.
+  if (Object.prototype.hasOwnProperty.call(productData, 'slug')) {
+    const raw = productData.slug;
+    if (raw == null || String(raw).trim() === '') {
+      delete productData.slug;
+    } else {
+      const nextSlug = slugify(raw);
+      if (!nextSlug) {
+        return next(new AppError('URL handle must contain letters or numbers (e.g. "retatrutide-5mg").', 400));
+      }
+      const taken = await slugTakenMessage(nextSlug, req.params.id);
+      if (taken) return next(new AppError(taken, 400));
+      productData.slug = nextSlug;
+    }
   }
 
   if (productData.published !== undefined && !productData.publishStatus) {

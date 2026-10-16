@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
+import { registerSlugRedirectHooks } from '../utils/slugRedirectHooks';
 
 export interface ICollectionRule {
   field: string;
@@ -116,5 +117,7 @@ const collectionSchema = new mongoose.Schema<ICollection>(
   }
 );
 registerStorefrontRebuildHooks(collectionSchema);
+// Automatic 301 when a collection URL changes (see services/redirects)
+registerSlugRedirectHooks(collectionSchema, 'collection');
 export const Collection = mongoose.model<ICollection>('Collection', collectionSchema);
 export default Collection;

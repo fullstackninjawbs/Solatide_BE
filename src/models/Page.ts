@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { registerSlugRedirectHooks } from '../utils/slugRedirectHooks';
 
 export interface IPage extends Document {
   title: string;
@@ -69,5 +70,8 @@ const PageSchema = new Schema<IPage>(
   { timestamps: true }
 );
 
+
+// Automatic 301 when a CMS page URL changes (see services/redirects)
+registerSlugRedirectHooks(PageSchema, 'page');
 
 export default mongoose.model<IPage>('Page', PageSchema);

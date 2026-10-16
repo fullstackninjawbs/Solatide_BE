@@ -5,16 +5,8 @@ import catchAsync from '../../utils/catchAsync';
 import AppError from '../../utils/appError';
 import { cacheDel } from '../../utils/cache';
 import { buildQueryFromRules } from '../../utils/collectionUtils';
+import { slugify } from '../../utils/slug';
 
-const slugify = (text: string) => {
-  return text
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-') // Replace spaces with -
-    .replace(/[^\w\-]+/g, '') // Remove all non-word chars
-    .replace(/\-\-+/g, '-'); // Replace multiple - with single -
-};
 
 
 // GET /api/admin/collection
@@ -108,6 +100,9 @@ export const createCollection = catchAsync(async (req: Request, res: Response, n
   }
 
   const generatedSlug = slug ? slugify(slug) : slugify(name);
+  if (!generatedSlug) {
+    return next(new AppError('URL handle must contain letters or numbers (e.g. "glp-1-peptides").', 400));
+  }
 
   // Check unique slug
   const existing = await Collection.findOne({ slug: generatedSlug });
@@ -172,6 +167,9 @@ export const updateCollection = catchAsync(async (req: Request, res: Response, n
       return next(new AppError('The "all" collection slug cannot be modified.', 400));
     }
     const nextSlug = slugify(slug);
+    if (!nextSlug) {
+      return next(new AppError('URL handle must contain letters or numbers (e.g. "glp-1-peptides").', 400));
+    }
     if (nextSlug !== col.slug) {
       const existing = await Collection.findOne({ slug: nextSlug });
       if (existing) {

@@ -1,5 +1,6 @@
 import { getTagadaClient } from './tagadaClient';
 import Product from '../models/product.model';
+import { slugify } from '../utils/slug';
 import TagadaProductSyncLog from '../models/tagadaProductSyncLog.model';
 import { LOCAL_OWNED_PRODUCT_FIELDS, TAGADA_OWNED_PRODUCT_FIELDS } from '../config/tagadaProductSync.config';
 import { cacheDel } from '../utils/cache';
@@ -200,7 +201,7 @@ export async function syncTagadaProduct(tagadaProduct: any): Promise<any> {
     const newProductData = {
       ...normalized,
       id: nextId,
-      slug: normalized.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      slug: slugify(normalized.name),
       source: 'tagada',
       category: 'Uncategorized',
       researchCategory: 'laboratory-support',

@@ -17,6 +17,7 @@ import analyticsRoutes from './analytics.routes';
 import settingsRoutes from './settings.routes';
 import userRoutes from './user.routes';
 import tagadaProductSyncRoutes from './tagadaProductSync.routes';
+import redirectRoutes from './redirect.routes';
 import shippingRoutes from './shipping.routes';
 import { getQueueStats, retryFailedJobs } from '../../queues/stats';
 
@@ -42,6 +43,7 @@ router.use('/order', restrictTo(...ACCESS.orders), orderRoutes);
 router.use('/customer', restrictTo(...ACCESS.customers), customerRoutes);
 router.use('/discount', restrictTo(...ACCESS.discounts), discountRoutes);
 router.use('/content', restrictTo(...ACCESS.content), contentRoutes);
+router.use('/redirects', restrictTo(...ACCESS.content), redirectRoutes); // URL redirects (same roles as CMS pages)
 router.use('/growth', growthRoutes); // per-route restrictions inside
 router.use('/analytics', restrictTo(...ACCESS.analytics), analyticsRoutes);
 router.use('/settings', restrictTo(...ACCESS.settingsRead), settingsRoutes); // narrower per-route inside

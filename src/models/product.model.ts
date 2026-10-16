@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
+import { slugify } from '../utils/slug';
+import { registerSlugRedirectHooks } from '../utils/slugRedirectHooks';
 
 export interface IProductImage {
   url: string; // The primary secure_url or legacy URL
@@ -453,27 +455,12 @@ productSchema.virtual('reviews', {
   match: { status: 'approved' }
 });
 
-// Pre-save hook: auto-generate slug from name if not set
+// Pre-save hook — stable URLs: an explicitly set slug is cleaned; a slug is generated from the
+// name ONLY when the product has none (i.e. on create). A name change never changes the URL
+// (Tagada sync and CSV import rename products; that used to silently change live URLs).
 productSchema.pre('save', function (next) {
-  if (this.isModified('slug') && this.slug) {
-    // If Admin manually provided a slug, clean it up
-    this.slug = this.slug
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-  } else if (this.isModified('name') || !this.slug) {
-    // Generate slug from name if no slug exists or name changed (and slug wasn't explicitly changed)
-    this.slug = (this.name || '')
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-  }
+  if (this.isModified('slug') && this.slug) this.slug = slugify(this.slug);
+  if (!this.slug) this.slug = slugify(this.name);
   next();
 });
 
@@ -494,5 +481,7 @@ productSchema.index({ category: 1, isActive: 1 });
 productSchema.index({ name: 'text' }, { weights: { name: 10 } });
 
 registerStorefrontRebuildHooks(productSchema, { product: true });
+// Automatic 301 when a product URL changes (see services/redirects)
+registerSlugRedirectHooks(productSchema, 'product');
 export const Product = mongoose.model<IProduct>('Product', productSchema);
 export default Product;

@@ -9,6 +9,7 @@ import apiRoutes from './routes';
 import productRoutes from './routes/product.routes';
 import adminRoutes from './routes/admin';
 import paymentRoutes from './routes/payment.routes';
+import redirectRoutes from './routes/redirect.routes';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
 import analyticsRoutes from './routes/analytics.routes';
@@ -102,6 +103,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/analytics', analyticsLimiter, analyticsRoutes); // Public storefront event tracking
+app.use('/api/redirects', publicLimiter, redirectRoutes); // Old URL → new URL (nginx fallback + app)
 
 // Catch-all: 404 Route handler for unregistered paths
 app.all('*', (req: Request, res: Response, next: NextFunction) => {
