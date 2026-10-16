@@ -16,7 +16,7 @@ export const getSubscribers = catchAsync(async (req: Request, res: Response, nex
   const skip = (page - 1) * limit;
 
   const subscribers = await NewsletterSubscriber.find()
-    .sort('-subscribedAt')
+    .sort({ subscribedAt: -1, _id: -1 })
     .skip(skip)
     .limit(limit);
 

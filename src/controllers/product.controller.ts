@@ -196,27 +196,18 @@ export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: 
     query = query.select(PUBLIC_PRODUCT_PROJECTION);
   }
 
-  // 7) Sorting
-  if (q.sort) {
-    const sortType = q.sort;
-    if (sortType === 'Price: Low to High' || sortType === 'Price, low to high') {
-      query = query.sort({ price: 1 });
-    } else if (sortType === 'Price: High to Low' || sortType === 'Price, high to low') {
-      query = query.sort({ price: -1 });
-    } else if (sortType === 'Newest' || sortType === 'Date, new to old') {
-      query = query.sort({ createdAt: -1 });
-    } else if (sortType === 'Date, old to new') {
-      query = query.sort({ createdAt: 1 });
-    } else if (sortType === 'Alphabetically, A-Z') {
-      query = query.sort({ name: 1 });
-    } else if (sortType === 'Alphabetically, Z-A') {
-      query = query.sort({ name: -1 });
-    } else {
-      query = query.sort({ rating: -1 });
-    }
-  } else {
-    query = query.sort({ rating: -1 });
-  }
+  // 7) Sorting — always ends with a unique tie-breaker (_id). Many products share the same
+  // rating/price, and without it MongoDB may order ties differently on each page: with skip/limit
+  // some products appeared on two pages and others on none (e.g. 14 of 28 shown at 10 per page).
+  const SORTS: Record<string, Record<string, 1 | -1>> = {
+    'Price: Low to High': { price: 1 }, 'Price, low to high': { price: 1 },
+    'Price: High to Low': { price: -1 }, 'Price, high to low': { price: -1 },
+    'Newest': { createdAt: -1 }, 'Date, new to old': { createdAt: -1 },
+    'Date, old to new': { createdAt: 1 },
+    'Alphabetically, A-Z': { name: 1 },
+    'Alphabetically, Z-A': { name: -1 },
+  };
+  query = query.sort({ ...((q.sort && SORTS[q.sort]) || { rating: -1 }), _id: 1 });
 
   // 8) Pagination & Limit
   const page = q.page;

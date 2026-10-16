@@ -325,7 +325,7 @@ export const getAllReviewsAdmin = catchAsync(async (req: Request, res: Response,
   }
 
   const reviews = await Review.find(query)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .skip(skip)
     .limit(limit)
     .populate('product', 'name sku images');

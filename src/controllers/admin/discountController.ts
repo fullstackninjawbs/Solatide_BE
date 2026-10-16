@@ -69,7 +69,7 @@ export const getDiscounts = catchAsync(async (req: Request, res: Response, next:
   }
 
   const discounts = await Discount.find(filter)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .skip(skip)
     .limit(limit);
 

@@ -89,7 +89,7 @@ export const getBatches = catchAsync(async (req: Request, res: Response, next: N
   const batches = await Batch.find(filter)
     .populate('productId', 'name slug')
     .populate('products', 'name slug')
-    .sort('-createdAt')
+    .sort({ createdAt: -1, _id: -1 })
     .skip(skip)
     .limit(limit);
 

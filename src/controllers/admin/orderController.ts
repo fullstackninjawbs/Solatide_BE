@@ -109,7 +109,7 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
 
   const [orders, total] = await Promise.all([
     Order.find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limitNum)
       .lean(),
