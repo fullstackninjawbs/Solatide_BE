@@ -224,8 +224,21 @@ export async function onOrderPaid(
 
   // 7) Server-side purchase analytics event (trusted; clientReported:false)
   await step('analytics', async () => {
+    // Same session as the visitor's own events (sent at checkout), so Live View and the funnel see
+    // one visitor; location = where the visitor was (IP lookup at checkout, or their latest event
+    // with a known location) — never the shipping address.
+    const visitorSid: string | undefined = order.visitor?.sessionId || undefined;
+    const known = (c: unknown) => typeof c === 'string' && c.trim() !== '' && c !== 'Unknown';
+    let loc: { country?: string; region?: string; city?: string } | null =
+      known(order.visitor?.country) ? { country: order.visitor.country, region: order.visitor.region, city: order.visitor.city } : null;
+    if (!loc && visitorSid) {
+      const last: any = await AnalyticsEvent.findOne({ sessionId: visitorSid, country: { $nin: [null, '', 'Unknown'] } })
+        .sort({ timestamp: -1 }).select('country region city').lean();
+      if (last) loc = { country: last.country, region: last.region, city: last.city };
+    }
     await AnalyticsEvent.create({
-      sessionId: order.attribution?.lastTouch?.sessionId || order.attribution?.firstTouch?.sessionId || `order:${order._id}`,
+      ...(loc ? { country: loc.country, region: loc.region || undefined, city: loc.city || undefined } : {}),
+      sessionId: visitorSid || order.attribution?.lastTouch?.sessionId || order.attribution?.firstTouch?.sessionId || `order:${order._id}`,
       eventType: 'purchase',
       orderId: order._id,
       cartValue: order.grandTotal ?? order.totalAmount ?? 0,

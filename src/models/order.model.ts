@@ -197,6 +197,9 @@ export interface IOrder extends mongoose.Document {
     checkedAt?: Date;
   };
 
+  /** The storefront visitor who checked out: analytics session + IP-detected location (not the address). */
+  visitor?: { sessionId?: string; country?: string; region?: string; city?: string };
+
   // ── Attribution ──────────────────────────────────────────────────────────────
   attribution?: {
     firstTouch?: IAttributionTouch;
@@ -414,6 +417,15 @@ const orderSchema = new mongoose.Schema<IOrder>(
       suggestedAddress: { type: mongoose.Schema.Types.Mixed },
       googleResponse: { type: mongoose.Schema.Types.Mixed },
       checkedAt: { type: Date }
+    },
+
+    // Analytics session + location of the visitor at checkout, so the server-side purchase event
+    // joins the visitor's session in Live View / funnels (the shipping address is not the visitor)
+    visitor: {
+      sessionId: { type: String, trim: true, maxlength: 128 },
+      country: { type: String, trim: true, maxlength: 100 },
+      region: { type: String, trim: true, maxlength: 100 },
+      city: { type: String, trim: true, maxlength: 100 },
     },
 
     // ── Attribution ──────────────────────────────────────────────────────────────

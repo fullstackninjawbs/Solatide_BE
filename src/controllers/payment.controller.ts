@@ -83,7 +83,7 @@ export function publicOrderView(order: any) {
  */
 export const createTagadaPayment = catchAsync(
   async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const { orderId, attribution, items, couponCode } = req.body ?? {};
+    const { orderId, attribution, items, couponCode, visitor } = req.body ?? {};
     const providedToken = req.body?.accessToken ?? req.query?.accessToken;
 
     if (!orderId || typeof orderId !== 'string' || !/^[0-9a-fA-F]{24}$/.test(orderId)) {
@@ -116,6 +116,13 @@ export const createTagadaPayment = catchAsync(
       } : undefined);
       if (attribution.firstTouch && !order.attribution.firstTouch?.source) order.attribution.firstTouch = clip(attribution.firstTouch);
       if (attribution.lastTouch) order.attribution.lastTouch = clip(attribution.lastTouch);
+    }
+
+    // Visitor context (analytics session + IP-detected location) for the server-side purchase event
+    if (visitor && typeof visitor === 'object') {
+      const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().substring(0, max) : undefined);
+      const v = { sessionId: str(visitor.sessionId, 128), country: str(visitor.country, 100), region: str(visitor.region, 100), city: str(visitor.city, 100) };
+      if (v.sessionId || v.country) order.visitor = v;
     }
 
     // Resolve lines server-side (M-11)
