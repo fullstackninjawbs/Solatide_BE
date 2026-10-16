@@ -5,6 +5,7 @@ import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
 import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
+import { computeShipmentWeight } from '../../services/shipping/shipmentWeight';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -431,38 +432,22 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Starshipit API keys are not configured', 500));
   }
 
-  // Calculate weight
-  let totalWeightGrams = 0;
-  if (order.lineItems && order.lineItems.length > 0) {
-    for (const item of order.lineItems) {
-      if (item.sku) {
-        // Find variant by SKU across all products
-        const product = await Product.findOne({ 'variants.sku': item.sku });
-        if (product) {
-          const variant = product.variants.find(v => v.sku === item.sku);
-          if (variant && variant.weightGrams) {
-            totalWeightGrams += (variant.weightGrams * item.quantity);
-          }
-        }
-      }
-    }
-  }
-
-  // Fallback to 500g if no weight could be calculated
-  if (totalWeightGrams === 0) totalWeightGrams = 500;
-
-  // Convert to Kilograms for Starshipit
-  const weightKg = totalWeightGrams / 1000;
+  // Weight of the contents: per line from the variant weights (products[] or Tagada lineItems);
+  // missing/invalid weights use a fallback and are reported to the admin
+  const weight = await computeShipmentWeight(order);
+  const weightKg = weight.itemsGrams / 1000;
 
   try {
-    // 1. Create Shipment via Service
+    // 1. Create Shipment via Service (parcel weight = contents + empty default package)
     const shippingResult = await starshipitService.createShipment({
       order,
       origin: settings.shippingOrigin,
-      weightKg
+      weightKg,
+      weight,
     });
 
     let { trackingNumber, trackingCarrier, labelUrl, warning } = shippingResult as any;
+    const parcel = (shippingResult as any).parcel;
     let shipmentStatus = trackingNumber ? 'Label Generated' : (warning ? 'Order Created in Starshipit (Label Pending)' : 'Order Created in Starshipit');
     let trackingUrl = '';
 
@@ -493,6 +478,9 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     if (labelUrl) order.labelUrl = labelUrl;
     if (trackingUrl) order.trackingUrl = trackingUrl;
     order.shipmentStatus = shipmentStatus;
+    if (parcel) {
+      order.shipmentWeight = { ...parcel, warnings: weight.warnings, calculatedAt: new Date() };
+    }
 
     if (trackingNumber) {
       order.status = 'shipped';
@@ -506,9 +494,12 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     // At most once per order (Starshipit's "Printed" webhook can race this request)
     if (order.trackingNumber) await sendShipmentEmailOnce(order);
 
+    // Shown to the admin as a warning toast (weight fallbacks and/or a Starshipit warning)
+    const warnings = [...weight.warnings, ...(warning ? [warning] : [])];
     res.status(200).json({
       success: true,
       message: warning ? `Order imported to Starshipit (ID: ${shippingResult.orderId}). Note: ${warning}` : 'Shipment created successfully',
+      ...(warnings.length ? { warning: warnings.join(' · ') } : {}),
       data: { order },
     });
   } catch (error: any) {

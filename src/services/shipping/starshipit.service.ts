@@ -1,6 +1,7 @@
 import { starshipitRequest } from './starshipitHttp';
 import { IOrder } from '../../models/order.model';
 import ShippingPackage from '../../models/shippingPackage.model';
+import { ShipmentWeight, packageTareGrams } from './shipmentWeight';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -94,17 +95,23 @@ export class StarshipitService {
     };
   }
 
-  public async createShipment({ order, origin, weightKg }: { order: IOrder, origin: any, weightKg: number }): Promise<{
+  public async createShipment({ order, origin, weightKg, weight }: { order: IOrder, origin: any, weightKg: number, weight?: ShipmentWeight }): Promise<{
     orderId: string;
     trackingNumber?: string;
     trackingCarrier?: string;
     labelUrl?: string;
     warning?: string;
+    parcel?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string };
   }> {
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
 
     const defaultPackage = await ShippingPackage.findOne({ isDefault: true, active: true });
+    // Parcel weight = contents + empty package (previously only the empty package was sent, so
+    // Starshipit quoted/rated a parcel of a few grams)
+    const itemsGrams = weight ? weight.itemsGrams : Math.round(weightKg * 1000);
+    const packageGrams = packageTareGrams(defaultPackage);
+    const parcel = { totalGrams: itemsGrams + packageGrams, itemsGrams, packageGrams, packageName: defaultPackage?.name };
 
     const street = order.shippingAddressObj?.street1 || (typeof order.shippingAddress === 'string' ? order.shippingAddress : undefined);
     const suburb = order.shippingAddressObj?.city || order.shippingAddressObj?.street2;
@@ -134,7 +141,16 @@ export class StarshipitService {
         phone: order.customer?.phone || (order.shippingAddressObj as any)?.phone || (order.billingAddressObj as any)?.phone || '',
         email: order.customer?.email || order.customerEmail || ''
       },
-      items: (order.lineItems && order.lineItems.length > 0)
+      // Per-unit weight in kg (Starshipit multiplies by quantity)
+      items: weight && weight.lines.length > 0
+        ? weight.lines.map((l) => ({
+          description: l.description,
+          sku: l.sku || 'UNKNOWN',
+          quantity: l.quantity,
+          weight: l.unitGrams / 1000,
+          value: l.value
+        }))
+        : (order.lineItems && order.lineItems.length > 0)
         ? order.lineItems.map(item => ({
           description: item.title,
           sku: item.sku || 'UNKNOWN',
@@ -152,9 +168,8 @@ export class StarshipitService {
     };
 
     if (defaultPackage) {
-      const pkgWeightKg = defaultPackage.weight?.unit === 'g' ? (defaultPackage.weight?.value || 500) / 1000 : (defaultPackage.weight?.value || weightKg || 0.5);
       payload.packages = [{
-        weight: pkgWeightKg,
+        weight: Math.max(parcel.totalGrams, 1) / 1000,
         length: defaultPackage.dimensions?.length ? defaultPackage.dimensions.length / 100 : 0.1,
         width: defaultPackage.dimensions?.width ? defaultPackage.dimensions.width / 100 : 0.1,
         height: defaultPackage.dimensions?.height ? defaultPackage.dimensions.height / 100 : 0.1
@@ -197,7 +212,8 @@ export class StarshipitService {
               trackingNumber,
               trackingCarrier,
               labelUrl: '',
-              warning: errMsg
+              warning: errMsg,
+              parcel
             };
           }
           // No order_id in response — genuine failure, throw
@@ -256,7 +272,8 @@ export class StarshipitService {
           trackingNumber,
           trackingCarrier,
           labelUrl,
-          warning
+          warning,
+          parcel
         };
       }
 
@@ -264,7 +281,8 @@ export class StarshipitService {
         orderId: starshipitOrderId,
         trackingNumber,
         trackingCarrier,
-        labelUrl
+        labelUrl,
+        parcel
       };
     } catch (error: any) {
       console.error(`Starshipit API Error: ${error.response?.status ?? ''} ${error.message}`);
