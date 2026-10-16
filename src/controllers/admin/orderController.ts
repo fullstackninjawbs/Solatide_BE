@@ -25,7 +25,8 @@ import { scheduleOnOrderPaid } from '../../services/orders/onOrderPaid';
 import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/tagadaSync';
 import { withOrderNumberRetry } from '../../services/orders/orderNumber';
 import { reserveRefund, releaseRefund, confirmReservedRefund, refundTargetStatus, extractRefundId } from '../../services/orders/refunds';
-import { decrementLineForOrder } from '../../services/orders/inventory';
+import { decrementLineForOrder, LowStockCrossing } from '../../services/orders/inventory';
+import { sendOrderLowStockAlert } from '../../services/lowStockAlert';
 import { parseQuantity, CheckoutValidationError, MAX_LINE_QUANTITY } from '../../services/orders/checkoutItems';
 
 const STARSHIPIT_TIMEOUT_MS = 15000;
@@ -831,12 +832,20 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
   }));
 
   // 7. Atomic stock decrement (manual orders reserve stock at creation, paid or not)
+  const lowStock: LowStockCrossing[] = [];
   for (const line of stockLines) {
     try {
-      await decrementLineForOrder(order._id, line);
+      const r = await decrementLineForOrder(order._id, line);
+      if (r.ok && r.lowStock) lowStock.push(r.lowStock);
     } catch (err: any) {
       console.error(`[Admin Order] Stock decrement failed for order ${order._id}: ${err?.message}`);
     }
+  }
+  // Admin low-stock alert when this order took items to/below their threshold (never blocks)
+  if (lowStock.length) {
+    await Order.updateOne({ _id: order._id }, { $set: { lowStockAlert: { items: lowStock, at: new Date() } } }).catch(() => undefined);
+    sendOrderLowStockAlert(order._id).catch((err: any) =>
+      console.error(`[Admin Order] Low-stock alert failed for order ${order._id}: ${err?.message}`));
   }
 
   // 8. Trigger Google Address Validation asynchronously

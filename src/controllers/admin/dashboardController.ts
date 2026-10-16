@@ -6,6 +6,7 @@ import COA from '../../models/coa.model';
 import Review from '../../models/review.model';
 import catchAsync from '../../utils/catchAsync';
 import { buildRevenueMatch, netRevenueExpr } from '../../domain/revenue';
+import { lowStockThresholdFor } from '../../utils/lowStock';
 
 export const getDashboardAnalytics = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const timeFilter = (req.query.timeFilter as string) || 'Today';
@@ -98,20 +99,15 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
   ];
 
   // Low Stock
-  // Use product.stockQuantity, if variants exists we could also check, but for now we'll check base product stockQuantity vs lowStockThreshold
-  const lowStockThreshold = 5; // Default if not set on product
-  const products = await Product.find({
-    $expr: {
-      $lte: ['$stockQuantity', { $ifNull: ['$lowStockThreshold', lowStockThreshold] }]
-    }
-  }).select('name sku stockQuantity lowStockThreshold').limit(10);
-
-  const lowStockProducts = products.map(p => ({
-    name: p.name,
-    sku: p.sku || 'N/A',
-    stock: p.stockQuantity,
-    limit: p.lowStockThreshold || lowStockThreshold
-  }));
+  // Product stockQuantity vs the same threshold as the low-stock alert email: LOW_STOCK_THRESHOLD
+  // (.env, default 5) or the product's own threshold where it was customised. Archived excluded.
+  const candidates = await Product.find({ publishStatus: { $ne: 'archived' } })
+    .select('name sku stockQuantity lowStockThreshold').lean();
+  const lowStockProducts = candidates
+    .map((p: any) => ({ name: p.name, sku: p.sku || 'N/A', stock: Number(p.stockQuantity ?? 0), limit: lowStockThresholdFor(p) }))
+    .filter((p) => p.stock <= p.limit)
+    .sort((a, b) => a.stock - b.stock)
+    .slice(0, 10);
 
   // Recent Orders
   const recentOrders = await Order.find(buildRevenueMatch())
