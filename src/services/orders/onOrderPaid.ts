@@ -31,6 +31,8 @@ export interface OnOrderPaidDeps {
   validateOrderAddress: (orderId: unknown) => Promise<unknown>;
   /** Best-effort deactivation of a provider promotion once its usage cap is reached */
   deactivatePromotion?: (tagadaPromotionId: string) => Promise<unknown>;
+  /** Admin email when this order took products to/below their low-stock threshold (optional) */
+  sendLowStockAlert?: (orderId: unknown) => Promise<unknown>;
   /** Optional enrichment before emails when the paid order still lacks a customer email */
   refreshOrderDetails?: (orderId: unknown) => Promise<unknown>;
 }
@@ -53,6 +55,7 @@ function loadDefaultDeps(): OnOrderPaidDeps {
     sendOrderConfirmationEmail: email.sendOrderConfirmationEmail,
     sendAdminNewOrderNotificationEmail: email.sendAdminNewOrderNotificationEmail,
     validateOrderAddress: (id: unknown) => addr.validateOrderAddress(id),
+    sendLowStockAlert: (orderId: unknown) => require('../lowStockAlert').sendOrderLowStockAlert(orderId),
     refreshOrderDetails: (id: unknown) => require('./tagadaSync').refreshTagadaDetails(id),
     deactivatePromotion: async (promoId: string) => {
       const { getTagadaClient } = require('../tagadaClient');
@@ -143,8 +146,21 @@ export async function onOrderPaid(
         { _id: order._id, inventoryDecrementedAt: null },
         { $set: { inventoryDecrementedAt: new Date() } }
       );
-      if (claim.modifiedCount === 1) await decrementInventoryForOrder(order);
+      if (claim.modifiedCount === 1) {
+        const result = await decrementInventoryForOrder(order);
+        // Remember what this order took to/below the low-stock threshold, so the alert below
+        // (and any retry of it) knows what to report
+        if (result.lowStock.length) {
+          await Order.updateOne({ _id: order._id }, { $set: { lowStockAlert: { items: result.lowStock, at: new Date() } } });
+        }
+      }
     });
+  }
+
+  // 1b) Low-stock admin alert (once per order; retried with the other steps if sending fails)
+  // (no-op when nothing crossed the threshold or the alert was already sent)
+  if (d.sendLowStockAlert) {
+    await step('low_stock_alert', () => d.sendLowStockAlert!(order._id));
   }
 
   // 2) Customer confirmation email
