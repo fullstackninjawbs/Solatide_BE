@@ -207,7 +207,11 @@ export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: 
     'Alphabetically, A-Z': { name: 1 },
     'Alphabetically, Z-A': { name: -1 },
   };
-  query = query.sort({ ...((q.sort && SORTS[q.sort]) || { rating: -1 }), _id: 1 });
+  const sortSpec = (q.sort && SORTS[q.sort]) || { rating: -1 };
+  query = query.sort({ ...sortSpec, _id: 1 });
+  // Name sorts are case-insensitive and number-aware ("ALEX" next to "Alex"; 5mg before 10mg),
+  // instead of raw character order where all capitals come first and "10mg" sorts before "5mg"
+  if ('name' in sortSpec) query = query.collation({ locale: 'en', strength: 2, numericOrdering: true });
 
   // 8) Pagination & Limit
   const page = q.page;
