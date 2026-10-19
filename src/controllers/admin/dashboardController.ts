@@ -116,11 +116,27 @@ export const getDashboardAnalytics = catchAsync(async (req: Request, res: Respon
     .populate('customer', 'name email')
     .select('orderNumber createdAt grandTotal totalAmount refundedAmount currency status paymentStatus customer customerName customerEmail');
 
-  // Recent Customers
-  const recentCustomers = await Customer.find()
+  // Recent Customers — with the date of their first paid order (what the Orders list shows).
+  // The customer record itself is created when payment is confirmed, which can be later.
+  const customers = await Customer.find()
     .sort({ createdAt: -1 })
     .limit(5)
-    .select('name email createdAt orderCount');
+    .select('name email createdAt orderCount')
+    .lean();
+  const emails = customers.map((c: any) => String(c.email || '').toLowerCase()).filter(Boolean);
+  const firstOrders = emails.length
+    ? await Order.aggregate([
+      { $match: buildRevenueMatch() },
+      { $project: { email: { $toLower: { $ifNull: ['$customer.email', '$customerEmail'] } }, createdAt: 1 } },
+      { $match: { email: { $in: emails } } },
+      { $group: { _id: '$email', firstOrderAt: { $min: '$createdAt' } } },
+    ])
+    : [];
+  const firstOrderByEmail = new Map(firstOrders.map((f: any) => [f._id, f.firstOrderAt]));
+  const recentCustomers = customers.map((c: any) => ({
+    ...c,
+    firstOrderAt: firstOrderByEmail.get(String(c.email || '').toLowerCase()) || null,
+  }));
 
   res.json({
     success: true,
