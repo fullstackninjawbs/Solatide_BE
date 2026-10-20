@@ -165,7 +165,7 @@ export interface IOrder extends mongoose.Document {
   /** Set when the "order shipped" email was sent (claimed atomically, so it is sent at most once). */
   shipmentEmailSentAt?: Date | null;
   /** Products/variants this order took to/below their low-stock threshold (admin alert email). */
-  lowStockAlert?: { items: Array<{ productId: string; variantId?: string | null; productName?: string; variantName?: string; sku?: string; before: number; after: number; threshold: number }>; at?: Date; sentAt?: Date | null };
+  lowStockAlert?: { items: Array<{ productId: string; variantId?: string | null; productName?: string; variantName?: string; sku?: string; before: number; after: number; threshold: number; soldOut?: boolean }>; at?: Date; sentAt?: Date | null };
   /** Parcel weight sent to Starshipit when the shipment was created (contents + package). */
   shipmentWeight?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string; packageReason?: string; warnings?: string[]; calculatedAt?: Date };
   oversold?: boolean;
@@ -372,7 +372,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
       items: [{
         _id: false,
         productId: String, variantId: String, productName: String, variantName: String, sku: String,
-        before: Number, after: Number, threshold: Number,
+        before: Number, after: Number, threshold: Number, soldOut: Boolean,
       }],
       at: Date,
       sentAt: { type: Date, default: null },

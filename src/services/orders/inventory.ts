@@ -16,7 +16,7 @@ import { lowStockThresholdFor } from '../../utils/lowStock';
 const STOCK_WRITE = { [STOCK_ONLY]: true } as Record<string, unknown>;
 
 
-/** An order decrement that took a product/variant from above its low-stock threshold to at/below it. */
+/** An order decrement that took a product/variant from above its low-stock threshold to at/below it, or to 0. */
 export interface LowStockCrossing {
   productId: string;
   variantId: string | null;
@@ -26,6 +26,8 @@ export interface LowStockCrossing {
   before: number;
   after: number;
   threshold: number;
+  /** This decrement took the stock to 0 (sold out). */
+  soldOut?: boolean;
 }
 
 export type DecrementResult =
@@ -34,8 +36,13 @@ export type DecrementResult =
 
 /** LOW_STOCK_THRESHOLD (.env), or the product's own threshold when customised (utils/lowStock). */
 const thresholdOf = (p: any): number => lowStockThresholdFor(p);
-/** Crossing only when this decrement moved the stock from above the threshold to at/below it. */
-const crossing = (before: number, after: number, threshold: number) => before > threshold && after <= threshold;
+/**
+ * Alert when this decrement moved the stock from above the threshold to at/below it, or sold it
+ * out (> 0 → 0; the decrement only succeeds when stock >= quantity, so before is always > 0).
+ * Already-low items therefore alert once more when the last one sells, then stay quiet.
+ */
+const crossing = (before: number, after: number, threshold: number) =>
+  (before > threshold && after <= threshold) || (before > 0 && after <= 0);
 
 function sameId(a: unknown, b: unknown): boolean {
   return a != null && b != null && String(a) === String(b);
@@ -81,7 +88,7 @@ export async function decrementStockAtomic(
           productId: pid, variantId: String(variantId), productName: updated.name,
           // variant name only when the product has several (single variants are often "Default Title")
           variantName: (updated.variants?.length ?? 0) > 1 ? (v.name || v.title || undefined) : undefined,
-          sku: v.sku, before, after, threshold,
+          sku: v.sku, before, after, threshold, soldOut: after <= 0,
         }
         : undefined;
       return { ok: true, productId: pid, variantId: String(variantId), ...(lowStock ? { lowStock } : {}) };
@@ -107,7 +114,7 @@ export async function decrementStockAtomic(
     if (Number(updated.stockQuantity) <= 0) notifyStockAvailabilityChanged(productId);
     const after = Number(updated.stockQuantity ?? 0), before = after + q, threshold = thresholdOf(updated);
     const lowStock = crossing(before, after, threshold)
-      ? { productId: pid, variantId: null, productName: updated.name, sku: updated.sku, before, after, threshold }
+      ? { productId: pid, variantId: null, productName: updated.name, sku: updated.sku, before, after, threshold, soldOut: after <= 0 }
       : undefined;
     return { ok: true, productId: pid, variantId: null, ...(lowStock ? { lowStock } : {}) };
   }

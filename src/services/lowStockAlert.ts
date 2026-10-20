@@ -63,8 +63,8 @@ const adminRecipient = (): string =>
   process.env.LOW_STOCK_ALERT_EMAIL || process.env.ADMIN_NOTIFICATION_EMAIL || 'fullstackninja.wbs@gmail.com';
 
 /**
- * Admin email when an order takes products to/below their low-stock threshold: the items that
- * just dropped (highlighted) plus a table of every other item currently at/below its threshold.
+ * Admin email when an order takes products to/below their low-stock threshold or sells them out:
+ * the items that just dropped (highlighted) plus a table of every item currently at/below its threshold.
  */
 export async function sendLowStockAlertEmail(crossings: LowStockCrossing[], context?: { orderNumber?: string }): Promise<boolean> {
   if (!crossings.length) return false;
@@ -76,9 +76,13 @@ export async function sendLowStockAlertEmail(crossings: LowStockCrossing[], cont
   const logo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
   const label = (c: { productName?: string; variantName?: string }) => `${c.productName || 'Product'}${c.variantName ? ` — ${c.variantName}` : ''}`;
 
+  const soldOut = crossings.filter((c) => c.soldOut || c.after <= 0);
   const subject = crossings.length === 1
-    ? `Low stock: ${label(crossings[0])} (${crossings[0].after} left)`
-    : `Low stock: ${crossings.length} products at or below their threshold`;
+    ? (soldOut.length ? `Sold out: ${label(crossings[0])} (0 left)` : `Low stock: ${label(crossings[0])} (${crossings[0].after} left)`)
+    : soldOut.length
+      ? `Stock alert: ${soldOut.length} sold out${crossings.length > soldOut.length ? `, ${crossings.length - soldOut.length} low` : ''}`
+      : `Low stock: ${crossings.length} products at or below their threshold`;
+  const heading = soldOut.length === crossings.length ? 'Sold out alert' : soldOut.length ? 'Sold out &amp; low stock alert' : 'Low stock alert';
 
   const status = (r: LowStockRow) =>
     r.stock <= 0
@@ -98,15 +102,15 @@ export async function sendLowStockAlertEmail(crossings: LowStockCrossing[], cont
       <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;text-align:right;"><a href="${e(`${adminUrl}/admin/products/edit/${encodeURIComponent(r.productId)}`)}" style="color:#0079CE;text-decoration:none;font-weight:600;">Edit</a></td>
     </tr>`).join('');
 
-  const droppedList = crossings.map((c) => `<li style="margin:4px 0;"><strong>${e(label(c))}</strong>: ${c.before} → <strong>${c.after}</strong> left</li>`).join('');
+  const droppedList = crossings.map((c) => `<li style="margin:4px 0;"><strong>${e(label(c))}</strong>: ${c.before} → <strong>${c.after}</strong> left${c.soldOut || c.after <= 0 ? ' <span style="color:#dc2626;font-weight:700;">— SOLD OUT</span>' : ''}</li>`).join('');
 
   const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
   <div style="max-width:680px;margin:0 auto;padding:24px;">
     <div style="background:#fff;border-radius:12px;padding:28px;border:1px solid #e2e8f0;">
       <img src="${logo}" alt="Solatide Biosciences" style="height:40px;margin-bottom:18px;" />
-      <h2 style="margin:0 0 6px;color:#0f2a4a;font-size:20px;">Low stock alert</h2>
+      <h2 style="margin:0 0 6px;color:#0f2a4a;font-size:20px;">${heading}</h2>
       <p style="margin:0 0 14px;color:#475569;font-size:14px;">
-        ${context?.orderNumber ? `Order <strong>${e(context.orderNumber)}</strong> took` : 'A recent order took'} ${crossings.length === 1 ? 'this item' : 'these items'} to or below the low-stock threshold:
+        ${context?.orderNumber ? `Order <strong>${e(context.orderNumber)}</strong> took` : 'A recent order took'} ${crossings.length === 1 ? 'this item' : 'these items'} ${soldOut.length === crossings.length ? 'to 0 (sold out)' : soldOut.length ? 'to or below the low-stock threshold, or sold them out' : 'to or below the low-stock threshold'}:
       </p>
       <ul style="margin:0 0 20px;padding-left:20px;color:#1e293b;font-size:14px;">${droppedList}</ul>
       <h3 style="margin:0 0 8px;color:#0f2a4a;font-size:15px;">All items at or below their threshold (${rows.length})</h3>
@@ -120,7 +124,7 @@ export async function sendLowStockAlertEmail(crossings: LowStockCrossing[], cont
         </tr></thead>
         <tbody>${rowHtml}</tbody>
       </table>
-      <p style="margin:18px 0 0;color:#94a3b8;font-size:12px;">Threshold: ${globalLowStockThreshold()} (store setting), or a product's own low stock threshold where it was changed. You receive one alert each time an order takes an item from above its threshold to at or below it.</p>
+      <p style="margin:18px 0 0;color:#94a3b8;font-size:12px;">Threshold: ${globalLowStockThreshold()} (store setting), or a product's own low stock threshold where it was changed. You receive an alert when an order takes an item from above its threshold to at or below it, and again when an order sells the last one.</p>
     </div>
   </div></body></html>`;
 
