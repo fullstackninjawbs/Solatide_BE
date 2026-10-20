@@ -13,11 +13,17 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import Order from '../../models/order.model';
-import { starshipitService } from '../shipping/starshipit.service';
+import { starshipitService, STARSHIPIT_ORDER_NOT_FOUND } from '../shipping/starshipit.service';
 import { applyStarshipitTrackingUpdate } from '../shipping/starshipitTracking';
 import { syncAllTagadaProducts } from '../tagadaProductSync.service';
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e } from '../../utils/escapeHtml';
+
+// An order Starshipit keeps answering "not found" for (deleted or never imported there) is
+// skipped after this many runs instead of failing every 30 minutes. The webhook still updates it.
+const TRACKING_MAX_MISSES = 3;
+// Gap between orders on top of the client's own 500 ms spacing: the job hit 429s every run.
+const TRACKING_ORDER_GAP_MS = 1000;
 
 /** Refresh Starshipit tracking for recent paid orders that are not delivered yet (same logic as the webhook). */
 export async function refreshStarshipitTracking(): Promise<{ checked: number; updated: number; shipped: number; errors: number }> {
@@ -28,10 +34,12 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
     isDeleted: { $ne: true },
     createdAt: { $gte: since },
     shipmentStatus: { $not: /delivered/i },
+    starshipitTrackingMisses: { $not: { $gte: TRACKING_MAX_MISSES } },
   }).sort({ updatedAt: 1 }).limit(50);
 
   let updated = 0, shipped = 0, errors = 0;
-  for (const order of orders) {
+  for (const [i, order] of orders.entries()) {
+    if (i > 0) await new Promise((r) => setTimeout(r, TRACKING_ORDER_GAP_MS));
     try {
       const d = await starshipitService.getShipmentDetails(String(order.starshipitOrderId));
       const r = await applyStarshipitTrackingUpdate(order, {
@@ -42,9 +50,19 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
       });
       if (r.changed) updated++;
       if (r.newlyShipped) shipped++;
+      if (order.starshipitTrackingMisses) await Order.updateOne({ _id: order._id }, { $unset: { starshipitTrackingMisses: 1 } });
     } catch (err: any) {
       errors++;
-      console.warn(`[Scheduled] tracking refresh failed for order ${order.orderNumber ?? order._id}: ${err?.message}`);
+      const label = order.orderNumber ?? order._id;
+      if (err?.code === STARSHIPIT_ORDER_NOT_FOUND) {
+        const misses = (order.starshipitTrackingMisses || 0) + 1;
+        await Order.updateOne({ _id: order._id }, { $set: { starshipitTrackingMisses: misses } });
+        console.warn(misses >= TRACKING_MAX_MISSES
+          ? `[Scheduled] order ${label} not found in Starshipit ${misses} times — no longer checked by the scheduled refresh (check it in Starshipit)`
+          : `[Scheduled] order ${label} not found in Starshipit (${misses}/${TRACKING_MAX_MISSES})`);
+      } else {
+        console.warn(`[Scheduled] tracking refresh failed for order ${label}: ${err?.message}`);
+      }
     }
   }
   return { checked: orders.length, updated, shipped, errors };

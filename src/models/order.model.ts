@@ -184,6 +184,8 @@ export interface IOrder extends mongoose.Document {
   /** @deprecated EasyPost is being replaced by Starshipit */
   easyPostShipmentId?: string;
   starshipitOrderId?: string;
+  /** Scheduled tracking refresh: consecutive "order not found in Starshipit" answers (stops at 3). */
+  starshipitTrackingMisses?: number;
 
   // ── Metadata ─────────────────────────────────────────────────────────────────
   tags?: string[];
@@ -421,6 +423,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     shippedAt: { type: Date },
     easyPostShipmentId: { type: String },
     starshipitOrderId: { type: String },
+    starshipitTrackingMisses: { type: Number },
 
     // ── Metadata ─────────────────────────────────────────────────────────────────
     tags: [{ type: String }],

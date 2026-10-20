@@ -72,6 +72,8 @@ function getNormalizedShippingMethod(order: IOrder): string {
 
 /** All Starshipit HTTP calls are bounded (L-9). */
 const STARSHIPIT_TIMEOUT_MS = 15000;
+/** `code` of the error getShipmentDetails throws when Starshipit has no such order. */
+export const STARSHIPIT_ORDER_NOT_FOUND = 'STARSHIPIT_ORDER_NOT_FOUND';
 
 export class StarshipitService {
   private readonly baseUrl = 'https://api.starshipit.com/api';
@@ -306,7 +308,7 @@ export class StarshipitService {
       const order = response.data?.order || (response.data?.orders && response.data.orders[0]);
 
       if (!order) {
-        throw new Error('Order not found in Starshipit');
+        throw Object.assign(new Error('Order not found in Starshipit'), { code: STARSHIPIT_ORDER_NOT_FOUND });
       }
 
       let trackingNumber = order.tracking_number || '';
@@ -333,6 +335,7 @@ export class StarshipitService {
         shipmentStatus
       };
     } catch (error: any) {
+      if (error.code === STARSHIPIT_ORDER_NOT_FOUND) throw error;
       console.error(`Starshipit Get Shipment Details Error: ${error.response?.status ?? ''} ${error.message}`);
       throw new Error(error.response?.data?.message || 'Failed to fetch shipment details from Starshipit');
     }
