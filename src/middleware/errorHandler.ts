@@ -44,6 +44,31 @@ const handleJWTError = () => new AppError('Invalid token. Please log in again.',
 const handleJWTExpiredError = () => new AppError('Your token has expired! Please log in again.', 401);
 
 /**
+ * MongoDB unreachable / timed out (Atlas outage, network blip): a temporary condition, not a bug.
+ * Answer 503 and log one line instead of a [CRITICAL ERROR] dump per request.
+ */
+const DB_UNAVAILABLE_ERRORS = new Set([
+  'MongoNetworkError',
+  'MongoNetworkTimeoutError',
+  'MongoServerSelectionError',
+  'MongooseServerSelectionError',
+  'MongoPoolClearedError',
+  'MongoNotConnectedError',
+]);
+export const isDbUnavailableError = (err: any): boolean =>
+  DB_UNAVAILABLE_ERRORS.has(err?.name) || /buffering timed out|Client must be connected/i.test(err?.message || '');
+
+const handleDbUnavailable = (err: any, req: Request, res: Response) => {
+  console.error(`[Database] ${req.method} ${req.path} failed: ${err.name}: ${err.message}`);
+  res.set('Retry-After', '30');
+  res.status(503).json({
+    success: false,
+    status: 'error',
+    message: 'Service temporarily unavailable. Please try again shortly.',
+  });
+};
+
+/**
  * Send detailed error details in development mode
  */
 const sendErrorDev = (err: AppError, res: Response) => {
@@ -94,7 +119,9 @@ export const buildErrorHandler = (env: string) => (
     return next(err);
   }
 
-  if (env === 'development') {
+  if (isDbUnavailableError(err)) {
+    handleDbUnavailable(err, req, res);
+  } else if (env === 'development') {
     sendErrorDev(err, res);
   } else {
     let error = Object.assign(Object.create(Object.getPrototypeOf(err)), err);

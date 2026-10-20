@@ -1,17 +1,19 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
+import { isDbUnavailableError } from '../../middleware/errorHandler';
 import ShippingPackage from '../../models/shippingPackage.model';
 
-export const getPackages = async (req: Request, res: Response) => {
+export const getPackages = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const packages = await ShippingPackage.find({ active: true }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, packages });
   } catch (error: any) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('Error fetching shipping packages:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch shipping packages.' });
   }
 };
 
-export const createPackage = async (req: Request, res: Response) => {
+export const createPackage = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { name, type, dimensions, weight, isDefault } = req.body;
 
@@ -26,12 +28,13 @@ export const createPackage = async (req: Request, res: Response) => {
     const savedPackage = await newPackage.save();
     res.status(201).json({ success: true, package: savedPackage });
   } catch (error: any) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('Error creating shipping package:', error);
     res.status(500).json({ success: false, message: 'Failed to create shipping package.' });
   }
 };
 
-export const updatePackage = async (req: Request, res: Response) => {
+export const updatePackage = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const { name, type, dimensions, weight, isDefault } = req.body;
@@ -56,12 +59,13 @@ export const updatePackage = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true, package: updatedPackage });
   } catch (error: any) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('Error updating shipping package:', error);
     res.status(500).json({ success: false, message: 'Failed to update shipping package.' });
   }
 };
 
-export const deletePackage = async (req: Request, res: Response) => {
+export const deletePackage = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     
@@ -79,12 +83,13 @@ export const deletePackage = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true, message: 'Shipping package deleted successfully.' });
   } catch (error: any) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('Error deleting shipping package:', error);
     res.status(500).json({ success: false, message: 'Failed to delete shipping package.' });
   }
 };
 
-export const setDefaultPackage = async (req: Request, res: Response) => {
+export const setDefaultPackage = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     
@@ -98,6 +103,7 @@ export const setDefaultPackage = async (req: Request, res: Response) => {
 
     res.status(200).json({ success: true, package: updatedPackage });
   } catch (error: any) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('Error setting default shipping package:', error);
     res.status(500).json({ success: false, message: 'Failed to set default shipping package.' });
   }

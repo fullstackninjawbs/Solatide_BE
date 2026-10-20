@@ -4,6 +4,7 @@ import Page from '../models/Page';
 import { triggerStorefrontRebuild } from '../utils/rebuildStorefront';
 import { sanitizeRichHtml } from '../utils/sanitizeHtml';
 import { escapeRegex } from '../utils/collectionUtils';
+import { isDbUnavailableError } from '../middleware/errorHandler';
 
 const reservedHandles = [
   'admin', 'product', 'products', 'cart', 'checkout', 'login',
@@ -271,7 +272,7 @@ export const deletePage = async (req: Request, res: Response, next: NextFunction
  * - old slug (in another page's slugHistory) → 200 { redirect: true, targetSlug }
  * - otherwise 404. Never exposes internal error messages.
  */
-export const getPageBySlug = async (req: Request, res: Response): Promise<void> => {
+export const getPageBySlug = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const raw = typeof req.params.slug === 'string' ? req.params.slug.trim() : '';
     if (!raw || raw.length > SLUG_MAX) {
@@ -307,6 +308,7 @@ export const getPageBySlug = async (req: Request, res: Response): Promise<void> 
 
     res.status(404).json({ message: 'Page not found' });
   } catch (error) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('[Pages] getPageBySlug failed:', error);
     res.status(500).json({ message: 'Something went wrong' });
   }
@@ -315,7 +317,7 @@ export const getPageBySlug = async (req: Request, res: Response): Promise<void> 
 /**
  * PUBLIC: Get list of active public pages (for sitemap/prerendering)
  */
-export const getPublicPagesList = async (req: Request, res: Response): Promise<void> => {
+export const getPublicPagesList = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const CACHE_KEY = 'public:pages:list';
     const cached = await cacheGet(CACHE_KEY);
@@ -327,6 +329,7 @@ export const getPublicPagesList = async (req: Request, res: Response): Promise<v
     await cacheSet(CACHE_KEY, pages, TTL.PUBLIC_CONTENT);
     res.json(pages);
   } catch (error) {
+    if (isDbUnavailableError(error)) return next(error); // → 503
     console.error('[Pages] getPublicPagesList failed:', error);
     res.status(500).json({ message: 'Something went wrong' });
   }

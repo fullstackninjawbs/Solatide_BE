@@ -71,11 +71,11 @@ const gracefulShutdown = (signal: string, exitCode = 0) => {
   server.closeIdleConnections?.();
 };
 
-// Handle unhandled promise rejections gracefully
+// Unhandled promise rejections: log and keep serving. Shutting down here turned every stray
+// rejection during a DB outage (all workers hit them at once) into a PM2 restart loop → nginx 502s.
+// Synchronous crashes (uncaughtException above) still exit, as the process state is then unknown.
 process.on('unhandledRejection', (err: any) => {
-  console.error('[UNHANDLED REJECTION] Shutting down server gracefully...');
-  console.error(err?.name, err?.message);
-  gracefulShutdown('unhandledRejection', 1);
+  console.error('[UNHANDLED REJECTION]', err?.name, err?.message, err?.stack);
 });
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

@@ -15,6 +15,7 @@ import AppError from './utils/appError';
 import analyticsRoutes from './routes/analytics.routes';
 import { generalLimiter, publicLimiter, analyticsLimiter } from './middleware/rateLimit';
 import healthRoutes from './routes/health.routes';
+import dbGuard from './middleware/dbGuard';
 import pageRoutes from './routes/public.page.routes';
 
 /**
@@ -95,6 +96,9 @@ app.get('/api/status', (req: Request, res: Response) => {
 
 // Health check — no auth
 app.use('/api/health', healthRoutes);
+
+// Database down → fast 503 for everything below (tests run without a DB: model statics are stubbed)
+if (config.env !== 'test') app.use('/api', dbGuard);
 
 // Register Direct and Versioned API Routes
 app.use('/api/products', publicLimiter, productRoutes);
