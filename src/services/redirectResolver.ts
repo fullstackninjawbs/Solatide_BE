@@ -14,10 +14,28 @@ const REDIRECT_TTL = 10 * 60; // seconds; every redirect change clears redirects
 const OTHER_TTL = 60;         // "live" / "nothing here" — short, so new pages and bot probes stay cheap
 
 /**
+ * Storefront pages built into the app code (React routes, not CMS documents), so they are not in
+ * the database. Keep in sync with STATIC_ROUTES in Client/prerender.js.
+ */
+export const STOREFRONT_STATIC_PAGES = new Set([
+  '/collections/all',
+  '/pages/about',
+  '/pages/concentration-calculator',
+  '/pages/faq',
+  '/pages/shipping-policy',
+  '/pages/privacy-policy',
+  '/pages/coa',
+  '/pages/terms-of-services',
+  '/pages/refund-policy',
+]);
+
+/**
  * Is this path a live storefront item that simply has no prerendered file yet (created/renamed,
  * storefront rebuild still running)? Then nginx should serve the app shell with 200, not a 404.
+ * Built-in pages count as live too.
  */
 export async function isLiveItem(path: string): Promise<boolean> {
+  if (STOREFRONT_STATIC_PAGES.has(path)) return true;
   const m = path.match(/^\/(products|collections|pages)\/([a-z0-9-]+)$/);
   if (!m) return false;
   const [, type, slug] = m;
@@ -35,7 +53,7 @@ export type TargetStatus = 'live' | 'not_public' | 'missing' | 'other';
  */
 export async function targetStatus(toPath: string): Promise<TargetStatus> {
   const path = toPath.split('?')[0].toLowerCase();
-  if (path === '/collections/all') return 'live'; // the shop page always exists
+  if (STOREFRONT_STATIC_PAGES.has(path)) return 'live'; // shop page, FAQ, policies… always exist
   const m = path.match(/^\/(products|collections|pages)\/([a-z0-9-]+)$/);
   if (!m) return 'other';
   if (await isLiveItem(path)) return 'live';
