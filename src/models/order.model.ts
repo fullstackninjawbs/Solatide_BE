@@ -133,7 +133,8 @@ export interface IOrder extends mongoose.Document {
   fulfilmentStatus: 'unfulfilled' | 'fulfilled' | 'partial';
   paymentMethod?: 'tagada' | 'payid' | 'bank_transfer' | 'manual_offline';
   paymentStatus: 'pending' | 'paid' | 'failed' | 'cancelled' | 'partially_refunded' | 'refunded';
-  source?: 'storefront' | 'admin_manual' | 'web';
+  /** 'shopify_import' = historical order imported from the old Shopify store (scripts/importShopifyOrders.ts) */
+  source?: 'storefront' | 'admin_manual' | 'web' | 'shopify_import';
   createdByAdmin?: {
     id: string;
     email: string;
@@ -328,7 +329,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
     source: {
       type: String,
-      enum: ['storefront', 'admin_manual', 'web'],
+      enum: ['storefront', 'admin_manual', 'web', 'shopify_import'],
       default: 'storefront',
     },
     createdByAdmin: {

@@ -179,10 +179,45 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
   const email = String(order?.customer?.email || order?.customerEmail || '').trim().toLowerCase();
   const customerRecord = email ? await Customer.findOne({ email }).select('_id').lean() : null;
 
+  const orderObj = order?.toObject ? order.toObject() : order;
+
+  // Fallback: if historical or imported line items lack a saved productImageUrl, resolve it from the product catalog
+  if (Array.isArray(orderObj?.lineItems) && orderObj.lineItems.some((li: any) => !li.productImageUrl)) {
+    const skus = orderObj.lineItems.filter((li: any) => !li.productImageUrl && li.sku).map((li: any) => li.sku);
+    const titles = orderObj.lineItems.filter((li: any) => !li.productImageUrl && li.title).map((li: any) => li.title);
+
+    try {
+      const prods = await Product.find({
+        $or: [
+          { sku: { $in: skus } },
+          { 'variants.sku': { $in: skus } },
+          { name: { $in: titles } },
+        ],
+      }).select('sku name variants imageUrl images').lean();
+
+      for (const li of orderObj.lineItems) {
+        if (!li.productImageUrl) {
+          const sku = li.sku?.toLowerCase();
+          const title = li.title?.toLowerCase();
+          const match = prods.find((p: any) =>
+            (sku && p.sku?.toLowerCase() === sku) ||
+            (sku && p.variants?.some((v: any) => v.sku?.toLowerCase() === sku)) ||
+            (title && p.name?.toLowerCase() === title)
+          );
+          if (match) {
+            li.productImageUrl = match.imageUrl || match.images?.[0]?.url || match.images?.[0]?.secureUrl || '';
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[getOrderById] Failed to fallback-resolve line item images:', err);
+    }
+  }
+
   res.status(200).json({
     success: true,
     data: {
-      order: order?.toObject ? order.toObject() : order,
+      order: orderObj,
       customerId: customerRecord?._id ?? null,
     },
   });
@@ -326,6 +361,10 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   const order = await Order.findById(req.params.id);
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
+  }
+
+  if (order.source === 'shopify_import' || order.tags?.includes('shopify-import')) {
+    return next(new AppError('Cannot create shipping labels for historical imported Shopify orders.', 400));
   }
 
   // ─── If order is already in Starshipit, skip import and try to pull latest details / generate label ───
@@ -523,6 +562,10 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
 
   if (!order) {
     return next(new AppError('No order found with that ID', 404));
+  }
+
+  if (order.source === 'shopify_import' || order.tags?.includes('shopify-import')) {
+    return next(new AppError('Cannot process refunds for historical imported Shopify orders.', 400));
   }
 
   // 1. Explicit business switch (H-6). Default: enabled in sandbox, disabled in production.
