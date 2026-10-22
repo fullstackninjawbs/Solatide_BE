@@ -163,6 +163,7 @@ export const toPublicOrder = (order: any) => {
     deliveryStatus: o.deliveryStatus,
     refundStatus: o.refundStatus,
     currency: o.currency,
+    paymentMethod: o.paymentMethod,
     lineItems: (o.lineItems || []).map((li: any) => ({
       title: li.title,
       variantTitle: li.variantTitle,

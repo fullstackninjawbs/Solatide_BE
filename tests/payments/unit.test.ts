@@ -303,6 +303,6 @@ test('checkout validation: quantity bounds, stock (deny), missing variant', asyn
   ], loader), /Only 3 units/);
   await assert.rejects(resolveCheckoutLines([{ productId: PID, quantity: 1 }], loader), /select a variant/);
   await assert.rejects(resolveCheckoutLines([{ productId: PID, variantId: 'nope', quantity: 1 }], loader), /not found/);
-  await assert.rejects(resolveCheckoutLines([{ productId: 'not-an-id', quantity: 1 }], loader), /Invalid productId/);
+  await assert.rejects(resolveCheckoutLines([{ productId: 'not-an-id', quantity: 1 }], loader), /no longer available/);
   await assert.rejects(resolveCheckoutLines([], loader), /At least one/);
 });

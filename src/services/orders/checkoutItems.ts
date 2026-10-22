@@ -19,6 +19,7 @@ export interface ResolvedLine {
   variant: any | null;
   quantity: number;
   price: number;
+  /** '' when not required (bank transfer checkout) and the product has none */
   tagadaVariantId: string;
   sku?: string;
   title?: string;
@@ -69,8 +70,11 @@ export function isDenyPolicy(product: any, variant: any | null): boolean {
 
 export async function resolveCheckoutLines(
   inputs: CheckoutLineInput[],
-  loadProduct: (id: string) => Promise<any | null>
+  loadProduct: (id: string) => Promise<any | null>,
+  /** Tagada checkout needs a Tagada variant id per line; our own bank transfer checkout does not. */
+  opts: { requireTagadaVariant?: boolean } = {}
 ): Promise<ResolvedLine[]> {
+  const requireTagadaVariant = opts.requireTagadaVariant !== false;
   if (!Array.isArray(inputs) || inputs.length === 0) throw new CheckoutValidationError('At least one item is required.');
   if (inputs.length > MAX_LINES) throw new CheckoutValidationError(`At most ${MAX_LINES} lines per order.`);
 
@@ -78,18 +82,18 @@ export async function resolveCheckoutLines(
   const requested = new Map<string, number>(); // stock check across duplicate lines
   for (const input of inputs) {
     const productId = str(input.productId ?? input.product);
-    if (!productId || !/^[0-9a-fA-F]{24}$/.test(productId)) throw new CheckoutValidationError('Invalid productId.');
+    if (!productId || !/^[0-9a-fA-F]{24}$/.test(productId)) throw new CheckoutValidationError('An item in your cart is no longer available. Please remove it from your cart and try again.');
     const quantity = parseQuantity(input.quantity ?? 1);
     const product = await loadProduct(productId);
     if (!product || product.publishStatus === 'draft' || product.publishStatus === 'archived') {
-      throw new CheckoutValidationError('Product not available.');
+      throw new CheckoutValidationError('An item in your cart is no longer available. Please remove it from your cart and try again.');
     }
     const variant = resolveVariant(product, str(input.variantId), str(input.tagadaVariantId));
     const price = Number(variant ? variant.price : product.price);
     if (!Number.isFinite(price) || price < 0) throw new CheckoutValidationError(`Product '${product.name}' has no valid price.`);
 
     const tagadaVariantId = variant?.tagadaVariantId || (!variant ? product.tagadaVariantId : undefined);
-    if (!tagadaVariantId) {
+    if (!tagadaVariantId && requireTagadaVariant) {
       throw new CheckoutValidationError(`'${product.name}' is not configured for checkout (missing Tagada variant id).`);
     }
 
@@ -110,7 +114,7 @@ export async function resolveCheckoutLines(
       variant: variant?._id ?? null,
       quantity,
       price,
-      tagadaVariantId: String(tagadaVariantId),
+      tagadaVariantId: tagadaVariantId ? String(tagadaVariantId) : '',
       sku: variant?.sku || product.sku || undefined,
       title: product.name,
       variantTitle: variant?.title,

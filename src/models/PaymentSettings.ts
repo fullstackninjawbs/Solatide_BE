@@ -17,6 +17,25 @@ export interface IPaymentSettings extends Document {
   tagadaApiKeyProd: string;
   tagadaWebhookSecret: string;
   tagadaEnabled: boolean;
+  /** Our own checkout with bank transfer / PayID (no card processor). See services/checkout/bankTransfer.ts */
+  bankTransfer?: {
+    enabled: boolean;
+    accountName?: string;
+    bankName?: string;
+    bsb?: string;
+    accountNumber?: string;
+    payId?: string;
+    swiftBic?: string;
+    /** Shipping charged at checkout (AUD, GST incl.) */
+    shippingFeeAU?: number;
+    shippingFeeInternational?: number;
+    /** Free Australian shipping at or above this subtotal (0/empty = never) */
+    freeShippingThresholdAU?: number;
+    internationalEnabled?: boolean;
+    /** Unpaid orders are cancelled (stock released) after this many days, when the job runs */
+    unpaidCancelDays?: number;
+    notifyAdminOnOrder?: boolean;
+  };
 }
 
 const PaymentSettingsSchema = new Schema<IPaymentSettings>(
@@ -34,6 +53,21 @@ const PaymentSettingsSchema = new Schema<IPaymentSettings>(
     tagadaApiKeyProd: { type: String, default: '' },
     tagadaWebhookSecret: { type: String, default: '' },
     tagadaEnabled: { type: Boolean, default: false },
+    bankTransfer: {
+      enabled: { type: Boolean, default: false },
+      accountName: { type: String, trim: true, default: '' },
+      bankName: { type: String, trim: true, default: '' },
+      bsb: { type: String, trim: true, default: '' },
+      accountNumber: { type: String, trim: true, default: '' },
+      payId: { type: String, trim: true, default: '' },
+      swiftBic: { type: String, trim: true, default: '' },
+      shippingFeeAU: { type: Number, min: 0, default: 0 },
+      shippingFeeInternational: { type: Number, min: 0, default: 0 },
+      freeShippingThresholdAU: { type: Number, min: 0, default: 0 },
+      internationalEnabled: { type: Boolean, default: true },
+      unpaidCancelDays: { type: Number, min: 1, max: 60, default: 3 },
+      notifyAdminOnOrder: { type: Boolean, default: true },
+    },
   },
   { timestamps: true }
 );

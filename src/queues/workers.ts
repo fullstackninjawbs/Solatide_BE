@@ -19,11 +19,13 @@ export function shouldRunWorkersInApi(): boolean {
 }
 
 /** Cron schedules for the maintenance queue — each job only runs when its env var is set. */
-const SCHEDULES: Array<{ id: keyof typeof MAINTENANCE_JOBS; env: string; extraCheck?: () => string | null }> = [
+const SCHEDULES: Array<{ id: keyof typeof MAINTENANCE_JOBS; env: string; extraCheck?: () => string | null; defaultPattern?: string }> = [
   { id: 'starshipit-tracking', env: 'STARSHIPIT_TRACKING_CRON' },
   { id: 'tagada-sync', env: 'TAGADA_SYNC_CRON' },
   { id: 'db-backup', env: 'BACKUP_CRON', extraCheck: () => (process.env.BACKUP_MONGO_URI ? null : 'BACKUP_MONGO_URI is not set') },
   { id: 'abandoned-reminders', env: 'ABANDONED_REMINDER_CRON' },
+  // On by default: unpaid bank transfer / PayID orders must not hold stock forever ("off" disables)
+  { id: 'cancel-unpaid-orders', env: 'UNPAID_ORDER_CANCEL_CRON', defaultPattern: '20 * * * *' },
 ];
 
 let workers: Worker[] = [];
@@ -32,7 +34,8 @@ async function registerSchedules(): Promise<void> {
   const q = getQueue(QUEUE_NAMES.maintenance);
   const tz = process.env.SCHEDULE_TZ || 'Australia/Melbourne';
   for (const s of SCHEDULES) {
-    const pattern = (process.env[s.env] || '').trim();
+    const raw = (process.env[s.env] || '').trim();
+    const pattern = raw.toLowerCase() === 'off' ? '' : raw || s.defaultPattern || '';
     const problem = pattern ? s.extraCheck?.() ?? null : null;
     if (pattern && !problem) {
       await q.upsertJobScheduler(s.id, { pattern, tz }, { name: s.id });

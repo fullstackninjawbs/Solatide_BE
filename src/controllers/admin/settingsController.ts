@@ -139,3 +139,52 @@ export const updateStoreSettings = catchAsync(async (req: Request, res: Response
     data: { settings }
   });
 });
+
+// ─── Bank transfer / PayID checkout ─────────────────────────────────────────────
+// GET /api/admin/settings/bank-transfer · PUT (payment settings permission)
+
+const BANK_TEXT_FIELDS = ['accountName', 'bankName', 'bsb', 'accountNumber', 'payId', 'swiftBic'] as const;
+const BANK_NUMBER_FIELDS = ['shippingFeeAU', 'shippingFeeInternational', 'freeShippingThresholdAU', 'unpaidCancelDays'] as const;
+const BANK_BOOL_FIELDS = ['enabled', 'internationalEnabled', 'notifyAdminOnOrder'] as const;
+
+export const getBankTransferSettings = catchAsync(async (_req: Request, res: Response) => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getBankTransferSettings: effective, publicCheckoutConfig } = require('../../services/checkout/bankTransfer');
+  const s = await effective();
+  const doc: any = await PaymentSettings.findOne().select('bankTransfer').lean();
+  res.status(200).json({ success: true, data: { settings: s, saved: doc?.bankTransfer || {}, checkout: publicCheckoutConfig(s) } });
+});
+
+export const updateBankTransferSettings = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const body = req.body || {};
+  const set: Record<string, unknown> = {};
+  for (const k of BANK_TEXT_FIELDS) {
+    if (body[k] === undefined) continue;
+    if (typeof body[k] !== 'string' || body[k].length > 120) return next(new AppError(`Invalid ${k}`, 400));
+    set[`bankTransfer.${k}`] = body[k].trim();
+  }
+  for (const k of BANK_NUMBER_FIELDS) {
+    if (body[k] === undefined || body[k] === '') continue;
+    const n = Number(body[k]);
+    const max = k === 'unpaidCancelDays' ? 60 : 100000;
+    if (!Number.isFinite(n) || n < (k === 'unpaidCancelDays' ? 1 : 0) || n > max) return next(new AppError(`Invalid ${k}`, 400));
+    set[`bankTransfer.${k}`] = k === 'unpaidCancelDays' ? Math.floor(n) : Math.round(n * 100) / 100;
+  }
+  for (const k of BANK_BOOL_FIELDS) {
+    if (body[k] === undefined) continue;
+    if (typeof body[k] !== 'boolean') return next(new AppError(`Invalid ${k}`, 400));
+    set[`bankTransfer.${k}`] = body[k];
+  }
+  if (!Object.keys(set).length) return next(new AppError('No valid fields to update', 400));
+  await PaymentSettings.findOneAndUpdate({}, { $set: set }, { upsert: true, new: true, setDefaultsOnInsert: true });
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getBankTransferSettings: effective, publicCheckoutConfig } = require('../../services/checkout/bankTransfer');
+  const s = await effective();
+  const checkout = publicCheckoutConfig(s);
+  const doc: any = await PaymentSettings.findOne().select('bankTransfer').lean();
+  const saved = doc?.bankTransfer || {};
+  if (s.enabled && checkout.mode !== 'bank_transfer') {
+    return res.status(200).json({ success: true, warning: 'Saved, but the checkout stays off until the PayID or bank account details are filled in.', data: { settings: s, saved, checkout } });
+  }
+  res.status(200).json({ success: true, message: 'Bank transfer settings saved', data: { settings: s, saved, checkout } });
+});

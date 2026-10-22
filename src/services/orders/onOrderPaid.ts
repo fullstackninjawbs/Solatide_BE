@@ -168,8 +168,9 @@ export async function onOrderPaid(
     await step('confirmation_email', () => d.sendOrderConfirmationEmail(order));
   }
 
-  // 3) Admin notification (admin-created manual orders are notified at creation)
-  if (order.source !== 'admin_manual') {
+  // 3) Admin notification (admin-created manual orders are notified at creation; bank transfer /
+  // PayID orders when they were placed — the admin is the one marking them paid)
+  if (order.source !== 'admin_manual' && !['payid', 'bank_transfer', 'international_bank_transfer'].includes(order.paymentMethod)) {
     await step('admin_notification', () => d.sendAdminNewOrderNotificationEmail(order));
   }
 

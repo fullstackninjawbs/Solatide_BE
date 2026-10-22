@@ -11,6 +11,10 @@ const router = express.Router();
 router.get('/store', restrictTo(...ACCESS.settingsRead), settingsController.getStoreSettings);
 router.put('/store', restrictTo(...ACCESS.settingsStoreWrite), settingsController.updateStoreSettings);
 
+// ── Bank transfer / PayID checkout ───────────────────────────────────────────
+router.get('/bank-transfer', restrictTo(...ACCESS.settingsRead), settingsController.getBankTransferSettings);
+router.put('/bank-transfer', restrictTo(...ACCESS.settingsPayment), settingsController.updateBankTransferSettings);
+
 // ── TagadaPay Settings ────────────────────────────────────────────────────────
 router.get('/tagada', restrictTo(...ACCESS.settingsRead), settingsController.getTagadaSettings);
 // Payment credentials + webhook secret: super_admin only

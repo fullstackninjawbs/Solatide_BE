@@ -107,6 +107,8 @@ export async function sendAbandonedCheckoutReminders(): Promise<{ candidates: nu
     paymentStatus: 'pending',
     isDeleted: { $ne: true },
     abandonedReminderSentAt: null,
+    // Bank transfer / PayID orders were placed on purpose and are awaiting payment, not abandoned
+    paymentMethod: { $nin: ['payid', 'bank_transfer', 'international_bank_transfer'] },
     customerEmail: { $exists: true, $nin: [null, ''] },
     createdAt: { $gte: new Date(now - 48 * 3600 * 1000), $lte: new Date(now - delayH * 3600 * 1000) },
   }).limit(50);
@@ -143,4 +145,33 @@ export async function sendAbandonedCheckoutReminders(): Promise<{ candidates: nu
     sent++;
   }
   return { candidates: candidates.length, sent, skipped };
+}
+
+/**
+ * Cancel bank transfer / PayID orders that were not paid by their due date (placed + N days,
+ * Admin → Settings) and give their reserved stock back. Opt-in: UNPAID_ORDER_CANCEL_CRON.
+ * No email is sent to the customer. A payment that still arrives later can be accepted by
+ * marking the order paid (cancelled → paid is allowed; stock is then decremented again).
+ */
+export async function cancelUnpaidBankOrders(): Promise<{ candidates: number; cancelled: number }> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { transitionPaymentStatus } = require('../orders/paymentTransition');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { releaseReservedStock } = require('../orders/inventory');
+  const due = await Order.find({
+    paymentStatus: 'pending',
+    paymentMethod: { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] },
+    paymentDueAt: { $ne: null, $lte: new Date() },
+    isDeleted: { $ne: true },
+  }).select('_id orderNumber').limit(200).lean();
+  let cancelled = 0;
+  for (const o of due) {
+    const t = await transitionPaymentStatus(o._id, 'cancelled');
+    if (t.result !== 'applied') continue;
+    await releaseReservedStock(o._id);
+    await Order.updateOne({ _id: o._id }, { $push: { comments: { text: 'Cancelled automatically: payment not received by the due date. Reserved stock released.', createdAt: new Date() } } });
+    cancelled++;
+    console.log(`[Scheduled] cancelled unpaid order ${o.orderNumber} (stock released)`);
+  }
+  return { candidates: due.length, cancelled };
 }

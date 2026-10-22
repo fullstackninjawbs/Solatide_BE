@@ -131,7 +131,7 @@ export interface IOrder extends mongoose.Document {
   // ── Status ───────────────────────────────────────────────────────────────────
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   fulfilmentStatus: 'unfulfilled' | 'fulfilled' | 'partial';
-  paymentMethod?: 'tagada' | 'payid' | 'bank_transfer' | 'manual_offline';
+  paymentMethod?: 'tagada' | 'payid' | 'bank_transfer' | 'international_bank_transfer' | 'manual_offline';
   paymentStatus: 'pending' | 'paid' | 'failed' | 'cancelled' | 'partially_refunded' | 'refunded';
   /** 'shopify_import' = historical order imported from the old Shopify store (scripts/importShopifyOrders.ts) */
   source?: 'storefront' | 'admin_manual' | 'web' | 'shopify_import';
@@ -161,6 +161,13 @@ export interface IOrder extends mongoose.Document {
   sideEffectStepsDone?: string[];
   sideEffectErrors?: ISideEffectError[];
   inventoryDecrementedAt?: Date | null;
+  /** Bank transfer / PayID checkout: pay by this date or the order is cancelled (if the job is on). */
+  paymentDueAt?: Date | null;
+  /** Stock actually reserved at placement (bank transfer checkout), given back on cancellation. */
+  stockReservations?: Array<{ product: any; variant?: any | null; quantity: number }>;
+  stockReleasedAt?: Date | null;
+  /** Browser-generated id of the checkout attempt: a repeated "Complete order" returns the same order. */
+  checkoutRequestId?: string;
   /** Set when the (opt-in) abandoned-checkout reminder email was sent for this pending order. */
   abandonedReminderSentAt?: Date | null;
   /** Set when the "order shipped" email was sent (claimed atomically, so it is sent at most once). */
@@ -320,7 +327,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
     paymentMethod: {
       type: String,
-      enum: ['tagada', 'payid', 'bank_transfer', 'manual_offline'],
+      enum: ['tagada', 'payid', 'bank_transfer', 'international_bank_transfer', 'manual_offline'],
     },
     paymentStatus: {
       type: String,
@@ -396,6 +403,13 @@ const orderSchema = new mongoose.Schema<IOrder>(
       default: undefined,
     },
     inventoryDecrementedAt: { type: Date, default: null },
+    paymentDueAt: { type: Date, default: null },
+    stockReservations: {
+      type: [{ _id: false, product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' }, variant: { type: mongoose.Schema.Types.ObjectId, default: null }, quantity: Number }],
+      default: undefined,
+    },
+    stockReleasedAt: { type: Date, default: null },
+    checkoutRequestId: { type: String, trim: true, maxlength: 100 },
     oversold: { type: Boolean, default: false },
     oversells: {
       type: [{
@@ -512,6 +526,10 @@ orderSchema.index(
 );
 orderSchema.index({ tagadaProviderPaymentId: 1 }, { sparse: true });
 orderSchema.index({ tagadaOrderId: 1 }, { sparse: true });
+// One order per checkout attempt (double-clicked "Complete order" / retried request)
+orderSchema.index({ checkoutRequestId: 1 }, { unique: true, partialFilterExpression: { checkoutRequestId: { $type: 'string' } } });
+// Unpaid bank transfer orders past their due date (cancellation job)
+orderSchema.index({ paymentStatus: 1, paymentMethod: 1, paymentDueAt: 1 });
 orderSchema.index({ tagadaSessionId: 1 }, { sparse: true });
 orderSchema.index({ customerEmail: 1 });
 orderSchema.index({ user: 1 });

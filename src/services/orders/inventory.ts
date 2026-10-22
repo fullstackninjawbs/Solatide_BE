@@ -31,7 +31,7 @@ export interface LowStockCrossing {
 }
 
 export type DecrementResult =
-  | { ok: true; productId: string; variantId: string | null; lowStock?: LowStockCrossing }
+  | { ok: true; productId: string; variantId: string | null; lowStock?: LowStockCrossing; /** stock was actually decremented (false: continue-selling item without enough stock) */ applied?: boolean }
   | { ok: false; reason: 'oversold' | 'not_found'; productId?: string; variantId?: string | null };
 
 /** LOW_STOCK_THRESHOLD (.env), or the product's own threshold when customised (utils/lowStock). */
@@ -91,7 +91,7 @@ export async function decrementStockAtomic(
           sku: v.sku, before, after, threshold, soldOut: after <= 0,
         }
         : undefined;
-      return { ok: true, productId: pid, variantId: String(variantId), ...(lowStock ? { lowStock } : {}) };
+      return { ok: true, applied: true, productId: pid, variantId: String(variantId), ...(lowStock ? { lowStock } : {}) };
     }
     const product = await Product.findById(productId).select('variants inventoryPolicy continueSellingWhenOutOfStock').lean();
     const variant = (product as any)?.variants?.find((v: any) => sameId(v._id, variantId));
@@ -116,7 +116,7 @@ export async function decrementStockAtomic(
     const lowStock = crossing(before, after, threshold)
       ? { productId: pid, variantId: null, productName: updated.name, sku: updated.sku, before, after, threshold, soldOut: after <= 0 }
       : undefined;
-    return { ok: true, productId: pid, variantId: null, ...(lowStock ? { lowStock } : {}) };
+    return { ok: true, applied: true, productId: pid, variantId: null, ...(lowStock ? { lowStock } : {}) };
   }
   const product = await Product.findById(productId).select('inventoryPolicy continueSellingWhenOutOfStock').lean();
   if (!product) return { ok: false, reason: 'not_found', productId: pid, variantId: null };
@@ -218,4 +218,45 @@ export async function decrementInventoryForOrder(order: any): Promise<{ decremen
     } else if (r.reason === 'oversold') oversold++;
   }
   return { decremented, oversold, lowStock };
+}
+
+/**
+ * Give back stock reserved at placement (bank transfer checkout) when the order is cancelled.
+ * Claimed atomically (stockReleasedAt), so it runs at most once per order. Only what was actually
+ * decremented (order.stockReservations) is returned. inventoryDecrementedAt is cleared, so if the
+ * order is paid after all ("late payment"), the paid side effects decrement the stock again.
+ */
+export async function releaseReservedStock(orderId: unknown): Promise<{ released: number }> {
+  const claimed: any = await Order.findOneAndUpdate(
+    // paymentStatus 'cancelled': a race with "Mark paid" (cancelled -> paid) can never return the stock of a paid order
+    { _id: orderId, paymentStatus: 'cancelled', stockReleasedAt: null, 'stockReservations.0': { $exists: true } },
+    { $set: { stockReleasedAt: new Date(), inventoryDecrementedAt: null } },
+    { new: true }
+  ).select('stockReservations').lean();
+  if (!claimed) return { released: 0 };
+  const released = await returnStock(claimed.stockReservations || []);
+  console.log(`[Inventory] Released reserved stock for order=${orderId} (${released} line(s))`);
+  return { released };
+}
+
+export interface StockReservation { product: unknown; variant?: unknown | null; quantity: number }
+
+/** Add stock back (undo decrements that were applied). Returns the number of lines restored. */
+export async function returnStock(reservations: StockReservation[]): Promise<number> {
+  let released = 0;
+  for (const r of reservations) {
+    const q = Math.max(1, Math.floor(Number(r.quantity) || 0));
+    if (r.variant) {
+      const res = await Product.updateOne({ _id: r.product, 'variants._id': r.variant }, { $inc: { 'variants.$.stockQty': q } }, STOCK_WRITE);
+      if (res.modifiedCount) { await recomputeAggregate(r.product); released++; }
+    } else {
+      const res = await Product.updateOne({ _id: r.product }, [
+        { $set: { stockQuantity: { $add: [{ $ifNull: ['$stockQuantity', 0] }, q] } } },
+        { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
+      ], STOCK_WRITE);
+      if (res.modifiedCount) released++;
+    }
+    notifyStockAvailabilityChanged(r.product);
+  }
+  return released;
 }

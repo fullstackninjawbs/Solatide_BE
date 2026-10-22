@@ -6,6 +6,7 @@ import {
   scheduledTagadaSync,
   runDatabaseBackup,
   sendAbandonedCheckoutReminders,
+  cancelUnpaidBankOrders,
 } from '../services/scheduled/scheduledJobs';
 
 /** order-side-effects: claim (or resume) the order; fail the job if any step failed → retried. */
@@ -50,6 +51,7 @@ export const MAINTENANCE_JOBS: Record<string, () => Promise<unknown>> = {
   'tagada-sync': scheduledTagadaSync,
   'db-backup': runDatabaseBackup,
   'abandoned-reminders': sendAbandonedCheckoutReminders,
+  'cancel-unpaid-orders': cancelUnpaidBankOrders,
 };
 
 /** maintenance: scheduled jobs, dispatched by job name. */

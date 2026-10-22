@@ -25,7 +25,7 @@ import { scheduleOnOrderPaid } from '../../services/orders/onOrderPaid';
 import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/tagadaSync';
 import { withOrderNumberRetry } from '../../services/orders/orderNumber';
 import { reserveRefund, releaseRefund, confirmReservedRefund, refundTargetStatus, extractRefundId } from '../../services/orders/refunds';
-import { decrementLineForOrder, LowStockCrossing } from '../../services/orders/inventory';
+import { decrementLineForOrder, LowStockCrossing, releaseReservedStock } from '../../services/orders/inventory';
 import { sendOrderLowStockAlert } from '../../services/lowStockAlert';
 import { parseQuantity, CheckoutValidationError, MAX_LINE_QUANTITY } from '../../services/orders/checkoutItems';
 
@@ -76,6 +76,15 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
 
   if (status) filter.status = status;
   if (paymentStatus) filter.paymentStatus = paymentStatus;
+  // Bank transfer / PayID orders waiting for the admin to confirm the payment
+  if (req.query.awaitingPayment === 'true') {
+    filter.paymentStatus = 'pending';
+    filter.paymentMethod = { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] };
+  }
+  const paymentMethod = req.query.paymentMethod;
+  if (typeof paymentMethod === 'string' && /^[a-z_]{3,40}$/.test(paymentMethod) && req.query.awaitingPayment !== 'true') {
+    filter.paymentMethod = paymentMethod;
+  }
   if (fulfilmentStatus) filter.fulfilmentStatus = fulfilmentStatus;
 
   // Handle deleted orders toggle
@@ -268,6 +277,11 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
       return next(new AppError(`Cannot change payment status: ${t.reason}`, 409));
     }
     becamePaid = paymentStatus === 'paid' && t.result === 'applied';
+    // Cancelled → give back stock reserved at placement (bank transfer / PayID checkout; no-op otherwise)
+    if (paymentStatus === 'cancelled' && t.result === 'applied') {
+      await releaseReservedStock(existing._id).catch((err: any) =>
+        console.error(`[Admin Order] Could not release reserved stock for ${existing._id}: ${err?.message}`));
+    }
   }
 
   let order: any;
@@ -454,6 +468,9 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
 
   const isManual = order.source === 'admin_manual';
 
+  if (['payid', 'bank_transfer', 'international_bank_transfer'].includes(String(order.paymentMethod)) && !['paid', 'partially_refunded'].includes(order.paymentStatus)) {
+    return next(new AppError('Cannot create shipment: mark the order as paid first', 400));
+  }
   if (!isManual && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
     return next(new AppError('Cannot create shipment: Payment is still pending', 400));
   }
@@ -568,8 +585,12 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
     return next(new AppError('Cannot process refunds for historical imported Shopify orders.', 400));
   }
 
+  // Bank transfer / PayID: the money is returned from the bank account; this only records the refund
+  // (offline path below), so the gateway refund switch does not apply.
+  const isBankOrder = ['payid', 'bank_transfer', 'international_bank_transfer'].includes(order.paymentMethod);
+
   // 1. Explicit business switch (H-6). Default: enabled in sandbox, disabled in production.
-  if (!refundsEnabled(process.env, config.tagadaEnv)) {
+  if (!isBankOrder && !refundsEnabled(process.env, config.tagadaEnv)) {
     return next(new AppError(
       'Refunds from the admin panel are disabled (REFUNDS_ENABLED is not "true"). ' +
       'Ask the business owner to enable them, or issue the refund in the Tagada dashboard — it will sync here via webhook.',
@@ -1109,6 +1130,19 @@ export const exportOrdersCsv = catchAsync(async (req: Request, res: Response, ne
  * DELETE /api/admin/orders/:id/soft-delete
  * Soft delete an order so it moves to the "Deleted Orders" tab.
  */
+/** Deleting an unpaid bank transfer / PayID order cancels it and gives its reserved stock back. */
+async function cancelAndReleaseIfUnpaidBank(ids: unknown[]): Promise<void> {
+  const unpaid = await Order.find({ _id: { $in: ids }, paymentStatus: 'pending', paymentMethod: { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] } }).select('_id').lean();
+  for (const o of unpaid) {
+    try {
+      const t = await transitionPaymentStatus(o._id, 'cancelled' as PaymentStatus);
+      if (t.result === 'applied') await releaseReservedStock(o._id);
+    } catch (err: any) {
+      console.error(`[Admin Order] Could not cancel/release deleted order ${o._id}: ${err?.message}`);
+    }
+  }
+}
+
 export const softDeleteOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const order = await Order.findById(req.params.id);
 
@@ -1118,6 +1152,7 @@ export const softDeleteOrder = catchAsync(async (req: Request, res: Response, ne
 
   order.isDeleted = true;
   await order.save({ validateBeforeSave: false });
+  await cancelAndReleaseIfUnpaidBank([order._id]);
 
   res.status(200).json({
     success: true,
@@ -1161,6 +1196,7 @@ export const bulkSoftDeleteOrders = catchAsync(async (req: Request, res: Respons
     { _id: { $in: ids } },
     { $set: { isDeleted: true } }
   );
+  await cancelAndReleaseIfUnpaidBank(ids);
 
   res.status(200).json({
     success: true,
