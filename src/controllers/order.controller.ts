@@ -10,6 +10,7 @@ import { withOrderNumberRetry } from '../services/orders/orderNumber';
 import { resolveCheckoutLines, CheckoutValidationError } from '../services/orders/checkoutItems';
 import { applyStarshipitTrackingUpdate } from '../services/shipping/starshipitTracking';
 import { isStaffRole } from '../config/roles';
+import { metaContents } from '../domain/metaCapi';
 
 const MAX_ITEM_QUANTITY = 100;
 const MAX_ORDER_LINES = 50;
@@ -58,6 +59,9 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
     variantTitle: l.variantTitle,
     quantity: l.quantity,
     price: l.price,
+    // Same as createTagadaPayment stores; Meta content ids (metaContents) use the SKU
+    sku: l.sku,
+    title: l.title,
   }));
   const totalAmount = Math.round(lines.reduce((sum, l) => sum + l.price * l.quantity, 0) * 100) / 100;
 
@@ -191,6 +195,7 @@ export const toPublicOrder = (order: any) => {
     shipmentStatus: o.shipmentStatus,
     shippedAt: o.shippedAt,
     createdAt: o.createdAt,
+    metaContents: metaContents(o),
   };
 };
 

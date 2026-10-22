@@ -17,6 +17,18 @@ export async function processOrderPaid(job: Job<{ orderId: string }>) {
   return res.claimed ? { claimed: true, resumed: !!res.resumed } : { claimed: false };
 }
 
+/** meta-capi: send one browser-relayed event; 429/5xx/network errors are retried, others are not. */
+export async function processMetaEvent(job: Job<{ event: any }>) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { sendMetaEvents } = require('../services/meta/metaCapi.service');
+  try {
+    return await sendMetaEvents([job.data.event]);
+  } catch (err: any) {
+    if (err?.retryable === false) throw new UnrecoverableError(err.message);
+    throw err;
+  }
+}
+
 /** email: send one message; SMTP errors fail the job → retried with backoff. */
 export async function processEmail(job: Job<{ mail: any }>) {
   // eslint-disable-next-line @typescript-eslint/no-var-requires

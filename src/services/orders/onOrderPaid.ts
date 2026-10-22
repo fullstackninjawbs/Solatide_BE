@@ -35,6 +35,8 @@ export interface OnOrderPaidDeps {
   sendLowStockAlert?: (orderId: unknown) => Promise<unknown>;
   /** Optional enrichment before emails when the paid order still lacks a customer email */
   refreshOrderDetails?: (orderId: unknown) => Promise<unknown>;
+  /** Meta Conversions API Purchase (optional; a no-op until Meta tracking is configured) */
+  sendMetaPurchase?: (order: any) => Promise<unknown>;
 }
 
 let defaultDeps: OnOrderPaidDeps | null = null;
@@ -57,6 +59,19 @@ function loadDefaultDeps(): OnOrderPaidDeps {
     validateOrderAddress: (id: unknown) => addr.validateOrderAddress(id),
     sendLowStockAlert: (orderId: unknown) => require('../lowStockAlert').sendOrderLowStockAlert(orderId),
     refreshOrderDetails: (id: unknown) => require('./tagadaSync').refreshTagadaDetails(id),
+    // Retryable failures (429/5xx/network) fail the step → retried; a permanent rejection (bad
+    // token/pixel, invalid event) is logged once instead of retrying the order for an hour
+    sendMetaPurchase: async (order: any) => {
+      try {
+        return await require('../meta/metaCapi.service').sendMetaPurchaseForOrder(order);
+      } catch (err: any) {
+        if (err?.retryable === false) {
+          console.error(`[Meta CAPI] Purchase for order ${order?._id} rejected, not retried: ${err.message}`);
+          return { sent: 0, skipped: 'rejected' };
+        }
+        throw err;
+      }
+    },
     deactivatePromotion: async (promoId: string) => {
       const { getTagadaClient } = require('../tagadaClient');
       const { withTimeout } = require('../../domain/withTimeout');
@@ -266,6 +281,12 @@ export async function onOrderPaid(
       timestamp: order.paidAt ?? new Date(),
     });
   });
+
+  // 8) Meta Conversions API Purchase — storefront orders only (event_id purchase_<orderId> matches
+  // the browser Pixel's Purchase on the success page, so Meta counts it once)
+  if (d.sendMetaPurchase && order.source !== 'admin_manual' && order.source !== 'shopify_import') {
+    await step('meta_capi_purchase', () => d.sendMetaPurchase!(order));
+  }
 
   if (errors.length === 0) {
     await Order.updateOne({ _id: order._id }, { $set: { sideEffectsCompletedAt: new Date() } });

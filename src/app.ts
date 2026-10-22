@@ -13,7 +13,8 @@ import redirectRoutes from './routes/redirect.routes';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
 import analyticsRoutes from './routes/analytics.routes';
-import { generalLimiter, publicLimiter, analyticsLimiter } from './middleware/rateLimit';
+import metaRoutes from './routes/meta.routes';
+import { generalLimiter, publicLimiter, analyticsLimiter, metaEventsLimiter } from './middleware/rateLimit';
 import healthRoutes from './routes/health.routes';
 import dbGuard from './middleware/dbGuard';
 import pageRoutes from './routes/public.page.routes';
@@ -96,6 +97,9 @@ app.get('/api/status', (req: Request, res: Response) => {
 
 // Health check — no auth
 app.use('/api/health', healthRoutes);
+
+// Meta Pixel config + Conversions API relay (no database needed, so before dbGuard)
+app.use('/api/meta', metaEventsLimiter, metaRoutes);
 
 // Database down → fast 503 for everything below (tests run without a DB: model statics are stubbed)
 if (config.env !== 'test') app.use('/api', dbGuard);

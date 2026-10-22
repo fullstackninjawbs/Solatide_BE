@@ -51,6 +51,21 @@ export function enqueueOrderPaid(orderId: unknown): void {
 }
 
 /**
+ * Browser Pixel event → Conversions API. Deduplicated per event (jobId), retried briefly; without
+ * queues it is sent once in-process (best effort). Never throws into the request.
+ */
+export function enqueueMetaEvent(event: { event_name: string; event_id: string }): void {
+  tryAdd(QUEUE_NAMES.meta, 'event', { event }, { jobId: `meta-${event.event_name}-${event.event_id}` })
+    .then((queued) => {
+      if (queued) return;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { sendMetaEvents } = require('../services/meta/metaCapi.service');
+      sendMetaEvents([event]).catch((err: any) => console.warn(`[Meta CAPI] ${event.event_name} not sent: ${err?.message}`));
+    })
+    .catch(() => undefined);
+}
+
+/**
  * Send an email: queued (retried on SMTP failure) when queues are available, otherwise sent
  * directly as before. Mail options must be JSON-serialisable (no attachments/streams).
  * Returns the nodemailer info when sent directly, or { queued: true }.

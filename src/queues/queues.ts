@@ -6,6 +6,7 @@ export const QUEUE_NAMES = {
   email: 'email',
   rebuild: 'storefront-rebuild',
   maintenance: 'maintenance',
+  meta: 'meta-capi',
 } as const;
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
@@ -23,6 +24,9 @@ export const DEFAULT_JOB_OPTIONS: Record<QueueName, JobsOptions> = {
   [QUEUE_NAMES.rebuild]: { attempts: 5, backoff: { type: 'fixed', delay: 60_000 }, removeOnComplete: { age: 7 * 24 * 3600, count: 200 }, removeOnFail: KEEP_FAILED },
   // Scheduled maintenance jobs
   [QUEUE_NAMES.maintenance]: { attempts: 3, backoff: { type: 'exponential', delay: 120_000 }, removeOnComplete: { age: 7 * 24 * 3600, count: 500 }, removeOnFail: KEEP_FAILED },
+  // Meta CAPI browser events: retried for a few minutes. Jobs hold IP/user agent, so they are
+  // kept only briefly (sent: 1 h, failed: 1 day).
+  [QUEUE_NAMES.meta]: { attempts: 4, backoff: { type: 'exponential', delay: 15_000 }, removeOnComplete: { age: 3600, count: 200 }, removeOnFail: { age: 24 * 3600, count: 500 } },
 };
 
 const queues = new Map<QueueName, Queue>();

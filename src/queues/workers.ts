@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { queuesEnabled, workerConnectionOptions, QUEUE_PREFIX, getProducerConnection } from './connection';
 import { getQueue, QUEUE_NAMES } from './queues';
-import { processOrderPaid, processEmail, makeRebuildProcessor, processMaintenance, MAINTENANCE_JOBS } from './processors';
+import { processOrderPaid, processEmail, makeRebuildProcessor, processMaintenance, processMetaEvent, MAINTENANCE_JOBS } from './processors';
 
 /**
  * Background workers. By default they run inside the API process, in the first PM2 instance
@@ -71,6 +71,7 @@ export async function startWorkers(): Promise<void> {
     // Builds take minutes: long lock so the job is not considered stalled mid-build
     new Worker(QUEUE_NAMES.rebuild, makeRebuildProcessor(rebuildQueue), { ...common, concurrency: 1, lockDuration: 10 * 60 * 1000 }),
     new Worker(QUEUE_NAMES.maintenance, processMaintenance, { ...common, concurrency: 1, lockDuration: 30 * 60 * 1000 }),
+    new Worker(QUEUE_NAMES.meta, processMetaEvent, { ...common, concurrency: 3, limiter: { max: 20, duration: 1000 } }),
   ];
   for (const w of workers) {
     w.on('failed', (job, err) => {

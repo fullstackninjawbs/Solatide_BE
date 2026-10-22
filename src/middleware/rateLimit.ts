@@ -156,3 +156,8 @@ export const formSubmitLimiter = makeLimiter('forms', 60 * 60 * 1000, 10, 'Too m
  * Public analytics ingestion: 300 events / 5 min / IP.
  */
 export const analyticsLimiter = makeLimiter('analytics', 5 * 60 * 1000, 300, 'Too many analytics events.');
+
+/**
+ * Meta Pixel → Conversions API relay: 300 events / 5 min / IP (a few events per page view).
+ */
+export const metaEventsLimiter = makeLimiter('meta', 5 * 60 * 1000, 300, 'Too many tracking events.');

@@ -205,7 +205,8 @@ export interface IOrder extends mongoose.Document {
   };
 
   /** The storefront visitor who checked out: analytics session + IP-detected location (not the address). */
-  visitor?: { sessionId?: string; country?: string; region?: string; city?: string };
+  /** Browser at checkout: analytics session + location; ip/userAgent/fbp/fbc for Meta CAPI matching */
+  visitor?: { sessionId?: string; country?: string; region?: string; city?: string; ip?: string; userAgent?: string; fbp?: string; fbc?: string };
 
   // ── Attribution ──────────────────────────────────────────────────────────────
   attribution?: {
@@ -452,6 +453,11 @@ const orderSchema = new mongoose.Schema<IOrder>(
       country: { type: String, trim: true, maxlength: 100 },
       region: { type: String, trim: true, maxlength: 100 },
       city: { type: String, trim: true, maxlength: 100 },
+      // Meta Conversions API matching (stored only while Meta tracking is enabled)
+      ip: { type: String, trim: true, maxlength: 45 },
+      userAgent: { type: String, trim: true, maxlength: 500 },
+      fbp: { type: String, trim: true, maxlength: 100 },
+      fbc: { type: String, trim: true, maxlength: 600 },
     },
 
     // ── Attribution ──────────────────────────────────────────────────────────────

@@ -22,6 +22,8 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
 import config from '../config';
+import { metaContents, validFbc, validFbp } from '../domain/metaCapi';
+import { getMetaConfig } from '../services/meta/metaCapi.service';
 import { mapTagadaStatus } from '../domain/orderTransitions';
 import {
   verifyTagadaSignature,
@@ -68,6 +70,8 @@ export function publicOrderView(order: any) {
     discountAmount: o?.discountAmount,
     grandTotal: o?.grandTotal ?? o?.totalAmount,
     currency: o?.currency,
+    // Item ids for the success page's Meta Pixel Purchase (same ids as the server's CAPI event)
+    metaContents: metaContents(o),
   };
 }
 
@@ -121,8 +125,16 @@ export const createTagadaPayment = catchAsync(
     // Visitor context (analytics session + IP-detected location) for the server-side purchase event
     if (visitor && typeof visitor === 'object') {
       const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().substring(0, max) : undefined);
-      const v = { sessionId: str(visitor.sessionId, 128), country: str(visitor.country, 100), region: str(visitor.region, 100), city: str(visitor.city, 100) };
-      if (v.sessionId || v.country) order.visitor = v;
+      const v: Record<string, string | undefined> = { sessionId: str(visitor.sessionId, 128), country: str(visitor.country, 100), region: str(visitor.region, 100), city: str(visitor.city, 100) };
+      // Meta CAPI matching for the server-side Purchase: browser IP/user agent + Meta cookies.
+      // Kept only while Meta tracking is enabled.
+      if (getMetaConfig().enabled) {
+        v.ip = str(req.ip, 45);
+        v.userAgent = str(req.headers['user-agent'], 500);
+        v.fbp = validFbp(visitor.fbp);
+        v.fbc = validFbc(visitor.fbc);
+      }
+      if (v.sessionId || v.country || v.ip) order.visitor = v;
     }
 
     // Resolve lines server-side (M-11)
