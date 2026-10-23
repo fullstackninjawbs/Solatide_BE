@@ -13,6 +13,7 @@ import redirectRoutes from './routes/redirect.routes';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
 import analyticsRoutes from './routes/analytics.routes';
+import checkoutRoutes from './routes/checkout.routes';
 import { generalLimiter, publicLimiter, analyticsLimiter } from './middleware/rateLimit';
 import healthRoutes from './routes/health.routes';
 import dbGuard from './middleware/dbGuard';
@@ -106,6 +107,7 @@ app.use('/api/pages', pageRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/checkout', checkoutRoutes); // Storefront checkout (temporary: order requests)
 app.use('/api/analytics', analyticsLimiter, analyticsRoutes); // Public storefront event tracking
 app.use('/api/redirects', publicLimiter, redirectRoutes); // Old URL → new URL (nginx fallback + app)
 

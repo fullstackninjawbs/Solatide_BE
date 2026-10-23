@@ -717,6 +717,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     notes = '',
     paymentStatus = 'pending',
     sendEmail = false,
+    orderRequestId,
   } = req.body;
 
   // 1. Basic validation
@@ -916,6 +917,16 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
 
   // 10. Paid manual order → idempotent post-payment side effects (customer stats, email, analytics…)
   if (isPaid) scheduleOnOrderPaid(order._id);
+
+  // 11. Created from a storefront order request → mark the request handled and link the order
+  if (typeof orderRequestId === 'string' && /^[0-9a-fA-F]{24}$/.test(orderRequestId)) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const OrderRequest = require('../../models/OrderRequest').default;
+    await OrderRequest.updateOne(
+      { _id: orderRequestId, status: 'new' },
+      { $set: { status: 'handled', orderId: order._id, handledAt: new Date() } }
+    ).catch((err: any) => console.error(`[Admin Order] Could not link order request ${orderRequestId}: ${err?.message}`));
+  }
 
   const fresh = await Order.findById(order._id).lean();
   res.status(201).json({
@@ -1189,3 +1200,32 @@ export const bulkRestoreOrders = catchAsync(async (req: Request, res: Response, 
   });
 });
 
+
+/**
+ * GET /api/admin/order/requests/:id — a storefront order request, to pre-fill Create order.
+ * Items include the product's current image, price and stock (or missing: true if it was deleted).
+ */
+export const getOrderRequestForAdmin = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const id = String(req.params.id || '');
+  if (!/^[0-9a-fA-F]{24}$/.test(id)) return next(new AppError('Order request not found', 404));
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const OrderRequest = require('../../models/OrderRequest').default;
+  const request: any = await OrderRequest.findById(id).lean();
+  if (!request) return next(new AppError('Order request not found', 404));
+  const products: any[] = await Product.find({ _id: { $in: (request.items || []).map((i: any) => i.product).filter(Boolean) } })
+    .select('name sku price stockQuantity imageUrl images variants publishStatus').lean();
+  const items = (request.items || []).map((i: any) => {
+    const p = products.find((x) => String(x._id) === String(i.product));
+    const v = p && i.variant ? (p.variants || []).find((x: any) => String(x._id) === String(i.variant)) : null;
+    return {
+      ...i,
+      missing: !p || (i.variant && !v) ? true : undefined,
+      productImageUrl: p ? (p.images?.[0]?.url || p.imageUrl || '') : '',
+      stockQty: v ? v.stockQty : p?.stockQuantity,
+      currentPrice: v ? v.price : p?.price,
+    };
+  });
+  let order: any = null;
+  if (request.orderId) order = await Order.findById(request.orderId).select('orderNumber').lean();
+  res.status(200).json({ success: true, data: { request: { ...request, items }, order } });
+});

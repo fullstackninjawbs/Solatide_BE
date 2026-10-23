@@ -150,6 +150,11 @@ export const publicLimiter = makeLimiter('public', 15 * 60 * 1000, 3000, 'Too ma
 /**
  * Public form submissions (review creation, newsletter subscribe): 10/hour/IP.
  */
+/**
+ * Placing an order / order request from the storefront checkout: 20 / 15 min / IP.
+ */
+export const checkoutLimiter = makeLimiter('checkout', 15 * 60 * 1000, 20, 'Too many checkout attempts, please wait a few minutes and try again.');
+
 export const formSubmitLimiter = makeLimiter('forms', 60 * 60 * 1000, 10, 'Too many submissions, please try again later.');
 
 /**
