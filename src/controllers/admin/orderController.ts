@@ -795,12 +795,9 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
       let variant: any = null;
       if (Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
         const key = item.variantId != null ? String(item.variantId) : '';
-        variant = key
-          ? productDoc.variants.find((v: any) => String(v._id) === key || v.tagadaVariantId === key || (v.sku && v.sku === key))
-          : (productDoc.variants.length === 1 ? productDoc.variants[0] : null);
-        if (!variant) {
-          return next(new AppError(`Please select a valid variant for '${productDoc.name}'.`, 400));
-        }
+        // Variants are not selectable in admin orders: an unmatched/missing key uses the primary (first) variant
+        variant = (key && productDoc.variants.find((v: any) => String(v._id) === key || v.tagadaVariantId === key || (v.sku && v.sku === key)))
+          || productDoc.variants[0];
         variantTitle = variant.title || variant.name || variantTitle;
         sku = variant.sku || sku;
         if (unitPrice === 0 && variant.price) unitPrice = Number(variant.price) || 0;
