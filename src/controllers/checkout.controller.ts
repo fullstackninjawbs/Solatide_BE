@@ -19,7 +19,7 @@ import { resolveCheckoutLines, CheckoutValidationError } from '../services/order
 import { decrementStockAtomic, returnStock, type LowStockCrossing, type StockReservation } from '../services/orders/inventory';
 import { generateOrderAccessToken, accessTokenMatches } from '../domain/orderAccess';
 import {
-  getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor, gstIncluded,
+  getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor,
   instructionsFor, isBankMethod, CheckoutInputError, ORDER_NUMBER_ONLY_WARNING, METHOD_LABELS, methodLabel,
 } from '../services/checkout/bankTransfer';
 import { toPublicOrder } from './order.controller';
@@ -161,7 +161,8 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
       subtotal,
       shippingAmount: shipping.amount,
       shippingMethodName: shipping.name,
-      taxAmount: gstIncluded(grandTotal, address.country),
+      // Prices are GST-inclusive; no separate tax line (it read as an extra charge in admin)
+      taxAmount: 0,
       discountAmount: 0,
       grandTotal,
       totalAmount: grandTotal,

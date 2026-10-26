@@ -31,7 +31,6 @@ function itemsTable(order: any): string {
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
       ${line('Subtotal', aud(order.subtotal))}
       ${line(e(order.shippingMethodName || 'Shipping'), Number(order.shippingAmount) > 0 ? aud(order.shippingAmount) : 'Free')}
-      ${Number(order.taxAmount) > 0 ? line('Including GST', aud(order.taxAmount)) : ''}
       ${line('Total', aud(order.grandTotal), true)}
     </table>`;
 }
@@ -55,7 +54,7 @@ function paymentBlock(order: any, s: BankTransferSettings): string {
 function warningBlock(): string {
   return `
     <div style="border:1px solid #f3c98b;background:#fff8ec;border-radius:10px;padding:16px 20px;margin:0 0 24px;">
-      <div style="font-size:14px;font-weight:800;color:#9a5b00;letter-spacing:.3px;margin-bottom:8px;">IMPORTANT — ORDER NUMBER ONLY</div>
+      <div style="font-size:14px;font-weight:800;color:#9a5b00;letter-spacing:.3px;margin-bottom:8px;">IMPORTANT — USE YOUR ORDER NUMBER ONLY AS PAYMENT REFERENCE</div>
       ${ORDER_NUMBER_ONLY_WARNING.map((t) => `<p style="margin:0 0 6px;font-size:13px;color:#6b4300;line-height:1.5;">${e(t)}</p>`).join('')}
     </div>`;
 }

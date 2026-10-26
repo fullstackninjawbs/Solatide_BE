@@ -8,7 +8,7 @@
  *   install can be configured from .env:
  *     BANK_TRANSFER_ACCOUNT_NAME, BANK_TRANSFER_BANK_NAME, BANK_TRANSFER_BSB,
  *     BANK_TRANSFER_ACCOUNT_NUMBER, BANK_TRANSFER_PAYID, BANK_TRANSFER_SWIFT
- * - Prices are AUD incl. GST; GST shown = 1/11 of the total for Australian orders.
+ * - Prices are AUD incl. GST; no separate GST/tax amount is stored or shown.
  * - Payment details are only ever returned for an order the caller holds the access token for.
  */
 import PaymentSettings from '../../models/PaymentSettings';
@@ -89,10 +89,6 @@ export function shippingFor(country: string, subtotal: number, s: BankTransferSe
   }
   return { amount: round2(s.shippingFeeInternational), name: 'International shipping' };
 }
-
-/** GST included in an Australian total (prices are GST-inclusive). International orders: 0. */
-export const gstIncluded = (total: number, country: string): number =>
-  String(country).toUpperCase() === 'AU' ? round2(total / 11) : 0;
 
 /** Public checkout settings for the storefront (never the payment details). */
 export function publicCheckoutConfig(s: BankTransferSettings) {

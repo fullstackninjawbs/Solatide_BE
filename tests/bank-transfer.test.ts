@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  methodsForCountry, shippingFor, gstIncluded, publicCheckoutConfig, instructionsFor, validateCheckoutInput,
+  methodsForCountry, shippingFor, publicCheckoutConfig, instructionsFor, validateCheckoutInput,
   CheckoutInputError, type BankTransferSettings,
 } from '../src/services/checkout/bankTransfer';
 
@@ -37,11 +37,6 @@ test('shipping: AU flat with free threshold, international flat', () => {
   assert.deepEqual(shippingFor('AU', 300, S), { amount: 0, name: 'Free shipping' });
   assert.deepEqual(shippingFor('NZ', 999, S), { amount: 45, name: 'International shipping' });
   assert.deepEqual(shippingFor('AU', 10_000, { ...S, freeShippingThresholdAU: 0 }), { amount: 15, name: 'Standard shipping' });
-});
-
-test('GST included = total / 11 for Australia, 0 abroad', () => {
-  assert.equal(gstIncluded(249, 'AU'), 22.64);
-  assert.equal(gstIncluded(249, 'NZ'), 0);
 });
 
 test('instructions show only the chosen method, with the order amount and reference', () => {
