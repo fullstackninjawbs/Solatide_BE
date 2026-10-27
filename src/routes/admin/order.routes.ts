@@ -12,6 +12,7 @@ import {
   getOrderRefunds,
   createAdminOrder,
   getNewOrderConfig,
+  getOrderRequestForAdmin,
   revalidateOrderAddress,
   addressAutocomplete,
   addressPlaceDetails,
@@ -48,6 +49,9 @@ router.get('/export/csv', exportOrdersCsv);
 router.get('/address/autocomplete', privileged, addressAutocomplete);
 router.get('/address/place-details', privileged, addressPlaceDetails);
 router.get('/new-config', privileged, getNewOrderConfig);
+
+// Storefront order request → pre-fill Create order (before '/:id')
+router.get('/requests/:id', privileged, getOrderRequestForAdmin);
 
 // POST /api/admin/order               — create manual order
 router.post('/', privileged, createAdminOrder);

@@ -151,7 +151,7 @@ export const publicLimiter = makeLimiter('public', 15 * 60 * 1000, 3000, 'Too ma
  * Public form submissions (review creation, newsletter subscribe): 10/hour/IP.
  */
 /**
- * Placing a bank transfer / PayID order: 20 / 15 min / IP (real customers place one or two).
+ * Placing an order / order request from the storefront checkout: 20 / 15 min / IP.
  */
 export const checkoutLimiter = makeLimiter('checkout', 15 * 60 * 1000, 20, 'Too many checkout attempts, please wait a few minutes and try again.');
 

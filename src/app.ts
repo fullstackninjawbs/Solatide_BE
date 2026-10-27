@@ -107,7 +107,7 @@ app.use('/api/pages', pageRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/checkout', checkoutRoutes); // Own checkout: bank transfer / PayID
+app.use('/api/checkout', checkoutRoutes); // Storefront checkout: the mode is chosen in Admin → Settings → Checkout mode
 app.use('/api/analytics', analyticsLimiter, analyticsRoutes); // Public storefront event tracking
 app.use('/api/redirects', publicLimiter, redirectRoutes); // Old URL → new URL (nginx fallback + app)
 

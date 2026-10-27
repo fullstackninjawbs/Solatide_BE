@@ -12,3 +12,6 @@ webhook_payload.json
 *.csv
 *.tar.gz
 *.bak
+
+# PM2 / app runtime logs (never commit: contain customer data)
+logs/
