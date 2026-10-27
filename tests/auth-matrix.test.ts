@@ -159,8 +159,6 @@ test('role matrix spot checks', async () => {
     ['operations', { method: 'GET', path: '/api/admin/content/faqs' }, 403],
     ['operations', { method: 'GET', path: '/api/admin/analytics/overview' }, 'pass'],
     ['support', { method: 'GET', path: '/api/admin/analytics/overview' }, 403],
-    ['admin', { method: 'GET', path: '/api/admin/tagada/products/sync-history' }, 'pass'],
-    ['support', { method: 'POST', path: '/api/admin/tagada/products/sync' }, 403],
     ['admin', { method: 'DELETE', path: '/api/admin/discount/:id' }, 403],
     ['operations', { method: 'GET', path: '/api/admin/shipping/packages' }, 403],
     ['admin', { method: 'GET', path: '/api/admin/settings/tagada/test' }, 403],

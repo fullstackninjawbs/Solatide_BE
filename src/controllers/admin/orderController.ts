@@ -26,6 +26,7 @@ import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/t
 import { withOrderNumberRetry } from '../../services/orders/orderNumber';
 import { reserveRefund, releaseRefund, confirmReservedRefund, refundTargetStatus, extractRefundId } from '../../services/orders/refunds';
 import { decrementLineForOrder, LowStockCrossing, releaseReservedStock } from '../../services/orders/inventory';
+import { releaseDiscountUse } from '../../services/discounts/discountService';
 import { sendOrderLowStockAlert } from '../../services/lowStockAlert';
 import { parseQuantity, CheckoutValidationError, MAX_LINE_QUANTITY } from '../../services/orders/checkoutItems';
 
@@ -281,6 +282,8 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
     if (paymentStatus === 'cancelled' && t.result === 'applied') {
       await releaseReservedStock(existing._id).catch((err: any) =>
         console.error(`[Admin Order] Could not release reserved stock for ${existing._id}: ${err?.message}`));
+      await releaseDiscountUse(existing._id).catch((err: any) =>
+        console.error(`[Admin Order] Could not release discount use for ${existing._id}: ${err?.message}`));
     }
   }
 
@@ -739,7 +742,18 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     paymentStatus = 'pending',
     sendEmail = false,
     orderRequestId,
+    couponCode,
   } = req.body;
+
+  // Discount code used for this order (e.g. from an order request): recorded on the order so its
+  // use is counted when the order is paid. The amount is the admin's discountTotal.
+  let couponDoc: any = null;
+  if (couponCode !== undefined && couponCode !== null && couponCode !== '') {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { findDiscountByCode } = require('../../services/discounts/discountService');
+    couponDoc = typeof couponCode === 'string' ? await findDiscountByCode(couponCode) : null;
+    if (!couponDoc) return next(new AppError('Unknown discount code.', 400));
+  }
 
   // 1. Basic validation
   if (!lineItems || !Array.isArray(lineItems) || lineItems.length === 0) {
@@ -869,6 +883,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     })),
     subtotal: calculatedSubtotal,
     discountAmount: parsedDiscountTotal,
+    ...(couponDoc ? { couponCode: couponDoc.code, discountDescription: couponDoc.code } : {}),
     shippingAmount: parsedShippingCost,
     grandTotal,
     totalAmount: grandTotal,
@@ -1144,7 +1159,10 @@ async function cancelAndReleaseIfUnpaidBank(ids: unknown[]): Promise<void> {
   for (const o of unpaid) {
     try {
       const t = await transitionPaymentStatus(o._id, 'cancelled' as PaymentStatus);
-      if (t.result === 'applied') await releaseReservedStock(o._id);
+      if (t.result === 'applied') {
+        await releaseReservedStock(o._id);
+        await releaseDiscountUse(o._id);
+      }
     } catch (err: any) {
       console.error(`[Admin Order] Could not cancel/release deleted order ${o._id}: ${err?.message}`);
     }

@@ -148,13 +148,18 @@ export const authLimiter = makeLimiter(
 export const publicLimiter = makeLimiter('public', 15 * 60 * 1000, 3000, 'Too many requests, please try again shortly.');
 
 /**
- * Public form submissions (review creation, newsletter subscribe): 10/hour/IP.
- */
-/**
  * Placing an order / order request from the storefront checkout: 20 / 15 min / IP.
  */
 export const checkoutLimiter = makeLimiter('checkout', 15 * 60 * 1000, 20, 'Too many checkout attempts, please wait a few minutes and try again.');
 
+/**
+ * Checking a discount code at checkout: 30 / 15 min / IP (stops guessing codes).
+ */
+export const discountCheckLimiter = makeLimiter('discount-check', 15 * 60 * 1000, 30, 'Too many discount code attempts, please wait a few minutes and try again.');
+
+/**
+ * Public form submissions (review creation, newsletter subscribe): 10/hour/IP.
+ */
 export const formSubmitLimiter = makeLimiter('forms', 60 * 60 * 1000, 10, 'Too many submissions, please try again later.');
 
 /**

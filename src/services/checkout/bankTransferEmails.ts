@@ -30,6 +30,7 @@ function itemsTable(order: any): string {
     <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${rows}</table>
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
       ${line('Subtotal', aud(order.subtotal))}
+      ${Number(order.discountAmount) > 0 ? line(`Discount${order.couponCode ? ` (${e(order.couponCode)})` : ''}`, `−${aud(order.discountAmount)}`) : ''}
       ${line(e(order.shippingMethodName || 'Shipping'), Number(order.shippingAmount) > 0 ? aud(order.shippingAmount) : 'Free')}
       ${line('Total', aud(order.grandTotal), true)}
     </table>`;

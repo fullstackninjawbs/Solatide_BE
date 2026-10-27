@@ -180,6 +180,9 @@ export interface IOrder extends mongoose.Document {
   oversells?: IOversell[];
   discountDescription?: string;
   discountViolation?: { code: string; reason: string; at: Date } | null;
+  /** Discount use counted when the order was placed (our checkout) / given back when cancelled */
+  discountUsageReservedAt?: Date | null;
+  discountUsageReleasedAt?: Date | null;
   suppressConfirmationEmail?: boolean;
 
   // ── Shipping Providers ────────────────────────────────────────────────────────
@@ -427,6 +430,8 @@ const orderSchema = new mongoose.Schema<IOrder>(
       reason: { type: String },
       at: { type: Date },
     },
+    discountUsageReservedAt: { type: Date, default: null },
+    discountUsageReleasedAt: { type: Date, default: null },
     suppressConfirmationEmail: { type: Boolean, default: false },
 
     // ── Shipping Providers ────────────────────────────────────────────────────────

@@ -13,6 +13,9 @@ export interface IOrderRequest extends Document {
   shippingAddress: { company?: string; street1: string; street2?: string; city: string; state?: string; zip: string; country: string };
   items: Array<{ product: any; variant?: any | null; title: string; variantTitle?: string; sku?: string; quantity: number; unitPrice: number; subtotal: number }>;
   subtotal: number;
+  /** Discount code applied at checkout (checked against the hub rules when submitted) */
+  discountCode?: string;
+  discountAmount?: number;
   /** null = to be confirmed with the payment instructions */
   shippingAmount?: number | null;
   total?: number;
@@ -54,6 +57,8 @@ const OrderRequestSchema = new Schema<IOrderRequest>(
       quantity: Number, unitPrice: Number, subtotal: Number,
     }],
     subtotal: { type: Number, required: true, min: 0 },
+    discountCode: { type: String, trim: true, maxlength: 64 },
+    discountAmount: { type: Number, min: 0, default: 0 },
     shippingAmount: { type: Number, min: 0, default: null },
     total: { type: Number, min: 0 },
     currency: { type: String, default: 'AUD' },

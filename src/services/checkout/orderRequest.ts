@@ -89,6 +89,7 @@ function itemsTable(req: any): string {
     </tr>`).join('');
   return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${rows}
     <tr><td colspan="2" style="padding:10px 0 4px;font-size:14px;color:#666;">Subtotal</td><td style="padding:10px 0 4px;text-align:right;font-size:14px;color:#222;">${aud(req.subtotal)}</td></tr>
+    ${Number(req.discountAmount) > 0 ? `<tr><td colspan="2" style="padding:4px 0;font-size:14px;color:#666;">Discount${req.discountCode ? ` (${e(req.discountCode)})` : ''}</td><td style="padding:4px 0;text-align:right;font-size:14px;color:#222;">−${aud(req.discountAmount)}</td></tr>` : ''}
     <tr><td colspan="2" style="padding:4px 0;font-size:14px;color:#666;">Shipping</td><td style="padding:4px 0;text-align:right;font-size:14px;color:#222;">${req.shippingAmount == null ? 'To be confirmed' : Number(req.shippingAmount) === 0 ? 'Free' : aud(req.shippingAmount)}</td></tr>
     <tr><td colspan="2" style="padding:10px 0;font-size:15px;font-weight:700;color:#111;">Total${req.shippingAmount == null ? ' (excl. shipping)' : ''}</td><td style="padding:10px 0;text-align:right;font-size:15px;font-weight:700;color:#111;">${aud(req.total ?? req.subtotal)}</td></tr></table>`;
 }

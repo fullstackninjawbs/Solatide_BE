@@ -15,6 +15,8 @@ import {
   sendAdminOrderRequestEmail, sendCustomerOrderRequestEmail,
 } from '../services/checkout/orderRequest';
 import { getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
+import { applyDiscountCode } from '../services/discounts/discountService';
+import { cartLinesOf } from './checkout.controller';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const CLIENT_ID_RE = /^[A-Za-z0-9_-]{8,100}$/;
@@ -57,7 +59,16 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
   }
   const subtotal = round2(lines.reduce((s, l) => s + l.price * l.quantity, 0));
   const shippingAmount = orderRequestShippingFor(input.address.country, subtotal);
-  const total = round2(subtotal + (shippingAmount ?? 0));
+
+  // Discount code (optional): checked against the hub rules; the admin's order uses it too
+  const discountCode = typeof req.body?.discountCode === 'string' ? req.body.discountCode.trim() : '';
+  let discount: { code: string; amount: number } | null = null;
+  if (discountCode) {
+    const r = await applyDiscountCode(discountCode, cartLinesOf(lines), input.customer.email);
+    if (!r.ok) return next(new AppError(`${r.reason} Remove the code to continue without it.`, 400));
+    discount = { code: r.discount.code, amount: r.discount.amount };
+  }
+  const total = round2(subtotal - (discount?.amount || 0) + (shippingAmount ?? 0));
   const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
 
   let doc: any;
@@ -70,6 +81,7 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
         shippingAddress: input.address,
         items: lines.map((l) => ({ product: l.product, variant: l.variant, title: l.title || 'Product', variantTitle: variantTitleOf(l.variantTitle, l.title), sku: l.sku, quantity: l.quantity, unitPrice: l.price, subtotal: round2(l.price * l.quantity) })),
         subtotal,
+        ...(discount ? { discountCode: discount.code, discountAmount: discount.amount } : {}),
         shippingAmount,
         total,
         currency: 'AUD',
@@ -97,5 +109,5 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
     .then(async (sent) => { if (sent) await OrderRequest.updateOne({ _id: doc._id }, { $set: { emailedCustomerAt: new Date() } }); })
     .catch((err: any) => console.error(`[OrderRequest] Customer email failed for ${doc.requestNumber}: ${err?.message}`));
 
-  res.status(201).json({ success: true, data: { requestNumber: doc.requestNumber, subtotal, shippingAmount, total } });
+  res.status(201).json({ success: true, data: { requestNumber: doc.requestNumber, subtotal, discountAmount: discount?.amount || 0, shippingAmount, total } });
 });

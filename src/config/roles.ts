@@ -51,7 +51,6 @@ export const ACCESS = {
   shippingPackages: ['super_admin', 'admin'] as Role[],
   shippingPackageDelete: ['super_admin'] as Role[],
 
-  tagadaSync: ['super_admin', 'operations', 'admin'] as Role[],
 
   /** Existing restrictions preserved from the previous routers. */
   products: ['admin', 'super_admin', 'operations', 'content_manager'] as Role[],

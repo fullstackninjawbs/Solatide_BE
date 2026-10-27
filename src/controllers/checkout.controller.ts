@@ -22,7 +22,8 @@ import {
   getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor,
   instructionsFor, isBankMethod, CheckoutInputError, ORDER_NUMBER_ONLY_WARNING, METHOD_LABELS, methodLabel,
 } from '../services/checkout/bankTransfer';
-import { getCheckoutModeState } from '../services/checkout/checkoutMode';
+import { getCheckoutModeState, getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
+import { applyDiscountCode, reserveDiscountUse, undoReservedUse, type AppliedDiscount } from '../services/discounts/discountService';
 import { orderRequestShippingConfig } from '../services/checkout/orderRequest';
 import { toPublicOrder } from './order.controller';
 
@@ -44,6 +45,39 @@ export const getCheckoutConfig = catchAsync(async (_req: Request, res: Response)
   res.json({ success: true, data: { mode, currency: 'AUD' } });
 });
 
+/** Checkout lines → what the discount rules look at. */
+export const cartLinesOf = (lines: Array<{ product: unknown; quantity: number; price: number }>) =>
+  lines.map((l) => ({ productId: String(l.product), quantity: l.quantity, price: l.price }));
+
+/**
+ * POST /api/checkout/discount { code, items, email? } — "Apply" on the checkout page: checks the
+ * code against the cart (database prices, hub rules) and returns the amount. Nothing is saved; the
+ * order / request is recalculated again when it is placed.
+ */
+export const previewDiscount = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const mode = await getEffectiveCheckoutMode();
+  if (mode !== 'bank_transfer' && mode !== 'order_request') return next(new AppError('Discount codes are not available right now.', 503));
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+  if (!code) return next(new AppError('Enter a discount code.', 400));
+  const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 50) : [];
+  let lines;
+  try {
+    lines = await resolveCheckoutLines(
+      items.map((i: any) => ({ productId: i?.productId, variantId: i?.variantId, quantity: i?.quantity })),
+      (id) => Product.findById(id).lean(),
+      { requireTagadaVariant: false }
+    );
+  } catch (err) {
+    if (err instanceof CheckoutValidationError) return next(new AppError(err.message, 400));
+    throw err;
+  }
+  const email = typeof req.body?.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(req.body.email.trim()) ? req.body.email.trim().toLowerCase() : undefined;
+  const r = await applyDiscountCode(code, cartLinesOf(lines), email);
+  res.set('Cache-Control', 'no-store');
+  if (!r.ok) return res.status(200).json({ success: false, message: r.reason, data: { reason: r.code } });
+  res.json({ success: true, data: { code: r.discount.code, amount: r.discount.amount, label: r.discount.label } });
+});
+
 /** Order + payment details for a token holder (the customer who placed it). */
 async function bankOrderResponse(orderId: string) {
   const order: any = await Order.findById(orderId).lean();
@@ -55,6 +89,7 @@ async function bankOrderResponse(orderId: string) {
       paymentMethod: order.paymentMethod,
       paymentMethodLabel: isBankMethod(order.paymentMethod) ? methodLabel(order.paymentMethod) : undefined,
       paymentDueAt: order.paymentDueAt,
+      couponCode: order.couponCode || undefined,
       customerEmail: order.customer?.email || order.customerEmail,
     },
     payment: isBankMethod(order.paymentMethod)
@@ -115,7 +150,17 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
 
   const subtotal = round2(lines.reduce((sum, l) => sum + l.price * l.quantity, 0));
   const shipping = shippingFor(address.country, subtotal, s);
-  const grandTotal = round2(subtotal + shipping.amount);
+
+  // Discount code (optional): recalculated here from the database prices and the hub rules
+  const discountCode = typeof req.body?.discountCode === 'string' ? req.body.discountCode.trim() : '';
+  let applied: AppliedDiscount | null = null;
+  if (discountCode) {
+    const r = await applyDiscountCode(discountCode, cartLinesOf(lines), customer.email);
+    if (!r.ok) return next(new AppError(`${r.reason} Remove the code to continue without it.`, 400));
+    applied = r.discount;
+  }
+  const discountAmount = applied?.amount || 0;
+  const grandTotal = round2(subtotal - discountAmount + shipping.amount);
 
   // 4) Reserve stock atomically; if any line can no longer be reserved, undo and refuse
   const reservations: StockReservation[] = [];
@@ -135,7 +180,13 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
     if (r.lowStock) lowStock.push(r.lowStock);
   }
 
-  // 5) Create the order (stock is given back if this fails)
+  // 4b) Count the discount use now (guarded by its usage limit); released if the order is cancelled
+  if (applied && !(await reserveDiscountUse(applied.discountId))) {
+    await returnStock(reservations);
+    return next(new AppError('This discount code has just reached its usage limit. Remove the code to continue without it.', 409));
+  }
+
+  // 5) Create the order (stock and the discount use are given back if this fails)
   const now = new Date();
   const name = `${customer.firstName} ${customer.lastName}`.trim();
   const shipTo = { name, company: address.company, street1: address.street1, street2: address.street2, city: address.city, state: address.state, zip: address.zip, country: address.country, phone: customer.phone };
@@ -173,7 +224,14 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
       shippingMethodName: shipping.name,
       // Prices are GST-inclusive; no separate tax line (it read as an extra charge in admin)
       taxAmount: 0,
-      discountAmount: 0,
+      discountAmount,
+      ...(applied ? {
+        couponCode: applied.code,
+        discountDescription: applied.description,
+        discountUsageReservedAt: now,
+        // Use already counted above: the paid side effects must not count it again
+        sideEffectStepsDone: ['discount_usage'],
+      } : {}),
       grandTotal,
       totalAmount: grandTotal,
       // Stock is reserved now; the paid side effects must not decrement it again
@@ -190,6 +248,7 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
     }));
   } catch (err: any) {
     await returnStock(reservations);
+    if (applied) await undoReservedUse(applied.discountId);
     if (err?.code === 11000 && /checkoutRequestId/.test(String(err?.message))) {
       // A concurrent identical request created it first
       const dup: any = await Order.findOne({ checkoutRequestId }).select('+publicAccessToken').lean();

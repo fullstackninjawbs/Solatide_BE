@@ -108,6 +108,17 @@ export function pickDiscountFields(body: any, { partial }: { partial: boolean })
     else data.tags = b.tags.map((t: unknown) => String(t).slice(0, 64)).slice(0, 50);
   }
   if (b.salesChannelAccess !== undefined) data.salesChannelAccess = !!b.salesChannelAccess;
+  if (b.ruleMatch !== undefined) {
+    if (!['all', 'any'].includes(b.ruleMatch)) errors.push("ruleMatch must be 'all' or 'any'");
+    else data.ruleMatch = b.ruleMatch;
+  }
+  if (b.rules !== undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { cleanRules } = require('./discountEngine');
+    const r = cleanRules(b.rules);
+    if (r.errors.length) errors.push(...r.errors);
+    else data.rules = r.rules;
+  }
   // usesSoFar, tagadaPromotionId, tagadaPromotionCodeId are server-managed — never accepted from the client.
   return { data, errors };
 }

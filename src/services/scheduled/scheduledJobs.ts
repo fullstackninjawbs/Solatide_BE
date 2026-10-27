@@ -3,7 +3,6 @@
  * Every job is OFF unless its schedule env variable is set — see .env.example:
  *
  *   STARSHIPIT_TRACKING_CRON     e.g. "* /30 * * * *" (no space)  refresh tracking for open shipments
- *   TAGADA_SYNC_CRON             e.g. "0 * * * *"                 sync products from Tagada
  *   BACKUP_CRON                  e.g. "0 3 * * *"                 mongodump (read-only URI) to disk
  *   ABANDONED_REMINDER_CRON      e.g. "* /15 * * * *" (no space)  one reminder per unpaid checkout
  *
@@ -15,7 +14,6 @@ import path from 'path';
 import Order from '../../models/order.model';
 import { starshipitService, STARSHIPIT_ORDER_NOT_FOUND } from '../shipping/starshipit.service';
 import { applyStarshipitTrackingUpdate } from '../shipping/starshipitTracking';
-import { syncAllTagadaProducts } from '../tagadaProductSync.service';
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e } from '../../utils/escapeHtml';
 
@@ -66,11 +64,6 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
     }
   }
   return { checked: orders.length, updated, shipped, errors };
-}
-
-/** Pull products from Tagada (same as Admin → Tagada Sync, recorded as a 'scheduled' sync). */
-export async function scheduledTagadaSync(): Promise<unknown> {
-  return syncAllTagadaProducts(undefined, 'scheduled');
 }
 
 /**
@@ -158,6 +151,8 @@ export async function cancelUnpaidBankOrders(): Promise<{ candidates: number; ca
   const { transitionPaymentStatus } = require('../orders/paymentTransition');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { releaseReservedStock } = require('../orders/inventory');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { releaseDiscountUse } = require('../discounts/discountService');
   const due = await Order.find({
     paymentStatus: 'pending',
     paymentMethod: { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] },
@@ -169,6 +164,7 @@ export async function cancelUnpaidBankOrders(): Promise<{ candidates: number; ca
     const t = await transitionPaymentStatus(o._id, 'cancelled');
     if (t.result !== 'applied') continue;
     await releaseReservedStock(o._id);
+    await releaseDiscountUse(o._id).catch((err: any) => console.error(`[Scheduled] Could not release discount use for ${o.orderNumber}: ${err?.message}`));
     await Order.updateOne({ _id: o._id }, { $push: { comments: { text: 'Cancelled automatically: payment not received by the due date. Reserved stock released.', createdAt: new Date() } } });
     cancelled++;
     console.log(`[Scheduled] cancelled unpaid order ${o.orderNumber} (stock released)`);
