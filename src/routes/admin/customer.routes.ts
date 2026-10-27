@@ -8,6 +8,8 @@ const router = express.Router();
 router.use(restrictTo(...ACCESS.customers));
 
 router.get('/', customerController.getCustomers);
+// Before '/:id' so "export" is not read as a customer id
+router.get('/export/csv', customerController.exportCustomersCsv);
 router.get('/:id', customerController.getCustomerById);
 router.put('/:id', customerController.updateCustomer);
 
