@@ -90,13 +90,14 @@ export function shippingFor(country: string, subtotal: number, s: BankTransferSe
   return { amount: round2(s.shippingFeeInternational), name: 'International shipping' };
 }
 
-/** Public checkout settings for the storefront (never the payment details). */
+/**
+ * Public bank transfer checkout settings for the storefront (never the payment details).
+ * Whether this checkout is the active one is decided by the checkout mode (checkoutMode.ts).
+ */
 export function publicCheckoutConfig(s: BankTransferSettings) {
   const au = methodsForCountry('AU', s);
   const intl = methodsForCountry('ZZ', s);
-  const enabled = s.enabled && (au.length > 0 || intl.length > 0);
   return {
-    mode: enabled ? 'bank_transfer' : 'tagada',
     currency: 'AUD',
     methods: { AU: au, international: intl },
     shipping: { AU: round2(s.shippingFeeAU), international: round2(s.shippingFeeInternational), freeThresholdAU: round2(s.freeShippingThresholdAU) },

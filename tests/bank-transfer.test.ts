@@ -25,10 +25,8 @@ test('Australia → PayID + Bank Transfer; elsewhere → International only', ()
   assert.deepEqual(methodsForCountry('GB', { ...S, swiftBic: '' }), [], 'international needs SWIFT');
 });
 
-test('checkout mode: off unless enabled AND a method is configured', () => {
-  assert.equal(publicCheckoutConfig(S).mode, 'bank_transfer');
-  assert.equal(publicCheckoutConfig({ ...S, enabled: false }).mode, 'tagada');
-  assert.equal(publicCheckoutConfig({ ...S, payId: '', bsb: '', accountNumber: '' }).mode, 'tagada');
+test('public bank config never contains bank details', () => {
+  assert.deepEqual(publicCheckoutConfig(S).methods, { AU: ['payid', 'bank_transfer'], international: ['international_bank_transfer'] });
   assert.ok(!JSON.stringify(publicCheckoutConfig(S)).includes('2248'), 'public config never contains bank details');
 });
 

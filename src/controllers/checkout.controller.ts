@@ -1,7 +1,7 @@
 /**
  * Bank transfer / PayID checkout (our own checkout, no card processor).
  *
- *   GET  /api/checkout/config            → mode + methods + shipping (no payment details)
+ *   GET  /api/checkout/config            → checkout mode (Admin) + what that checkout needs
  *   POST /api/checkout/bank-order        → place the order (stock reserved), returns id + token
  *   GET  /api/checkout/bank-order/:id    → order + payment details for its method (?accessToken=)
  *
@@ -22,6 +22,8 @@ import {
   getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor,
   instructionsFor, isBankMethod, CheckoutInputError, ORDER_NUMBER_ONLY_WARNING, METHOD_LABELS, methodLabel,
 } from '../services/checkout/bankTransfer';
+import { getCheckoutModeState } from '../services/checkout/checkoutMode';
+import { orderRequestShippingConfig } from '../services/checkout/orderRequest';
 import { toPublicOrder } from './order.controller';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -29,10 +31,17 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const variantTitleOf = (t?: string) => (t && !/^default title$/i.test(t.trim()) ? t : undefined);
 const CHECKOUT_ID_RE = /^[A-Za-z0-9_-]{8,100}$/;
 
+/**
+ * GET /api/checkout/config — the checkout mode chosen in Admin, plus what that checkout needs
+ * (bank transfer: methods per country + shipping; order request: shipping). Asked on every
+ * "Check out" click, so a mode change applies immediately.
+ */
 export const getCheckoutConfig = catchAsync(async (_req: Request, res: Response) => {
-  const s = await getBankTransferSettings();
+  const { mode, bank } = await getCheckoutModeState();
   res.set('Cache-Control', 'no-store');
-  res.json({ success: true, data: publicCheckoutConfig(s) });
+  if (mode === 'bank_transfer') return res.json({ success: true, data: { mode, ...publicCheckoutConfig(bank) } });
+  if (mode === 'order_request') return res.json({ success: true, data: { mode, currency: 'AUD', shipping: orderRequestShippingConfig() } });
+  res.json({ success: true, data: { mode, currency: 'AUD' } });
 });
 
 /** Order + payment details for a token holder (the customer who placed it). */
@@ -55,9 +64,10 @@ async function bankOrderResponse(orderId: string) {
 }
 
 export const placeBankOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const s = await getBankTransferSettings();
-  if (publicCheckoutConfig(s).mode !== 'bank_transfer') {
-    return next(new AppError('This checkout is currently unavailable. Please try again later.', 503));
+  const { mode, bank: s } = await getCheckoutModeState();
+  if (mode !== 'bank_transfer') {
+    // The admin switched the checkout mode while this customer was on the page
+    return next(new AppError('Our checkout has just been updated. Please refresh the page and try again — your cart is saved.', 503));
   }
 
   // 1) Validate input (server is the source of truth for everything)

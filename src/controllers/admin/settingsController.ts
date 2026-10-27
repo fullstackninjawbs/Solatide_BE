@@ -147,12 +147,22 @@ const BANK_TEXT_FIELDS = ['accountName', 'bankName', 'bsb', 'accountNumber', 'pa
 const BANK_NUMBER_FIELDS = ['shippingFeeAU', 'shippingFeeInternational', 'freeShippingThresholdAU', 'unpaidCancelDays'] as const;
 const BANK_BOOL_FIELDS = ['enabled', 'internationalEnabled', 'notifyAdminOnOrder'] as const;
 
-export const getBankTransferSettings = catchAsync(async (_req: Request, res: Response) => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getBankTransferSettings: effective, publicCheckoutConfig } = require('../../services/checkout/bankTransfer');
-  const s = await effective();
+/** Bank settings + whether the bank transfer checkout is the live one (checkout mode). */
+async function bankTransferResponse() {
+  const { publicCheckoutConfig } = await import('../../services/checkout/bankTransfer');
+  const { getCheckoutModeState, bankTransferReady } = await import('../../services/checkout/checkoutMode');
+  const state = await getCheckoutModeState();
   const doc: any = await PaymentSettings.findOne().select('bankTransfer').lean();
-  res.status(200).json({ success: true, data: { settings: s, saved: doc?.bankTransfer || {}, checkout: publicCheckoutConfig(s) } });
+  return {
+    settings: state.bank,
+    saved: doc?.bankTransfer || {},
+    ready: bankTransferReady(state.bank),
+    checkout: { ...publicCheckoutConfig(state.bank), mode: state.mode },
+  };
+}
+
+export const getBankTransferSettings = catchAsync(async (_req: Request, res: Response) => {
+  res.status(200).json({ success: true, data: await bankTransferResponse() });
 });
 
 export const updateBankTransferSettings = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -177,14 +187,56 @@ export const updateBankTransferSettings = catchAsync(async (req: Request, res: R
   }
   if (!Object.keys(set).length) return next(new AppError('No valid fields to update', 400));
   await PaymentSettings.findOneAndUpdate({}, { $set: set }, { upsert: true, new: true, setDefaultsOnInsert: true });
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getBankTransferSettings: effective, publicCheckoutConfig } = require('../../services/checkout/bankTransfer');
-  const s = await effective();
-  const checkout = publicCheckoutConfig(s);
-  const doc: any = await PaymentSettings.findOne().select('bankTransfer').lean();
-  const saved = doc?.bankTransfer || {};
-  if (s.enabled && checkout.mode !== 'bank_transfer') {
-    return res.status(200).json({ success: true, warning: 'Saved, but the checkout stays off until the PayID or bank account details are filled in.', data: { settings: s, saved, checkout } });
+  const data = await bankTransferResponse();
+  const modeDoc: any = await PaymentSettings.findOne().select('checkoutMode').lean();
+  if (modeDoc?.checkoutMode === 'bank_transfer' && !data.ready) {
+    return res.status(200).json({ success: true, warning: 'Saved, but the bank transfer checkout cannot take orders until the PayID or bank account details are filled in. Customers get the previous checkout meanwhile.', data });
   }
-  res.status(200).json({ success: true, message: 'Bank transfer settings saved', data: { settings: s, saved, checkout } });
+  res.status(200).json({ success: true, message: 'Bank transfer settings saved', data });
+});
+
+// ─── Checkout mode ────────────────────────────────────────────────────────────
+// GET /api/admin/settings/checkout-mode · PUT (payment settings permission: super_admin)
+
+async function checkoutModeResponse() {
+  const { getCheckoutModeState, checkoutModeOptions } = await import('../../services/checkout/checkoutMode');
+  const state = await getCheckoutModeState();
+  return {
+    mode: state.mode,
+    saved: state.saved,
+    options: checkoutModeOptions(state.bank),
+    changedAt: state.changedAt || null,
+    changedBy: state.changedBy || null,
+  };
+}
+
+export const getCheckoutMode = catchAsync(async (_req: Request, res: Response) => {
+  res.status(200).json({ success: true, data: await checkoutModeResponse() });
+});
+
+export const updateCheckoutMode = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const { isCheckoutMode, checkoutModeOptions, getCheckoutModeState } = await import('../../services/checkout/checkoutMode');
+  const mode = req.body?.mode;
+  if (!isCheckoutMode(mode)) return next(new AppError('Please choose a checkout mode.', 400));
+  const before = await getCheckoutModeState();
+  const option = checkoutModeOptions(before.bank).find((o) => o.id === mode);
+  if (!option || option.status !== 'ready') {
+    return next(new AppError(option?.hint || 'This checkout mode is not available yet.', 400));
+  }
+  const user: any = (req as any).user;
+  const doc: any = await PaymentSettings.findOneAndUpdate(
+    {},
+    { $set: { checkoutMode: mode, checkoutModeChangedAt: new Date(), checkoutModeChangedBy: String(user?.email || 'admin').slice(0, 200) } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  ).select('_id').lean();
+  if (user?._id && doc?._id) {
+    const { AuditLog } = await import('../../models/auditLog.model');
+    AuditLog.create({
+      userId: user._id, action: 'checkout_mode_changed', entityType: 'PaymentSettings', entityId: doc._id,
+      beforeSnapshot: { mode: before.mode, saved: before.saved }, afterSnapshot: { mode },
+      ipAddress: req.ip, userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
+    }).catch((err: any) => console.error('[Settings] checkout mode audit log failed:', err?.message));
+  }
+  console.log(`[Settings] Checkout mode: ${before.mode} → ${mode} (by ${user?.email || 'admin'})`);
+  res.status(200).json({ success: true, message: `Checkout mode set to ${option.label}. Customers use it from their next Check out.`, data: await checkoutModeResponse() });
 });

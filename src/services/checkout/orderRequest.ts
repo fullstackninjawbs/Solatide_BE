@@ -1,16 +1,13 @@
 /**
- * orderRequest.ts — TEMPORARY checkout while card payments are unavailable.
- *
- * ORDER_REQUEST_CHECKOUT=true (server .env, then pm2 reload) switches the storefront's
- * "Check out" to an order-request form: the customer's details + cart are emailed to the admin
- * (who creates the order in Admin and arranges payment) and the customer gets a confirmation.
+ * orderRequest.ts — the "Order Request" checkout mode (Admin → Settings → Checkout mode; before a
+ * mode is saved, ORDER_REQUEST_CHECKOUT=true still selects it). "Check out" shows an order-request
+ * form: the customer's details + cart are emailed to the admin (who creates the order in Admin and
+ * arranges payment) and the customer gets a confirmation.
  * No order is created, no stock changes, no payment details are shown.
  */
 import crypto from 'crypto';
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e } from '../../utils/escapeHtml';
-
-export const orderRequestEnabled = (): boolean => process.env.ORDER_REQUEST_CHECKOUT === 'true';
 
 /**
  * Shipping shown on the order-request page (AUD, incl. GST). Unset → "To be confirmed" (sent with

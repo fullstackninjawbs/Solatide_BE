@@ -1,7 +1,7 @@
 /**
- * Temporary checkout: order requests (see services/checkout/orderRequest.ts).
+ * Order request checkout (see services/checkout/orderRequest.ts), used when Admin → Settings →
+ * Checkout mode is "Order Request" (GET /api/checkout/config lives in checkout.controller.ts).
  *
- *   GET  /api/checkout/config         → { mode: 'order_request' | 'tagada' }
  *   POST /api/checkout/order-request  → saves the request, emails admin + customer
  */
 import { Request, Response, NextFunction } from 'express';
@@ -11,9 +11,10 @@ import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { resolveCheckoutLines, CheckoutValidationError } from '../services/orders/checkoutItems';
 import {
-  orderRequestEnabled, validateOrderRequestInput, OrderRequestInputError, newRequestNumber, orderRequestShippingConfig, orderRequestShippingFor,
+  validateOrderRequestInput, OrderRequestInputError, newRequestNumber, orderRequestShippingFor,
   sendAdminOrderRequestEmail, sendCustomerOrderRequestEmail,
 } from '../services/checkout/orderRequest';
+import { getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const CLIENT_ID_RE = /^[A-Za-z0-9_-]{8,100}$/;
@@ -21,13 +22,11 @@ const CLIENT_ID_RE = /^[A-Za-z0-9_-]{8,100}$/;
 const variantTitleOf = (t?: string, productName?: string) =>
   (t && !/^default title$/i.test(t.trim()) && t.trim().toLowerCase() !== String(productName || '').trim().toLowerCase() ? t : undefined);
 
-export const getCheckoutConfig = (_req: Request, res: Response): void => {
-  res.set('Cache-Control', 'no-store');
-  res.json({ success: true, data: { mode: orderRequestEnabled() ? 'order_request' : 'tagada', currency: 'AUD', shipping: orderRequestShippingConfig() } });
-};
-
 export const submitOrderRequest = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  if (!orderRequestEnabled()) return next(new AppError('This checkout is currently unavailable.', 503));
+  if ((await getEffectiveCheckoutMode()) !== 'order_request') {
+    // The admin switched the checkout mode while this customer was on the page
+    return next(new AppError('Our checkout has just been updated. Please refresh the page and try again — your cart is saved.', 503));
+  }
 
   let input: ReturnType<typeof validateOrderRequestInput>;
   try {

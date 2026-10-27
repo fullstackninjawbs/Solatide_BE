@@ -17,6 +17,10 @@ export interface IPaymentSettings extends Document {
   tagadaApiKeyProd: string;
   tagadaWebhookSecret: string;
   tagadaEnabled: boolean;
+  /** Storefront checkout chosen in Admin (see services/checkout/checkoutMode.ts); unset = legacy switches */
+  checkoutMode?: 'order_request' | 'bank_transfer' | 'external_processor' | 'pay_by_bank' | null;
+  checkoutModeChangedAt?: Date;
+  checkoutModeChangedBy?: string;
   /** Our own checkout with bank transfer / PayID (no card processor). See services/checkout/bankTransfer.ts */
   bankTransfer?: {
     enabled: boolean;
@@ -53,6 +57,13 @@ const PaymentSettingsSchema = new Schema<IPaymentSettings>(
     tagadaApiKeyProd: { type: String, default: '' },
     tagadaWebhookSecret: { type: String, default: '' },
     tagadaEnabled: { type: Boolean, default: false },
+    checkoutMode: {
+      type: String,
+      enum: ['order_request', 'bank_transfer', 'external_processor', 'pay_by_bank', null],
+      default: null,
+    },
+    checkoutModeChangedAt: Date,
+    checkoutModeChangedBy: { type: String, trim: true },
     bankTransfer: {
       enabled: { type: Boolean, default: false },
       accountName: { type: String, trim: true, default: '' },

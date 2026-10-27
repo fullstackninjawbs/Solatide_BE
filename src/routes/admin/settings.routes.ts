@@ -11,6 +11,10 @@ const router = express.Router();
 router.get('/store', restrictTo(...ACCESS.settingsRead), settingsController.getStoreSettings);
 router.put('/store', restrictTo(...ACCESS.settingsStoreWrite), settingsController.updateStoreSettings);
 
+// ── Checkout mode (which checkout customers get) ─────────────────────────────
+router.get('/checkout-mode', restrictTo(...ACCESS.settingsRead), settingsController.getCheckoutMode);
+router.put('/checkout-mode', restrictTo(...ACCESS.settingsPayment), settingsController.updateCheckoutMode);
+
 // ── Bank transfer / PayID checkout ───────────────────────────────────────────
 router.get('/bank-transfer', restrictTo(...ACCESS.settingsRead), settingsController.getBankTransferSettings);
 router.put('/bank-transfer', restrictTo(...ACCESS.settingsPayment), settingsController.updateBankTransferSettings);

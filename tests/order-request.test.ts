@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateOrderRequestInput, OrderRequestInputError, newRequestNumber, orderRequestEnabled } from '../src/services/checkout/orderRequest';
+import { validateOrderRequestInput, OrderRequestInputError, newRequestNumber } from '../src/services/checkout/orderRequest';
 
 const valid = {
   customer: { email: ' Jane@Example.com ', firstName: 'Jane', lastName: 'Doe', phone: '0412 345 678' },
@@ -26,14 +26,8 @@ test('order request: rejects bad email / phone / AU state / postcode, needs inte
   assert.equal(validateOrderRequestInput({ ...valid, shippingAddress: { street1: '1 Queen St', city: 'Auckland', zip: '1010', country: 'NZ' } }).address.country, 'NZ');
 });
 
-test('order request: readable unique-ish reference, switch off by default', () => {
+test('order request: readable unique-ish reference', () => {
   const n = newRequestNumber();
   assert.match(n, /^REQ-[2-9A-HJ-NP-Z]{6}$/);
   assert.notEqual(newRequestNumber(), n);
-  const prev = process.env.ORDER_REQUEST_CHECKOUT;
-  delete process.env.ORDER_REQUEST_CHECKOUT;
-  assert.equal(orderRequestEnabled(), false);
-  process.env.ORDER_REQUEST_CHECKOUT = 'true';
-  assert.equal(orderRequestEnabled(), true);
-  if (prev === undefined) delete process.env.ORDER_REQUEST_CHECKOUT; else process.env.ORDER_REQUEST_CHECKOUT = prev;
 });
