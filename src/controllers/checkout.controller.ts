@@ -19,7 +19,7 @@ import { resolveCheckoutLines, CheckoutValidationError } from '../services/order
 import { decrementStockAtomic, returnStock, type LowStockCrossing, type StockReservation } from '../services/orders/inventory';
 import { generateOrderAccessToken, accessTokenMatches } from '../domain/orderAccess';
 import {
-  getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor,
+  getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor, paymentDueNotice,
   instructionsFor, isBankMethod, CheckoutInputError, ORDER_NUMBER_ONLY_WARNING, METHOD_LABELS, methodLabel,
 } from '../services/checkout/bankTransfer';
 import { getCheckoutModeState, getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
@@ -89,6 +89,7 @@ async function bankOrderResponse(orderId: string) {
       paymentMethod: order.paymentMethod,
       paymentMethodLabel: isBankMethod(order.paymentMethod) ? methodLabel(order.paymentMethod) : undefined,
       paymentDueAt: order.paymentDueAt,
+      paymentDueNotice: paymentDueNotice(order) || undefined,
       couponCode: order.couponCode || undefined,
       customerEmail: order.customer?.email || order.customerEmail,
     },

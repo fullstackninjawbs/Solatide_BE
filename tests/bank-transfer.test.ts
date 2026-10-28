@@ -31,10 +31,10 @@ test('public bank config never contains bank details', () => {
 });
 
 test('shipping: AU flat with free threshold, international flat', () => {
-  assert.deepEqual(shippingFor('AU', 120, S), { amount: 15, name: 'Standard shipping' });
+  assert.deepEqual(shippingFor('AU', 120, S), { amount: 15, name: 'Express shipping' });
   assert.deepEqual(shippingFor('AU', 300, S), { amount: 0, name: 'Free shipping' });
-  assert.deepEqual(shippingFor('NZ', 999, S), { amount: 45, name: 'International shipping' });
-  assert.deepEqual(shippingFor('AU', 10_000, { ...S, freeShippingThresholdAU: 0 }), { amount: 15, name: 'Standard shipping' });
+  assert.deepEqual(shippingFor('NZ', 999, S), { amount: 45, name: 'International express shipping' });
+  assert.deepEqual(shippingFor('AU', 10_000, { ...S, freeShippingThresholdAU: 0 }), { amount: 15, name: 'Express shipping' });
 });
 
 test('instructions show only the chosen method, with the order amount and reference', () => {
@@ -49,9 +49,24 @@ test('instructions show only the chosen method, with the order amount and refere
   assert.deepEqual(b.fields.filter((f) => f.copy).map((f) => f.label), ['BSB', 'Account Number', 'Amount', 'Reference']);
   assert.ok(!b.fields.some((f) => f.label === 'PayID'));
   const i = instructionsFor('international_bank_transfer', S, o);
-  assert.deepEqual(i.fields.filter((f) => f.copy).map((f) => f.label), ['Account Number', 'SWIFT / BIC', 'Amount', 'Reference']);
+  assert.deepEqual(i.fields.filter((f) => f.copy).map((f) => f.label), ['SWIFT / BIC', 'Account Number', 'Amount', 'Payment Reference']);
   assert.ok(i.fields.some((f) => f.label === 'Currency' && f.value === 'AUD'));
+  assert.ok(!i.fields.some((f) => f.key === 'iban' || f.key === 'beneficiaryAddress'), 'IBAN / address hidden when not set');
   assert.match(i.notes[0], /Australian Dollars \(AUD\)/);
+});
+
+test('international: IBAN + beneficiary address, in the order the client specified; never on AU methods', () => {
+  const full = { ...S, iban: '06787322486439', beneficiaryAddress: 'Suite 329/98-100 Elizabeth Street, Melbourne VIC 3000, Australia' };
+  const o = { orderNumber: 'SLT1234567B', grandTotal: 99 };
+  assert.deepEqual(instructionsFor('international_bank_transfer', full, o).fields.map((f) => [f.label, f.value]), [
+    ['Account Name', 'Solatide Biosciences'], ['Bank', 'Commonwealth Bank of Australia'], ['SWIFT / BIC', 'CTBAAU2S'],
+    ['BSB', '067 873'], ['Account Number', '2248 6439'], ['IBAN (if required)', '06787322486439'], ['Currency', 'AUD'],
+    ['Beneficiary Address', 'Suite 329/98-100 Elizabeth Street, Melbourne VIC 3000, Australia'],
+    ['Amount', '$99.00 AUD'], ['Payment Reference', 'SLT1234567B'],
+  ]);
+  for (const m of ['payid', 'bank_transfer'] as const) {
+    assert.ok(!instructionsFor(m, full, o).fields.some((f) => f.key === 'iban' || f.key === 'beneficiaryAddress'), m);
+  }
 });
 
 test('input validation: normalises, and rejects bad email/phone/AU state/postcode', () => {
@@ -68,4 +83,11 @@ test('input validation: normalises, and rejects bad email/phone/AU state/postcod
   // international: any state, postal code required
   const nz = validateCheckoutInput({ ...valid, shippingAddress: { street1: '1 Queen St', city: 'Auckland', state: '', zip: '1010', country: 'NZ' }, paymentMethod: 'international_bank_transfer' });
   assert.equal(nz.address.country, 'NZ');
+});
+
+test('payment due notice: days + date (shown on the payment page and in the email)', async () => {
+  const { paymentDueNotice } = await import('../src/services/checkout/bankTransfer');
+  const n = paymentDueNotice({ createdAt: '2026-10-27T02:00:00Z', paymentDueAt: '2026-10-30T02:00:00Z' });
+  assert.equal(n, 'Please complete your payment within 3 days (by Fri 30 Oct 2026). Unpaid orders are cancelled automatically.');
+  assert.equal(paymentDueNotice({ paymentDueAt: null }), null);
 });

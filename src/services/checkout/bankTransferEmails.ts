@@ -6,7 +6,7 @@
  */
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e, safeUrl } from '../../utils/escapeHtml';
-import { instructionsFor, isBankMethod, methodLabel, ORDER_NUMBER_ONLY_WARNING, type BankTransferSettings } from './bankTransfer';
+import { instructionsFor, isBankMethod, methodLabel, ORDER_NUMBER_ONLY_WARNING, paymentDueNotice, type BankTransferSettings } from './bankTransfer';
 
 const LOGO = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 const hdr = (v: unknown): string => String(v ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200);
@@ -55,7 +55,7 @@ function paymentBlock(order: any, s: BankTransferSettings): string {
 function warningBlock(): string {
   return `
     <div style="border:1px solid #f3c98b;background:#fff8ec;border-radius:10px;padding:16px 20px;margin:0 0 24px;">
-      <div style="font-size:14px;font-weight:800;color:#9a5b00;letter-spacing:.3px;margin-bottom:8px;">IMPORTANT — USE YOUR ORDER NUMBER ONLY AS PAYMENT REFERENCE</div>
+      <div style="font-size:14px;font-weight:800;color:#9a5b00;letter-spacing:.3px;margin-bottom:8px;">IMPORTANT — ORDER NUMBER ONLY</div>
       ${ORDER_NUMBER_ONLY_WARNING.map((t) => `<p style="margin:0 0 6px;font-size:13px;color:#6b4300;line-height:1.5;">${e(t)}</p>`).join('')}
     </div>`;
 }
@@ -85,6 +85,7 @@ export async function sendAwaitingPaymentEmail(order: any, s: BankTransferSettin
       <tr><td style="padding:6px 0;color:#666;font-size:14px;">Payment reference</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:15px;color:#111;">${e(order.orderNumber)}</td></tr>
     </table>
     ${paymentBlock(order, s)}
+    ${paymentDueNotice(order) ? `<p style="margin:0 0 16px;padding:12px 16px;border-radius:8px;background:#eef5fc;color:#102a5c;font-size:14px;line-height:1.5;"><strong>${e(paymentDueNotice(order) as string)}</strong></p>` : ''}
     ${warningBlock()}
     <p style="margin:0 0 28px;"><a href="${e(url)}" style="background:#102a5c;color:#fff;text-decoration:none;padding:13px 22px;border-radius:6px;font-size:15px;font-weight:600;display:inline-block;">View payment details</a></p>
     <div style="font-size:16px;font-weight:600;color:#111;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:4px;">Order summary</div>

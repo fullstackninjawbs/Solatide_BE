@@ -143,7 +143,8 @@ export const updateStoreSettings = catchAsync(async (req: Request, res: Response
 // ─── Bank transfer / PayID checkout ─────────────────────────────────────────────
 // GET /api/admin/settings/bank-transfer · PUT (payment settings permission)
 
-const BANK_TEXT_FIELDS = ['accountName', 'bankName', 'bsb', 'accountNumber', 'payId', 'swiftBic'] as const;
+const BANK_TEXT_FIELDS = ['accountName', 'bankName', 'bsb', 'accountNumber', 'payId', 'swiftBic', 'iban', 'beneficiaryAddress'] as const;
+const BANK_TEXT_MAX: Partial<Record<(typeof BANK_TEXT_FIELDS)[number], number>> = { beneficiaryAddress: 250 };
 const BANK_NUMBER_FIELDS = ['shippingFeeAU', 'shippingFeeInternational', 'freeShippingThresholdAU', 'unpaidCancelDays'] as const;
 const BANK_BOOL_FIELDS = ['enabled', 'internationalEnabled', 'notifyAdminOnOrder'] as const;
 
@@ -170,7 +171,7 @@ export const updateBankTransferSettings = catchAsync(async (req: Request, res: R
   const set: Record<string, unknown> = {};
   for (const k of BANK_TEXT_FIELDS) {
     if (body[k] === undefined) continue;
-    if (typeof body[k] !== 'string' || body[k].length > 120) return next(new AppError(`Invalid ${k}`, 400));
+    if (typeof body[k] !== 'string' || body[k].length > (BANK_TEXT_MAX[k] ?? 120)) return next(new AppError(`Invalid ${k}`, 400));
     set[`bankTransfer.${k}`] = body[k].trim();
   }
   for (const k of BANK_NUMBER_FIELDS) {

@@ -30,6 +30,9 @@ export interface IPaymentSettings extends Document {
     accountNumber?: string;
     payId?: string;
     swiftBic?: string;
+    /** International Bank Transfer only (shown when filled in) */
+    iban?: string;
+    beneficiaryAddress?: string;
     /** Shipping charged at checkout (AUD, GST incl.) */
     shippingFeeAU?: number;
     shippingFeeInternational?: number;
@@ -72,6 +75,8 @@ const PaymentSettingsSchema = new Schema<IPaymentSettings>(
       accountNumber: { type: String, trim: true, default: '' },
       payId: { type: String, trim: true, default: '' },
       swiftBic: { type: String, trim: true, default: '' },
+      iban: { type: String, trim: true, default: '' },
+      beneficiaryAddress: { type: String, trim: true, default: '' },
       shippingFeeAU: { type: Number, min: 0, default: 0 },
       shippingFeeInternational: { type: Number, min: 0, default: 0 },
       freeShippingThresholdAU: { type: Number, min: 0, default: 0 },

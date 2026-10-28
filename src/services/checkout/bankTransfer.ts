@@ -7,7 +7,8 @@
  *   (PaymentSettings.bankTransfer). Empty fields fall back to these env variables, so a fresh
  *   install can be configured from .env:
  *     BANK_TRANSFER_ACCOUNT_NAME, BANK_TRANSFER_BANK_NAME, BANK_TRANSFER_BSB,
- *     BANK_TRANSFER_ACCOUNT_NUMBER, BANK_TRANSFER_PAYID, BANK_TRANSFER_SWIFT
+ *     BANK_TRANSFER_ACCOUNT_NUMBER, BANK_TRANSFER_PAYID, BANK_TRANSFER_SWIFT,
+ *     BANK_TRANSFER_IBAN, BANK_TRANSFER_BENEFICIARY_ADDRESS (international only, optional)
  * - Prices are AUD incl. GST; no separate GST/tax amount is stored or shown.
  * - Payment details are only ever returned for an order the caller holds the access token for.
  */
@@ -36,6 +37,9 @@ export interface BankTransferSettings {
   accountNumber: string;
   payId: string;
   swiftBic: string;
+  /** Optional, International Bank Transfer only */
+  iban?: string;
+  beneficiaryAddress?: string;
   shippingFeeAU: number;
   shippingFeeInternational: number;
   freeShippingThresholdAU: number;
@@ -59,6 +63,8 @@ export async function getBankTransferSettings(): Promise<BankTransferSettings> {
     accountNumber: pick(b.accountNumber, 'BANK_TRANSFER_ACCOUNT_NUMBER'),
     payId: pick(b.payId, 'BANK_TRANSFER_PAYID'),
     swiftBic: pick(b.swiftBic, 'BANK_TRANSFER_SWIFT'),
+    iban: pick(b.iban, 'BANK_TRANSFER_IBAN'),
+    beneficiaryAddress: pick(b.beneficiaryAddress, 'BANK_TRANSFER_BENEFICIARY_ADDRESS'),
     shippingFeeAU: num(b.shippingFeeAU),
     shippingFeeInternational: num(b.shippingFeeInternational),
     freeShippingThresholdAU: num(b.freeShippingThresholdAU),
@@ -85,9 +91,26 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export function shippingFor(country: string, subtotal: number, s: BankTransferSettings): { amount: number; name: string } {
   if (String(country).toUpperCase() === 'AU') {
     const free = s.freeShippingThresholdAU > 0 && subtotal >= s.freeShippingThresholdAU;
-    return { amount: free ? 0 : round2(s.shippingFeeAU), name: free ? 'Free shipping' : 'Standard shipping' };
+    return { amount: free ? 0 : round2(s.shippingFeeAU), name: free ? 'Free shipping' : 'Express shipping' };
   }
-  return { amount: round2(s.shippingFeeInternational), name: 'International shipping' };
+  return { amount: round2(s.shippingFeeInternational), name: 'International express shipping' };
+}
+
+/**
+ * "Please complete your payment within 3 days (by Fri 30 Oct 2026). Unpaid orders are cancelled
+ * automatically." — shown on the payment page and in the email (same text). null without a due date.
+ */
+export function paymentDueNotice(order: { createdAt?: Date | string; paymentDueAt?: Date | string | null }): string | null {
+  if (!order.paymentDueAt) return null;
+  const due = new Date(order.paymentDueAt);
+  if (Number.isNaN(due.getTime())) return null;
+  const placed = order.createdAt ? new Date(order.createdAt) : new Date();
+  const days = Math.max(1, Math.round((due.getTime() - placed.getTime()) / 86_400_000));
+  const date = due.toLocaleDateString('en-AU', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+    timeZone: process.env.SCHEDULE_TZ || 'Australia/Melbourne',
+  }).replace(/,/g, '');
+  return `Please complete your payment within ${days} day${days === 1 ? '' : 's'} (by ${date}). Unpaid orders are cancelled automatically.`;
 }
 
 /**
@@ -144,15 +167,18 @@ export function instructionsFor(method: BankMethod, s: BankTransferSettings, ord
   }
   return {
     method, label: 'Pay by International Bank Transfer',
+    // Order as the client specified; IBAN / beneficiary address only when filled in
     fields: [
-      f('bankName', 'Bank', s.bankName, false),
       f('accountName', 'Account Name', s.accountName, false),
+      f('bankName', 'Bank', s.bankName, false),
+      f('swiftBic', 'SWIFT / BIC', s.swiftBic, true),
       f('bsb', 'BSB', s.bsb, false),
       f('accountNumber', 'Account Number', s.accountNumber, true),
-      f('swiftBic', 'SWIFT / BIC', s.swiftBic, true),
+      f('iban', 'IBAN (if required)', s.iban || '', true),
       f('currency', 'Currency', 'AUD', false),
+      f('beneficiaryAddress', 'Beneficiary Address', s.beneficiaryAddress || '', true),
       f('amount', 'Amount', amount, true),
-      f('reference', 'Reference', ref, true),
+      f('reference', 'Payment Reference', ref, true),
     ].filter((x) => x.value),
     notes: [
       "Please send the payment in Australian Dollars (AUD). The full order total must be received. Any international bank or currency-conversion fees are the customer's responsibility.",
