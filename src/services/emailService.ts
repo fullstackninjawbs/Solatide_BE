@@ -306,10 +306,10 @@ export const sendShipmentConfirmationEmail = async (order: any) => {
 
   let displayMethod = 'Australia Post';
   if (isDomestic) {
-    displayMethod = 'Australia Post - Express';
+    displayMethod = 'Australia Post Express Shipping';
   } else {
     if (methodName.includes('express')) {
-      displayMethod = 'Australia Post - International Express';
+      displayMethod = 'Australia Post International Express';
     } else {
       displayMethod = 'Australia Post - International Standard';
     }

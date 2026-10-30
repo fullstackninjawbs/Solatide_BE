@@ -88,12 +88,16 @@ export function methodsForCountry(country: string, s: BankTransferSettings): Ban
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** Shown at checkout, on the payment page, in emails and sent to Starshipit. Free AU orders keep the name; the price shows "Free". */
+export const SHIPPING_NAME_AU = 'Australia Post Express Shipping';
+export const SHIPPING_NAME_INTERNATIONAL = 'Australia Post International Express';
+
 export function shippingFor(country: string, subtotal: number, s: BankTransferSettings): { amount: number; name: string } {
   if (String(country).toUpperCase() === 'AU') {
     const free = s.freeShippingThresholdAU > 0 && subtotal >= s.freeShippingThresholdAU;
-    return { amount: free ? 0 : round2(s.shippingFeeAU), name: free ? 'Free shipping' : 'Express shipping' };
+    return { amount: free ? 0 : round2(s.shippingFeeAU), name: SHIPPING_NAME_AU };
   }
-  return { amount: round2(s.shippingFeeInternational), name: 'International express shipping' };
+  return { amount: round2(s.shippingFeeInternational), name: SHIPPING_NAME_INTERNATIONAL };
 }
 
 /**

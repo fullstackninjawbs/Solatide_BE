@@ -31,10 +31,10 @@ test('public bank config never contains bank details', () => {
 });
 
 test('shipping: AU flat with free threshold, international flat', () => {
-  assert.deepEqual(shippingFor('AU', 120, S), { amount: 15, name: 'Express shipping' });
-  assert.deepEqual(shippingFor('AU', 300, S), { amount: 0, name: 'Free shipping' });
-  assert.deepEqual(shippingFor('NZ', 999, S), { amount: 45, name: 'International express shipping' });
-  assert.deepEqual(shippingFor('AU', 10_000, { ...S, freeShippingThresholdAU: 0 }), { amount: 15, name: 'Express shipping' });
+  assert.deepEqual(shippingFor('AU', 120, S), { amount: 15, name: 'Australia Post Express Shipping' });
+  assert.deepEqual(shippingFor('AU', 300, S), { amount: 0, name: 'Australia Post Express Shipping' });
+  assert.deepEqual(shippingFor('NZ', 999, S), { amount: 45, name: 'Australia Post International Express' });
+  assert.deepEqual(shippingFor('AU', 10_000, { ...S, freeShippingThresholdAU: 0 }), { amount: 15, name: 'Australia Post Express Shipping' });
 });
 
 test('instructions show only the chosen method, with the order amount and reference', () => {
