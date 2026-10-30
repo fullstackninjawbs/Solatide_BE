@@ -22,6 +22,8 @@ import { isUsableExternalId } from '../../domain/tagadaWebhook';
 import { generateOrderAccessToken } from '../../domain/orderAccess';
 import { transitionPaymentStatus } from '../../services/orders/paymentTransition';
 import { scheduleOnOrderPaid } from '../../services/orders/onOrderPaid';
+import { sendConfirmationWithTimeline, customerEmailOf } from '../../services/orders/confirmationEmail';
+import { isBankMethod } from '../../services/checkout/bankTransfer';
 import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/tagadaSync';
 import { withOrderNumberRetry } from '../../services/orders/orderNumber';
 import { reserveRefund, releaseRefund, confirmReservedRefund, refundTargetStatus, extractRefundId } from '../../services/orders/refunds';
@@ -265,7 +267,7 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
     return next(new AppError('No valid fields to update', 400));
   }
 
-  const existing = await Order.findById(req.params.id).select('_id paymentStatus').lean();
+  const existing = await Order.findById(req.params.id).select('_id paymentStatus paymentMethod source').lean();
   if (!existing) {
     return next(new AppError('No order found with that ID', 404));
   }
@@ -278,6 +280,11 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
       return next(new AppError(`Cannot change payment status: ${t.reason}`, 409));
     }
     becamePaid = paymentStatus === 'paid' && t.result === 'applied';
+    // Marked paid in the Hub (bank transfer / PayID, or an unpaid manual order): the customer gets
+    // the order confirmation email now — these orders were saved with the email switched off
+    if (becamePaid && (isBankMethod(existing.paymentMethod) || existing.source === 'admin_manual')) {
+      await Order.updateOne({ _id: existing._id }, { $set: { suppressConfirmationEmail: false } });
+    }
     // Cancelled → give back stock reserved at placement (bank transfer / PayID checkout; no-op otherwise)
     if (paymentStatus === 'cancelled' && t.result === 'applied') {
       await releaseReservedStock(existing._id).catch((err: any) =>
@@ -304,6 +311,28 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
     success: true,
     data: { order },
   });
+});
+
+/**
+ * POST /api/admin/order/:id/send-confirmation
+ *
+ * Sends (again) the customer's order confirmation email for a paid order and adds it to the timeline.
+ */
+export const sendOrderConfirmation = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order: any = await Order.findById(req.params.id).select('+publicAccessToken');
+  if (!order || order.isDeleted) return next(new AppError('No order found with that ID', 404));
+  if (!['paid', 'partially_refunded'].includes(order.paymentStatus)) {
+    return next(new AppError('The order confirmation can only be sent once the order is paid.', 400));
+  }
+  if (!customerEmailOf(order)) return next(new AppError('This order has no customer email address.', 400));
+  try {
+    await sendConfirmationWithTimeline(order, sendOrderConfirmationEmail);
+  } catch (err: any) {
+    console.error(`[Admin Order] confirmation email failed for ${order._id}: ${err?.message}`);
+    return next(new AppError('The email could not be sent. Please try again in a few minutes.', 502));
+  }
+  const updated = await Order.findById(order._id).lean();
+  res.status(200).json({ success: true, message: `Order confirmation sent to ${customerEmailOf(order)}`, data: { order: updated } });
 });
 
 /**

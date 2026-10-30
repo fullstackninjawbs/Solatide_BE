@@ -42,6 +42,7 @@ import { scheduleOnOrderPaid } from '../services/orders/onOrderPaid';
 import { applyProviderRefundEvent } from '../services/orders/refunds';
 import { ensureOrderNumber, generateOrderNumber as genOrderNumber, isDuplicateKeyError } from '../services/orders/orderNumber';
 import { syncOrderFromTagada } from '../services/orders/tagadaSync';
+import { getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
 
 /** @deprecated import from services/orders/orderNumber — re-exported for existing callers. */
 export const generateOrderNumber = genOrderNumber;
@@ -88,6 +89,11 @@ export const createTagadaPayment = catchAsync(
 
     if (!orderId || typeof orderId !== 'string' || !/^[0-9a-fA-F]{24}$/.test(orderId)) {
       return next(new AppError('A valid orderId is required', 400));
+    }
+
+    // Only when Tagada is the checkout mode chosen in Admin (an older site version may still call this)
+    if ((await getEffectiveCheckoutMode()) !== 'tagada') {
+      return next(new AppError('Our checkout has just been updated. Please refresh the page and try again — your cart is saved.', 503));
     }
 
     const order: any = await Order.findById(orderId).select('+publicAccessToken').populate('user', 'name email');

@@ -10,6 +10,7 @@ import { withOrderNumberRetry } from '../services/orders/orderNumber';
 import { resolveCheckoutLines, CheckoutValidationError } from '../services/orders/checkoutItems';
 import { applyStarshipitTrackingUpdate } from '../services/shipping/starshipitTracking';
 import { isStaffRole } from '../config/roles';
+import { getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
 
 const MAX_ITEM_QUANTITY = 100;
 const MAX_ORDER_LINES = 50;
@@ -36,6 +37,12 @@ export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Res
     if (typeof q !== 'number' || !Number.isInteger(q) || q < 1 || q > MAX_ITEM_QUANTITY) {
       return next(new AppError(`Item quantity must be a whole number between 1 and ${MAX_ITEM_QUANTITY}.`, 400));
     }
+  }
+
+  // This placeholder order is only for the Tagada checkout. A browser still running an older site
+  // version can call it after the admin chose another checkout mode — refuse instead of saving it.
+  if ((await getEffectiveCheckoutMode()) !== 'tagada') {
+    return next(new AppError('Our checkout has just been updated. Please refresh the page and try again — your cart is saved.', 503));
   }
 
   // Address collected via Tagada hosted checkout

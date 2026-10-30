@@ -24,6 +24,8 @@ import AnalyticsEvent from '../../models/analyticsEvent.model';
 import { decrementInventoryForOrder } from './inventory';
 import { checkDiscountEligibility } from '../../domain/discountEligibility';
 import { escapeRegExp } from '../../domain/escapeRegExp';
+import { isBankMethod } from '../checkout/bankTransfer';
+import { sendConfirmationWithTimeline } from './confirmationEmail';
 
 export interface OnOrderPaidDeps {
   sendOrderConfirmationEmail: (order: any) => Promise<unknown>;
@@ -163,9 +165,12 @@ export async function onOrderPaid(
     await step('low_stock_alert', () => d.sendLowStockAlert!(order._id));
   }
 
-  // 2) Customer confirmation email
+  // 2) Customer confirmation email (bank transfer / PayID: also a timeline entry, as the Hub
+  // timeline has no built-in line for it on those orders)
   if (!order.suppressConfirmationEmail && (order.customerEmail || order.customer?.email)) {
-    await step('confirmation_email', () => d.sendOrderConfirmationEmail(order));
+    await step('confirmation_email', () => (isBankMethod(order.paymentMethod)
+      ? sendConfirmationWithTimeline(order, d.sendOrderConfirmationEmail)
+      : d.sendOrderConfirmationEmail(order)));
   }
 
   // 3) Admin notification (admin-created manual orders are notified at creation; bank transfer /

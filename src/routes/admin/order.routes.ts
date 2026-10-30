@@ -6,6 +6,7 @@ import {
   getOrders,
   getOrderById,
   updateOrderStatus,
+  sendOrderConfirmation,
   updateOrder,
   createShipment,
   refundOrder,
@@ -72,6 +73,9 @@ router.patch('/:id', updateOrder);
 
 // PATCH /api/admin/order/:id/status   — status / fulfilmentStatus / adminNotes (+ paymentStatus for privileged)
 router.patch('/:id/status', guardPaymentStatusEdit, updateOrderStatus);
+
+// POST /api/admin/order/:id/send-confirmation — email the customer their order confirmation (paid orders)
+router.post('/:id/send-confirmation', privileged, sendOrderConfirmation);
 
 // Refunds
 router.post('/:id/refund', restrictTo(...ACCESS.orderRefund), refundOrder);

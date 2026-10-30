@@ -6,8 +6,8 @@
  *   GET  /api/checkout/bank-order/:id    → order + payment details for its method (?accessToken=)
  *
  * The order is created "Awaiting payment" (paymentStatus pending). The admin marks it paid
- * (PATCH /api/admin/order/:id/status) which runs the usual paid side effects without the
- * customer confirmation email (suppressConfirmationEmail).
+ * (PATCH /api/admin/order/:id/status) which runs the usual paid side effects, including the
+ * customer's order confirmation email.
  */
 import { Request, Response, NextFunction } from 'express';
 import Order from '../models/order.model';
@@ -239,8 +239,8 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
       inventoryDecrementedAt: now,
       stockReservations: reservations,
       paymentDueAt: new Date(now.getTime() + s.unpaidCancelDays * 24 * 3600 * 1000),
-      // No customer email when the admin marks it paid; never an abandoned-checkout reminder
-      suppressConfirmationEmail: true,
+      // The order confirmation email goes out when the admin marks it paid; never an abandoned-checkout reminder
+      suppressConfirmationEmail: false,
       abandonedReminderSentAt: now,
       ...(lowStock.length ? { lowStockAlert: { items: lowStock, at: now } } : {}),
       ...(visitor && (visitor.sessionId || visitor.country) ? { visitor } : {}),

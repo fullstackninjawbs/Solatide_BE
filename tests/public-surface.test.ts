@@ -6,6 +6,7 @@ import Review from '../src/models/review.model';
 import Order from '../src/models/order.model';
 import User from '../src/models/user.model';
 import AnalyticsEvent from '../src/models/analyticsEvent.model';
+import PaymentSettings from '../src/models/PaymentSettings';
 import { buildErrorHandler } from '../src/middleware/errorHandler';
 import AppError from '../src/utils/appError';
 import { validateCoaUrl } from '../src/utils/coaProxy';
@@ -303,6 +304,25 @@ test('createOrder validates quantities and product ids', async () => {
   assert.equal((await post([{ product: OID(1), quantity: 101 }])).status, 400);
   assert.equal((await post([{ product: OID(1), quantity: 1.5 }])).status, 400);
   assert.equal((await post([{ product: 'not-an-id', quantity: 1 }])).status, 400);
+});
+
+test('old Tagada checkout calls are refused when Admin chose another checkout mode (stale browser tab)', async () => {
+  const undo = stub(PaymentSettings, 'findOne', () => fakeQuery({ checkoutMode: 'order_request', bankTransfer: {} }));
+  let orderLookups = 0;
+  const undoOrder = stub(Order, 'findById', () => { orderLookups++; return fakeQuery(null); });
+  try {
+    const json = (body: unknown) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const placeholder = await req(ctx.base + '/api/v1/orders', json({ products: [{ product: OID(1), quantity: 1 }], paymentMethod: 'tagada' }));
+    assert.equal(placeholder.status, 503);
+    assert.match(placeholder.body.message, /refresh the page/);
+    const session = await req(ctx.base + '/api/payments/tagada/create', json({ orderId: OID(2), accessToken: 'a'.repeat(64) }));
+    assert.equal(session.status, 503);
+    assert.match(session.body.message, /refresh the page/);
+    assert.equal(orderLookups, 0, 'no order is read or created');
+  } finally {
+    undo();
+    undoOrder();
+  }
 });
 
 // ── HTML sanitising / escaping ──────────────────────────────────────────────

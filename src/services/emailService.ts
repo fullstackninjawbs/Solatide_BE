@@ -216,14 +216,18 @@ export const sendOrderConfirmationEmail = async (order: any) => {
               <td class="totals-label">Subtotal</td>
               <td class="totals-value">${formatPrice(order.subtotal || 0)}</td>
             </tr>
+            ${Number(order.discountAmount) > 0 ? `<tr>
+              <td class="totals-label">Discount${order.couponCode ? ` (${e(order.couponCode)})` : ''}</td>
+              <td class="totals-value">-${formatPrice(Number(order.discountAmount))}</td>
+            </tr>` : ''}
             <tr>
               <td class="totals-label">Shipping</td>
               <td class="totals-value">${formatPrice(order.shippingAmount || 0)}</td>
             </tr>
-            <tr>
+            ${Number(order.taxAmount) > 0 ? `<tr>
               <td class="totals-label">Taxes</td>
-              <td class="totals-value">${formatPrice(order.taxAmount || 0)}</td>
-            </tr>
+              <td class="totals-value">${formatPrice(order.taxAmount)}</td>
+            </tr>` : ''}
             <tr>
               <td class="totals-label grand-total">Total</td>
               <td class="totals-value grand-total">${formatPrice(order.grandTotal || 0)} ${currency}</td>
