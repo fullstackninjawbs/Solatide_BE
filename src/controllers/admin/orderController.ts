@@ -22,7 +22,7 @@ import { isUsableExternalId } from '../../domain/tagadaWebhook';
 import { generateOrderAccessToken } from '../../domain/orderAccess';
 import { transitionPaymentStatus } from '../../services/orders/paymentTransition';
 import { scheduleOnOrderPaid } from '../../services/orders/onOrderPaid';
-import { sendConfirmationWithTimeline, customerEmailOf } from '../../services/orders/confirmationEmail';
+import { sendConfirmationWithTimeline, customerEmailOf, adminLabelOf } from '../../services/orders/confirmationEmail';
 import { isBankMethod } from '../../services/checkout/bankTransfer';
 import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/tagadaSync';
 import { withOrderNumberRetry } from '../../services/orders/orderNumber';
@@ -267,7 +267,8 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
     return next(new AppError('No valid fields to update', 400));
   }
 
-  const existing = await Order.findById(req.params.id).select('_id paymentStatus paymentMethod source').lean();
+  const existing = await Order.findById(req.params.id)
+    .select('_id paymentStatus paymentMethod source grandTotal confirmationEmailOptOut confirmationEmailSentAt').lean();
   if (!existing) {
     return next(new AppError('No order found with that ID', 404));
   }
@@ -280,9 +281,18 @@ export const updateOrderStatus = catchAsync(async (req: Request, res: Response, 
       return next(new AppError(`Cannot change payment status: ${t.reason}`, 409));
     }
     becamePaid = paymentStatus === 'paid' && t.result === 'applied';
+    if (t.result === 'applied') {
+      const by = adminLabelOf((req as any).user);
+      const text = becamePaid
+        ? `Payment of $${(Number(existing.grandTotal) || 0).toFixed(2)} marked as paid by ${by}.`
+        : `Payment status changed from ${existing.paymentStatus} to ${paymentStatus} by ${by}.`;
+      await Order.updateOne({ _id: existing._id }, { $push: { comments: { text, createdAt: new Date() } } });
+    }
     // Marked paid in the Hub (bank transfer / PayID, or an unpaid manual order): the customer gets
-    // the order confirmation email now — these orders were saved with the email switched off
-    if (becamePaid && (isBankMethod(existing.paymentMethod) || existing.source === 'admin_manual')) {
+    // the order confirmation email now — these orders were saved with the email switched off.
+    // Not when the admin unticked "Send order confirmation email", or it was already sent.
+    if (becamePaid && (isBankMethod(existing.paymentMethod) || existing.source === 'admin_manual')
+      && !existing.confirmationEmailOptOut && !existing.confirmationEmailSentAt) {
       await Order.updateOne({ _id: existing._id }, { $set: { suppressConfirmationEmail: false } });
     }
     // Cancelled → give back stock reserved at placement (bank transfer / PayID checkout; no-op otherwise)
@@ -326,7 +336,7 @@ export const sendOrderConfirmation = catchAsync(async (req: Request, res: Respon
   }
   if (!customerEmailOf(order)) return next(new AppError('This order has no customer email address.', 400));
   try {
-    await sendConfirmationWithTimeline(order, sendOrderConfirmationEmail);
+    await sendConfirmationWithTimeline(order, sendOrderConfirmationEmail, adminLabelOf((req as any).user));
   } catch (err: any) {
     console.error(`[Admin Order] confirmation email failed for ${order._id}: ${err?.message}`);
     return next(new AppError('The email could not be sent. Please try again in a few minutes.', 502));
@@ -883,7 +893,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
   const grandTotal = Math.max(0, calculatedSubtotal - parsedDiscountTotal + parsedShippingCost);
 
   // 5. Admin user credentials (audit log)
-  const adminUser = (req as any).admin;
+  const adminUser = (req as any).admin || (req as any).user;
   const createdByAdmin = adminUser ? {
     id: adminUser._id?.toString() || adminUser.id,
     email: adminUser.email,
@@ -926,13 +936,14 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     publicAccessToken: generateOrderAccessToken(),
     // Manual orders: customer confirmation email only when the admin asked for it.
     suppressConfirmationEmail: isPaid ? !sendEmail : true,
+    confirmationEmailOptOut: !sendEmail,
     // Stock is reserved below at creation, so onOrderPaid must not decrement again.
     inventoryDecrementedAt: now,
     source: 'admin_manual',
     createdByAdmin,
     adminNotes: String(notes).slice(0, 5000),
     comments: [{
-      text: `Order created manually by admin (${adminUser?.email || 'admin'}). Payment status: ${isPaid ? 'Paid (manual)' : 'Pending'}.`,
+      text: `Order created manually by ${adminLabelOf(adminUser)}. Payment status: ${isPaid ? 'Paid (manual)' : 'Pending'}.${sendEmail ? '' : ' Order confirmation email switched off.'}`,
       createdAt: now,
     }],
   }));
@@ -964,7 +975,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
   // 9. Pending manual order with "send email": legacy behaviour — send now.
   if (sendEmail && !isPaid) {
     try {
-      await sendOrderConfirmationEmail(order);
+      await sendConfirmationWithTimeline(order, sendOrderConfirmationEmail);
     } catch (err: any) {
       console.error('[Admin Order] Failed to send order confirmation email:', err?.message);
     }

@@ -184,6 +184,10 @@ export interface IOrder extends mongoose.Document {
   discountUsageReservedAt?: Date | null;
   discountUsageReleasedAt?: Date | null;
   suppressConfirmationEmail?: boolean;
+  /** Admin unticked "Send order confirmation email" when creating the order: never sent automatically */
+  confirmationEmailOptOut?: boolean;
+  /** Last time the customer's order confirmation email was sent (also a timeline entry) */
+  confirmationEmailSentAt?: Date | null;
 
   // ── Shipping Providers ────────────────────────────────────────────────────────
   trackingNumber?: string;
@@ -433,6 +437,8 @@ const orderSchema = new mongoose.Schema<IOrder>(
     discountUsageReservedAt: { type: Date, default: null },
     discountUsageReleasedAt: { type: Date, default: null },
     suppressConfirmationEmail: { type: Boolean, default: false },
+    confirmationEmailOptOut: { type: Boolean, default: false },
+    confirmationEmailSentAt: { type: Date, default: null },
 
     // ── Shipping Providers ────────────────────────────────────────────────────────
     trackingNumber: { type: String },
