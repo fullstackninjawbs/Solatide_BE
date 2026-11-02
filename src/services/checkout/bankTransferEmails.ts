@@ -1,12 +1,13 @@
 /**
  * Emails for the bank transfer / PayID checkout:
- * - customer: "Order received — payment required" (sent once, right after the order is placed)
+ * - customer: "Order received — payment required" (right after the order is placed; again from the Hub)
+ * - customer: "Final reminder — payment required" (once, PAYMENT_REMINDER_DELAY_HOURS after placing)
  * - admin: "New order — awaiting payment" (optional, Admin → Settings)
  * There is intentionally no "payment received" email; the existing shipping email follows.
  */
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e, safeUrl } from '../../utils/escapeHtml';
-import { instructionsFor, isBankMethod, methodLabel, ORDER_NUMBER_ONLY_WARNING, paymentDueNotice, type BankTransferSettings } from './bankTransfer';
+import { formatDueDateTime, instructionsFor, isBankMethod, methodLabel, ORDER_NUMBER_ONLY_WARNING, paymentDueNotice, type BankTransferSettings } from './bankTransfer';
 
 const LOGO = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 const hdr = (v: unknown): string => String(v ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200);
@@ -71,21 +72,16 @@ function layout(title: string, body: string, orderNumber: string): string {
   </body></html>`;
 }
 
-/** Customer: "Order received — payment required" with the selected method only. */
-export async function sendAwaitingPaymentEmail(order: any, s: BankTransferSettings, accessToken: string): Promise<void> {
-  const to = order.customer?.email || order.customerEmail;
-  if (!to) return;
-  const url = paymentPageUrl(order, accessToken);
-  const body = `
-    <h2 style="margin:0 0 8px;font-size:22px;font-weight:600;color:#111;">Order received — payment required</h2>
-    <p style="margin:0 0 20px;color:#555;font-size:15px;line-height:1.55;">Hi ${e(order.customer?.firstName || '')}, thanks for your order. Please complete your payment using the details below. Your order will be processed once payment has been received and matched to your order.</p>
+/** Order number / amount / reference, the payment details, warning, button and order summary. */
+function paymentDetailsBody(order: any, s: BankTransferSettings, url: string, dueBlock: string): string {
+  return `
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
       <tr><td style="padding:6px 0;color:#666;font-size:14px;">Order number</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:15px;color:#111;">#${e(order.orderNumber)}</td></tr>
       <tr><td style="padding:6px 0;color:#666;font-size:14px;">Amount to pay</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:15px;color:#111;">${aud(order.grandTotal)}</td></tr>
       <tr><td style="padding:6px 0;color:#666;font-size:14px;">Payment reference</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:15px;color:#111;">${e(order.orderNumber)}</td></tr>
     </table>
     ${paymentBlock(order, s)}
-    ${paymentDueNotice(order) ? `<p style="margin:0 0 16px;padding:12px 16px;border-radius:8px;background:#eef5fc;color:#102a5c;font-size:14px;line-height:1.5;"><strong>${e(paymentDueNotice(order) as string)}</strong></p>` : ''}
+    ${dueBlock}
     ${warningBlock()}
     <p style="margin:0 0 28px;"><a href="${e(url)}" style="background:#102a5c;color:#fff;text-decoration:none;padding:13px 22px;border-radius:6px;font-size:15px;font-weight:600;display:inline-block;">View payment details</a></p>
     <div style="font-size:16px;font-weight:600;color:#111;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:4px;">Order summary</div>
@@ -95,10 +91,43 @@ export async function sendAwaitingPaymentEmail(order: any, s: BankTransferSettin
       ${e(order.shippingAddressObj?.name)}<br>${e(order.shippingAddressObj?.street1)}${order.shippingAddressObj?.street2 ? `, ${e(order.shippingAddressObj.street2)}` : ''}<br>
       ${e(order.shippingAddressObj?.city)} ${e(order.shippingAddressObj?.state)} ${e(order.shippingAddressObj?.zip)}<br>${e(order.shippingAddressObj?.country)}
     </div>`;
+}
+
+const dueBox = (html: string) =>
+  `<p style="margin:0 0 16px;padding:12px 16px;border-radius:8px;background:#eef5fc;color:#102a5c;font-size:14px;line-height:1.5;"><strong>${html}</strong></p>`;
+
+/**
+ * Customer: "Order received — payment required" with the selected method only.
+ * Sent when the order is placed, and again from the Hub ("Resend payment details").
+ */
+export async function sendAwaitingPaymentEmail(order: any, s: BankTransferSettings, accessToken: string): Promise<void> {
+  const to = order.customer?.email || order.customerEmail;
+  if (!to) return;
+  const notice = paymentDueNotice(order);
+  const body = `
+    <h2 style="margin:0 0 8px;font-size:22px;font-weight:600;color:#111;">Order received — payment required</h2>
+    <p style="margin:0 0 20px;color:#555;font-size:15px;line-height:1.55;">Hi ${e(order.customer?.firstName || '')}, thanks for your order. Please complete your payment using the details below. Your order will be processed once payment has been received and matched to your order.</p>
+    ${paymentDetailsBody(order, s, paymentPageUrl(order, accessToken), notice ? dueBox(e(notice)) : '')}`;
   await deliverMail({
     from: from(), to,
     subject: hdr(`Order #${order.orderNumber} received — payment required`),
     html: layout('Order received — payment required', body, order.orderNumber),
+  });
+}
+
+/** Customer: the one automatic reminder — last reminder, cancelled if not paid by the due date and time. */
+export async function sendPaymentReminderEmail(order: any, s: BankTransferSettings, accessToken: string): Promise<void> {
+  const to = order.customer?.email || order.customerEmail;
+  if (!to || !order.paymentDueAt) return;
+  const due = formatDueDateTime(order.paymentDueAt);
+  const body = `
+    <h2 style="margin:0 0 8px;font-size:22px;font-weight:600;color:#111;">Final reminder — payment required</h2>
+    <p style="margin:0 0 20px;color:#555;font-size:15px;line-height:1.55;">Hi ${e(order.customer?.firstName || '')}, we haven't received the payment for your order yet. This is your last reminder: if payment is not received by <strong style="color:#111;">${e(due)}</strong>, your order will be cancelled automatically. If you've already paid, thank you — there's nothing more you need to do.</p>
+    ${paymentDetailsBody(order, s, paymentPageUrl(order, accessToken), dueBox(`Pay by ${e(due)} or your order will be cancelled.`))}`;
+  await deliverMail({
+    from: from(), to,
+    subject: hdr(`Final reminder: payment for order #${order.orderNumber} is due by ${due}`),
+    html: layout('Final reminder — payment required', body, order.orderNumber),
   });
 }
 
@@ -114,7 +143,7 @@ export async function sendAdminAwaitingPaymentEmail(order: any): Promise<void> {
   const body = `
     <div style="display:inline-block;background:#fff3d6;color:#8a5a00;font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;margin-bottom:12px;">AWAITING PAYMENT • ${e(method)}</div>
     <h2 style="margin:0 0 6px;font-size:20px;color:#111;">New order #${e(order.orderNumber)} — ${aud(order.grandTotal)}</h2>
-    <p style="margin:0 0 18px;color:#555;font-size:14px;line-height:1.55;">Check the bank for a payment with reference <strong>${e(order.orderNumber)}</strong>, then mark the order as paid in the admin. No email is sent to the customer when you do.</p>
+    <p style="margin:0 0 18px;color:#555;font-size:14px;line-height:1.55;">Check the bank for a payment with reference <strong>${e(order.orderNumber)}</strong>, then mark the order as paid in the admin. The customer is emailed their order confirmation when you do.</p>
     <p style="margin:0 0 18px;color:#555;font-size:14px;line-height:1.6;"><strong style="color:#111;">${e(order.customerName)}</strong><br>${e(order.customer?.email || order.customerEmail)} · ${e(order.customer?.phone)}<br>${e(order.shippingAddressObj?.city)} ${e(order.shippingAddressObj?.state)} ${e(order.shippingAddressObj?.country)}</p>
     ${itemsTable(order)}
     <p style="margin:24px 0 0;"><a href="${e(`${adminUrl}/admin/orders/${order._id}`)}" style="background:#102a5c;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-size:14px;font-weight:600;display:inline-block;">Open order</a></p>`;

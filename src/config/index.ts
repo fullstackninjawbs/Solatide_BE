@@ -7,6 +7,8 @@ dotenv.config();
 interface Config {
   env: string;
   port: number;
+  /** Interface the API listens on; undefined = all interfaces */
+  host: string | undefined;
   mongoUri: string;
   jwtSecret: string;
   jwtExpiresIn: string;
@@ -71,6 +73,9 @@ const parseTrustProxy = (raw: string | undefined): boolean | number | string => 
 export const config: Config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '5000', 10),
+  // Production: only nginx on the same machine reaches the API (port 5000 must not be public).
+  // HOST=0.0.0.0 listens on all interfaces again.
+  host: process.env.HOST?.trim() || (process.env.NODE_ENV === 'production' ? '127.0.0.1' : undefined),
   mongoUri: process.env.MONGO_URI!,
   jwtSecret: process.env.JWT_SECRET!,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',

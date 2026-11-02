@@ -28,9 +28,10 @@ connectDB().then(() => {
 });
 
 // Start the server
-const server = app.listen(config.port, () => {
-  console.log(`[Server] Running in ${config.env} mode on port ${config.port}`);
-});
+const onListening = () => {
+  console.log(`[Server] Running in ${config.env} mode on ${config.host ?? 'all interfaces'}, port ${config.port}`);
+};
+const server = config.host ? app.listen(config.port, config.host, onListening) : app.listen(config.port, onListening);
 
 // Request/header timeouts (slowloris / hung upstream protection)
 server.requestTimeout = 30000;

@@ -7,6 +7,7 @@ import {
   getOrderById,
   updateOrderStatus,
   sendOrderConfirmation,
+  resendPaymentDetails,
   updateOrder,
   createShipment,
   refundOrder,
@@ -76,6 +77,9 @@ router.patch('/:id/status', guardPaymentStatusEdit, updateOrderStatus);
 
 // POST /api/admin/order/:id/send-confirmation — email the customer their order confirmation (paid orders)
 router.post('/:id/send-confirmation', privileged, sendOrderConfirmation);
+
+// POST /api/admin/order/:id/resend-payment-details — email the payment instructions again (unpaid bank orders)
+router.post('/:id/resend-payment-details', privileged, resendPaymentDetails);
 
 // Refunds
 router.post('/:id/refund', restrictTo(...ACCESS.orderRefund), refundOrder);

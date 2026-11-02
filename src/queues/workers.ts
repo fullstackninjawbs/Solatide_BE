@@ -25,6 +25,8 @@ const SCHEDULES: Array<{ id: keyof typeof MAINTENANCE_JOBS; env: string; extraCh
   { id: 'abandoned-reminders', env: 'ABANDONED_REMINDER_CRON' },
   // On by default: unpaid bank transfer / PayID orders must not hold stock forever ("off" disables)
   { id: 'cancel-unpaid-orders', env: 'UNPAID_ORDER_CANCEL_CRON', defaultPattern: '20 * * * *' },
+  // On by default: one "final reminder" payment email per unpaid bank transfer / PayID order
+  { id: 'payment-reminders', env: 'PAYMENT_REMINDER_CRON', defaultPattern: '*/15 * * * *' },
 ];
 
 /** Schedules of removed jobs (Tagada product sync): cleared from Redis so nothing runs without a handler. */

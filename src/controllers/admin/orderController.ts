@@ -346,6 +346,39 @@ export const sendOrderConfirmation = catchAsync(async (req: Request, res: Respon
 });
 
 /**
+ * POST /api/admin/order/:id/resend-payment-details
+ *
+ * Emails the customer their payment instructions again (unpaid bank transfer / PayID orders)
+ * and adds it to the timeline.
+ */
+export const resendPaymentDetails = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order: any = await Order.findById(req.params.id).select('+publicAccessToken');
+  if (!order || order.isDeleted) return next(new AppError('No order found with that ID', 404));
+  if (!isBankMethod(order.paymentMethod) || order.paymentStatus !== 'pending') {
+    return next(new AppError('Payment details can only be resent for unpaid bank transfer / PayID orders.', 400));
+  }
+  const email = customerEmailOf(order);
+  if (!email) return next(new AppError('This order has no customer email address.', 400));
+  if (!order.publicAccessToken) return next(new AppError('This order has no payment page link.', 400));
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getBankTransferSettings } = require('../../services/checkout/bankTransfer');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { sendAwaitingPaymentEmail } = require('../../services/checkout/bankTransferEmails');
+  try {
+    await sendAwaitingPaymentEmail(order, await getBankTransferSettings(), order.publicAccessToken);
+  } catch (err: any) {
+    console.error(`[Admin Order] resend payment details failed for ${order._id}: ${err?.message}`);
+    return next(new AppError('The email could not be sent. Please try again in a few minutes.', 502));
+  }
+  const updated = await Order.findByIdAndUpdate(
+    order._id,
+    { $push: { comments: { text: `Payment details re-sent to ${email} by ${adminLabelOf((req as any).user)}.`, createdAt: new Date() } } },
+    { new: true }
+  ).lean();
+  res.status(200).json({ success: true, message: `Payment details sent to ${email}`, data: { order: updated } });
+});
+
+/**
  * PATCH /api/admin/orders/:id
  *
  * Update order details including tags, comments, addresses.
@@ -934,8 +967,9 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     paymentStatus: isPaid ? 'paid' : 'pending',
     paidAt: isPaid ? now : null,
     publicAccessToken: generateOrderAccessToken(),
-    // Manual orders: customer confirmation email only when the admin asked for it.
-    suppressConfirmationEmail: isPaid ? !sendEmail : true,
+    // Manual orders: the confirmation email (when the admin asked for it) is sent below, before the
+    // response, so its timeline entry is there when the order opens; onOrderPaid never sends it.
+    suppressConfirmationEmail: true,
     confirmationEmailOptOut: !sendEmail,
     // Stock is reserved below at creation, so onOrderPaid must not decrement again.
     inventoryDecrementedAt: now,
@@ -972,12 +1006,16 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     });
   }
 
-  // 9. Pending manual order with "send email": legacy behaviour — send now.
-  if (sendEmail && !isPaid) {
+  // 9. "Send order confirmation email" ticked (paid or pending): send now, with its timeline entry
+  if (sendEmail) {
     try {
-      await sendConfirmationWithTimeline(order, sendOrderConfirmationEmail);
+      await sendConfirmationWithTimeline(order, sendOrderConfirmationEmail, adminLabelOf(adminUser));
     } catch (err: any) {
       console.error('[Admin Order] Failed to send order confirmation email:', err?.message);
+      await Order.updateOne({ _id: order._id }, { $push: { comments: {
+        text: `The order confirmation email could not be sent.${isPaid ? ' Use "Send confirmation email" to try again.' : ''}`,
+        createdAt: new Date(),
+      } } }).catch(() => undefined);
     }
   }
 

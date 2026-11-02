@@ -186,6 +186,8 @@ export interface IOrder extends mongoose.Document {
   suppressConfirmationEmail?: boolean;
   /** Admin unticked "Send order confirmation email" when creating the order: never sent automatically */
   confirmationEmailOptOut?: boolean;
+  /** Bank transfer / PayID: the one automatic "final reminder" payment email was sent */
+  paymentReminderSentAt?: Date | null;
   /** Last time the customer's order confirmation email was sent (also a timeline entry) */
   confirmationEmailSentAt?: Date | null;
 
@@ -438,6 +440,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     discountUsageReleasedAt: { type: Date, default: null },
     suppressConfirmationEmail: { type: Boolean, default: false },
     confirmationEmailOptOut: { type: Boolean, default: false },
+    paymentReminderSentAt: { type: Date, default: null },
     confirmationEmailSentAt: { type: Date, default: null },
 
     // ── Shipping Providers ────────────────────────────────────────────────────────

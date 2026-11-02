@@ -117,6 +117,15 @@ export function paymentDueNotice(order: { createdAt?: Date | string; paymentDueA
   return `Please complete your payment within ${days} day${days === 1 ? '' : 's'} (by ${date}). Unpaid orders are cancelled automatically.`;
 }
 
+/** "Thu 5 Nov 2026, 3:56 pm AEDT" — the payment due date and time, for the reminder email. */
+export function formatDueDateTime(when: Date | string): string {
+  return new Date(when).toLocaleString('en-AU', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short',
+    timeZone: process.env.SCHEDULE_TZ || 'Australia/Melbourne',
+  }).replace(/^(\w+), /, '$1 ').replace(/ (am|pm) /i, (_m, p) => ` ${p.toLowerCase()} `);
+}
+
 /**
  * Public bank transfer checkout settings for the storefront (never the payment details).
  * Whether this checkout is the active one is decided by the checkout mode (checkoutMode.ts).
