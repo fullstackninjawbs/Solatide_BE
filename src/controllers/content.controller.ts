@@ -2,6 +2,18 @@ import { Request, Response, NextFunction } from 'express';
 import { cacheGet, cacheSet, TTL } from '../utils/cache';
 import { FaqSection } from '../models/cms.model';
 import catchAsync from '../utils/catchAsync';
+import { getHomepageContent } from '../services/content/siteContent';
+
+// GET /api/v1/content/homepage — hero + announcement bar (cache cleared on every change)
+export const getPublicHomepage = catchAsync(async (_req: Request, res: Response) => {
+  const CACHE_KEY = 'public:homepage';
+  const cached = await cacheGet(CACHE_KEY);
+  if (cached) return res.status(200).json(cached);
+  const { hero, announcement } = await getHomepageContent();
+  const payload = { success: true, data: { hero, announcement } };
+  await cacheSet(CACHE_KEY, payload, TTL.PUBLIC_CONTENT);
+  res.status(200).json(payload);
+});
 
 // GET /api/content/faqs
 export const getPublicFaqSections = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
