@@ -41,6 +41,8 @@ export interface IPaymentSettings extends Document {
     internationalEnabled?: boolean;
     /** Unpaid orders are cancelled (stock released) after this many days, when the job runs */
     unpaidCancelDays?: number;
+    /** Same for International Bank Transfer orders (overseas transfers take 5–7 days) */
+    unpaidCancelDaysInternational?: number;
     notifyAdminOnOrder?: boolean;
   };
 }
@@ -82,6 +84,7 @@ const PaymentSettingsSchema = new Schema<IPaymentSettings>(
       freeShippingThresholdAU: { type: Number, min: 0, default: 0 },
       internationalEnabled: { type: Boolean, default: true },
       unpaidCancelDays: { type: Number, min: 1, max: 60, default: 3 },
+      unpaidCancelDaysInternational: { type: Number, min: 1, max: 60, default: 10 },
       notifyAdminOnOrder: { type: Boolean, default: true },
     },
   },

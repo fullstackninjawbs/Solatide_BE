@@ -20,7 +20,7 @@ import { decrementStockAtomic, returnStock, type LowStockCrossing, type StockRes
 import { generateOrderAccessToken, accessTokenMatches } from '../domain/orderAccess';
 import {
   getBankTransferSettings, publicCheckoutConfig, validateCheckoutInput, methodsForCountry, shippingFor, paymentDueNotice,
-  instructionsFor, isBankMethod, CheckoutInputError, ORDER_NUMBER_ONLY_WARNING, METHOD_LABELS, methodLabel,
+  instructionsFor, isBankMethod, CheckoutInputError, ORDER_NUMBER_ONLY_WARNING, METHOD_LABELS, methodLabel, paymentWindowDays,
 } from '../services/checkout/bankTransfer';
 import { getCheckoutModeState, getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
 import { applyDiscountCode, reserveDiscountUse, undoReservedUse, type AppliedDiscount } from '../services/discounts/discountService';
@@ -238,7 +238,7 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
       // Stock is reserved now; the paid side effects must not decrement it again
       inventoryDecrementedAt: now,
       stockReservations: reservations,
-      paymentDueAt: new Date(now.getTime() + s.unpaidCancelDays * 24 * 3600 * 1000),
+      paymentDueAt: new Date(now.getTime() + paymentWindowDays(method, s) * 24 * 3600 * 1000),
       // The order confirmation email goes out when the admin marks it paid; never an abandoned-checkout reminder
       suppressConfirmationEmail: false,
       abandonedReminderSentAt: now,

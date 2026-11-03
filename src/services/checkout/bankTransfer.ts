@@ -45,6 +45,8 @@ export interface BankTransferSettings {
   freeShippingThresholdAU: number;
   internationalEnabled: boolean;
   unpaidCancelDays: number;
+  /** International Bank Transfer orders: transfers from overseas take 5–7 days */
+  unpaidCancelDaysInternational: number;
   notifyAdminOnOrder: boolean;
 }
 
@@ -70,8 +72,14 @@ export async function getBankTransferSettings(): Promise<BankTransferSettings> {
     freeShippingThresholdAU: num(b.freeShippingThresholdAU),
     internationalEnabled: b.internationalEnabled !== false,
     unpaidCancelDays: Math.min(60, Math.max(1, Math.floor(num(b.unpaidCancelDays, 3)) || 3)),
+    unpaidCancelDaysInternational: Math.min(60, Math.max(1, Math.floor(num(b.unpaidCancelDaysInternational, 10)) || 10)),
     notifyAdminOnOrder: b.notifyAdminOnOrder !== false,
   };
+}
+
+/** Days the customer has to pay before the order is cancelled: longer for international transfers. */
+export function paymentWindowDays(method: BankMethod, s: BankTransferSettings): number {
+  return method === 'international_bank_transfer' ? s.unpaidCancelDaysInternational : s.unpaidCancelDays;
 }
 
 /** Which methods a country may use, given what is configured. */

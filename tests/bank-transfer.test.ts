@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   methodsForCountry, shippingFor, publicCheckoutConfig, instructionsFor, validateCheckoutInput,
-  CheckoutInputError, type BankTransferSettings,
+  CheckoutInputError, paymentWindowDays, paymentDueNotice, type BankTransferSettings,
 } from '../src/services/checkout/bankTransfer';
 
 const S: BankTransferSettings = {
   enabled: true, accountName: 'Solatide Biosciences', bankName: 'Commonwealth Bank of Australia', bsb: '067 873',
   accountNumber: '2248 6439', payId: 'pay@solatidebiosciences.com', swiftBic: 'CTBAAU2S',
   shippingFeeAU: 15, shippingFeeInternational: 45, freeShippingThresholdAU: 300, internationalEnabled: true,
-  unpaidCancelDays: 3, notifyAdminOnOrder: true,
+  unpaidCancelDays: 3, unpaidCancelDaysInternational: 10, notifyAdminOnOrder: true,
 };
 const valid = {
   customer: { email: ' Jane.Doe@Example.com ', firstName: 'Jane', lastName: 'Doe', phone: '0412 345 678' },
@@ -90,4 +90,13 @@ test('payment due notice: days + date (shown on the payment page and in the emai
   const n = paymentDueNotice({ createdAt: '2026-10-27T02:00:00Z', paymentDueAt: '2026-10-30T02:00:00Z' });
   assert.equal(n, 'Please complete your payment within 3 days (by Fri 30 Oct 2026). Unpaid orders are cancelled automatically.');
   assert.equal(paymentDueNotice({ paymentDueAt: null }), null);
+});
+
+test('international orders get the longer payment window', () => {
+  assert.equal(paymentWindowDays('payid', S), 3);
+  assert.equal(paymentWindowDays('bank_transfer', S), 3);
+  assert.equal(paymentWindowDays('international_bank_transfer', S), 10);
+  const placed = new Date('2026-11-03T01:00:00Z');
+  const due = new Date(placed.getTime() + paymentWindowDays('international_bank_transfer', S) * 86_400_000);
+  assert.match(paymentDueNotice({ createdAt: placed, paymentDueAt: due }) || '', /within 10 days \(by Fri 13 Nov 2026\)/);
 });

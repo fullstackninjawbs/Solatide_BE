@@ -7,7 +7,7 @@ const BANK: BankTransferSettings = {
   enabled: false, accountName: 'Solatide Biosciences', bankName: 'Commonwealth Bank of Australia', bsb: '067 873',
   accountNumber: '2248 6439', payId: 'pay@solatidebiosciences.com', swiftBic: 'CTBAAU2S',
   shippingFeeAU: 14.95, shippingFeeInternational: 49.95, freeShippingThresholdAU: 0, internationalEnabled: true,
-  unpaidCancelDays: 3, notifyAdminOnOrder: true,
+  unpaidCancelDays: 3, unpaidCancelDaysInternational: 10, notifyAdminOnOrder: true,
 };
 const NO_BANK: BankTransferSettings = { ...BANK, accountName: '', bsb: '', accountNumber: '', payId: '', swiftBic: '' };
 const env = (v?: string) => (v === undefined ? {} : { ORDER_REQUEST_CHECKOUT: v }) as NodeJS.ProcessEnv;

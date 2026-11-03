@@ -1,7 +1,7 @@
 /**
  * Emails for the bank transfer / PayID checkout:
  * - customer: "Order received — payment required" (right after the order is placed; again from the Hub)
- * - customer: "Final reminder — payment required" (once, PAYMENT_REMINDER_DELAY_HOURS after placing)
+ * - customer: "Final reminder — payment required" (once; timing in scheduledJobs.sendBankPaymentReminders)
  * - admin: "New order — awaiting payment" (optional, Admin → Settings)
  * There is intentionally no "payment received" email; the existing shipping email follows.
  */

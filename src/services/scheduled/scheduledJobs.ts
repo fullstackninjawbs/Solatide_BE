@@ -141,9 +141,12 @@ export async function sendAbandonedCheckoutReminders(): Promise<{ candidates: nu
 }
 
 /**
- * One "final reminder" email per unpaid bank transfer / PayID order, PAYMENT_REMINDER_DELAY_HOURS
- * (default 24) after it was placed: pay by the due date and time or the order is cancelled.
- * Not sent when the due date is less than an hour away. On by default (PAYMENT_REMINDER_CRON).
+ * One "final reminder" email per unpaid bank transfer / PayID order: pay by the due date and time
+ * or the order is cancelled. On by default (PAYMENT_REMINDER_CRON).
+ * - PayID / Bank Transfer: PAYMENT_REMINDER_DELAY_HOURS (default 24) after the order was placed.
+ * - International Bank Transfer (longer window, 10 days by default):
+ *   PAYMENT_REMINDER_INTERNATIONAL_DELAY_HOURS (default 120 = 5 days) after the order was placed.
+ * Not sent when the due date is less than an hour away.
  */
 export async function sendBankPaymentReminders(): Promise<{ candidates: number; sent: number; failed: number }> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -151,14 +154,18 @@ export async function sendBankPaymentReminders(): Promise<{ candidates: number; 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { sendPaymentReminderEmail } = require('../checkout/bankTransferEmails');
   const delayH = Math.max(1, Number(process.env.PAYMENT_REMINDER_DELAY_HOURS) || 24);
+  const intlDelayH = Math.max(1, Number(process.env.PAYMENT_REMINDER_INTERNATIONAL_DELAY_HOURS) || 120);
   const now = Date.now();
+  const placedBefore = (hours: number) => new Date(now - hours * 3600 * 1000);
   const candidates = await Order.find({
     paymentStatus: 'pending',
-    paymentMethod: { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] },
     isDeleted: { $ne: true },
     paymentReminderSentAt: null,
-    createdAt: { $lte: new Date(now - delayH * 3600 * 1000) },
     paymentDueAt: { $gt: new Date(now + 3600 * 1000) },
+    $or: [
+      { paymentMethod: { $in: ['payid', 'bank_transfer'] }, createdAt: { $lte: placedBefore(delayH) } },
+      { paymentMethod: 'international_bank_transfer', createdAt: { $lte: placedBefore(intlDelayH) } },
+    ],
   }).select('+publicAccessToken').limit(100);
   if (!candidates.length) return { candidates: 0, sent: 0, failed: 0 };
 

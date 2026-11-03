@@ -145,7 +145,8 @@ export const updateStoreSettings = catchAsync(async (req: Request, res: Response
 
 const BANK_TEXT_FIELDS = ['accountName', 'bankName', 'bsb', 'accountNumber', 'payId', 'swiftBic', 'iban', 'beneficiaryAddress'] as const;
 const BANK_TEXT_MAX: Partial<Record<(typeof BANK_TEXT_FIELDS)[number], number>> = { beneficiaryAddress: 250 };
-const BANK_NUMBER_FIELDS = ['shippingFeeAU', 'shippingFeeInternational', 'freeShippingThresholdAU', 'unpaidCancelDays'] as const;
+const BANK_NUMBER_FIELDS = ['shippingFeeAU', 'shippingFeeInternational', 'freeShippingThresholdAU', 'unpaidCancelDays', 'unpaidCancelDaysInternational'] as const;
+const BANK_DAY_FIELDS: readonly string[] = ['unpaidCancelDays', 'unpaidCancelDaysInternational'];
 const BANK_BOOL_FIELDS = ['enabled', 'internationalEnabled', 'notifyAdminOnOrder'] as const;
 
 /** Bank settings + whether the bank transfer checkout is the live one (checkout mode). */
@@ -177,9 +178,10 @@ export const updateBankTransferSettings = catchAsync(async (req: Request, res: R
   for (const k of BANK_NUMBER_FIELDS) {
     if (body[k] === undefined || body[k] === '') continue;
     const n = Number(body[k]);
-    const max = k === 'unpaidCancelDays' ? 60 : 100000;
-    if (!Number.isFinite(n) || n < (k === 'unpaidCancelDays' ? 1 : 0) || n > max) return next(new AppError(`Invalid ${k}`, 400));
-    set[`bankTransfer.${k}`] = k === 'unpaidCancelDays' ? Math.floor(n) : Math.round(n * 100) / 100;
+    const days = BANK_DAY_FIELDS.includes(k);
+    const max = days ? 60 : 100000;
+    if (!Number.isFinite(n) || n < (days ? 1 : 0) || n > max) return next(new AppError(`Invalid ${k}`, 400));
+    set[`bankTransfer.${k}`] = days ? Math.floor(n) : Math.round(n * 100) / 100;
   }
   for (const k of BANK_BOOL_FIELDS) {
     if (body[k] === undefined) continue;
