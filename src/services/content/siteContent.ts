@@ -15,6 +15,11 @@ export const LIMITS = {
   headlineLines: 3,
   subtext: 400,
   imageAlt: 160,
+  buttonText: 40,
+  disclaimer: 160,
+  badgeTitle: 60,
+  badgeSubtitle: 80,
+  badgeLinkText: 30,
   messages: 4,
   messageText: 80,
 } as const;
@@ -24,6 +29,13 @@ export interface HomepageContent {
     headline: string;
     subtext: string;
     imageAlt: string;
+    primaryButtonText: string;
+    secondaryButtonText: string;
+    disclaimer: string;
+    showBadge: boolean;
+    badgeTitle: string;
+    badgeSubtitle: string;
+    badgeLinkText: string;
     desktopImage: ContentImage | null;
     mobileImage: ContentImage | null;
   };
@@ -36,9 +48,16 @@ export interface HomepageContent {
 
 export const HOMEPAGE_DEFAULTS: HomepageContent = {
   hero: {
-    headline: 'Your Trusted Source For\nResearch Grade Peptides.',
-    subtext: 'Solatide Biosciences delivers research grade peptides and laboratory solutions for researchers who demand purity, consistency, and results.',
-    imageAlt: 'Solatide Biosciences – Research Grade Peptides',
+    headline: 'Research Peptides Australia\nLab-Tested. Batch-Verified.',
+    subtext: 'Solatide Biosciences is an Australian research peptide supplier providing research-grade peptides with independent HPLC and LC-MS testing, batch-specific Certificates of Analysis, and tracked worldwide shipping.',
+    imageAlt: 'Solatide research peptide vials – BPC-157, Retatrutide and Tirzepatide',
+    primaryButtonText: 'Shop Research Peptides',
+    secondaryButtonText: 'View COAs',
+    disclaimer: 'For laboratory research only. Not for human use.',
+    showBadge: true,
+    badgeTitle: 'Ranked #1 Australian Supplier',
+    badgeSubtitle: 'Independent supplier ranking',
+    badgeLinkText: 'View ranking',
     desktopImage: null,
     mobileImage: null,
   },
@@ -72,6 +91,13 @@ export function mergeHomepage(doc: any): HomepageContent {
       headline: hero.headline || d.hero.headline,
       subtext: hero.subtext || d.hero.subtext,
       imageAlt: hero.imageAlt || d.hero.imageAlt,
+      primaryButtonText: hero.primaryButtonText || d.hero.primaryButtonText,
+      secondaryButtonText: hero.secondaryButtonText || d.hero.secondaryButtonText,
+      disclaimer: hero.disclaimer || d.hero.disclaimer,
+      showBadge: hero.showBadge !== false,
+      badgeTitle: hero.badgeTitle || d.hero.badgeTitle,
+      badgeSubtitle: hero.badgeSubtitle || d.hero.badgeSubtitle,
+      badgeLinkText: hero.badgeLinkText || d.hero.badgeLinkText,
       desktopImage: cleanImage(hero.desktopImage),
       mobileImage: cleanImage(hero.mobileImage),
     },
@@ -124,6 +150,13 @@ export function validateHomepageInput(body: any, cloudName: string) {
   }
   const subtext = text(hero.subtext, 'Paragraph', LIMITS.subtext, true).replace(/\s*\n\s*/g, ' ');
   const imageAlt = text(hero.imageAlt, 'Image description', LIMITS.imageAlt, false);
+  // Optional: left empty → the default text is shown
+  const primaryButtonText = text(hero.primaryButtonText, 'Main button text', LIMITS.buttonText, false).replace(/\s*\n\s*/g, ' ');
+  const secondaryButtonText = text(hero.secondaryButtonText, 'Second button text', LIMITS.buttonText, false).replace(/\s*\n\s*/g, ' ');
+  const disclaimer = text(hero.disclaimer, 'Disclaimer', LIMITS.disclaimer, false).replace(/\s*\n\s*/g, ' ');
+  const badgeTitle = text(hero.badgeTitle, 'Badge title', LIMITS.badgeTitle, false).replace(/\s*\n\s*/g, ' ');
+  const badgeSubtitle = text(hero.badgeSubtitle, 'Badge subtitle', LIMITS.badgeSubtitle, false).replace(/\s*\n\s*/g, ' ');
+  const badgeLinkText = text(hero.badgeLinkText, 'Badge link text', LIMITS.badgeLinkText, false).replace(/\s*\n\s*/g, ' ');
 
   if (!Array.isArray(ann.messages) || ann.messages.length < 1) {
     throw new ContentInputError('Add at least one announcement message.');
@@ -142,6 +175,13 @@ export function validateHomepageInput(body: any, cloudName: string) {
       headline,
       subtext,
       imageAlt,
+      primaryButtonText,
+      secondaryButtonText,
+      disclaimer,
+      showBadge: hero.showBadge !== false,
+      badgeTitle,
+      badgeSubtitle,
+      badgeLinkText,
       desktopImage: image(hero.desktopImage, 'Desktop image', cloudName),
       mobileImage: image(hero.mobileImage, 'Mobile image', cloudName),
     },

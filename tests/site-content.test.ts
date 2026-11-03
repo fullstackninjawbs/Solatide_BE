@@ -48,6 +48,20 @@ test('images must be our own Cloudinary uploads with a size', () => {
   rejects({ ...valid(), hero: { ...valid().hero, mobileImage: { url: img().url, width: 0, height: 900 } } }, /size is missing/);
 });
 
+test('button texts, disclaimer and badge switch are optional', () => {
+  const out = validateHomepageInput(valid(), CLOUD);
+  assert.equal(out.hero.primaryButtonText, '');
+  assert.equal(out.hero.showBadge, true);
+  const m = mergeHomepage(out);
+  assert.equal(m.hero.primaryButtonText, HOMEPAGE_DEFAULTS.hero.primaryButtonText);
+  assert.equal(m.hero.disclaimer, HOMEPAGE_DEFAULTS.hero.disclaimer);
+  assert.equal(m.hero.badgeTitle, 'Ranked #1 Australian Supplier');
+  const custom = validateHomepageInput({ ...valid(), hero: { ...valid().hero, primaryButtonText: ' Shop\nnow ', showBadge: false } }, CLOUD);
+  assert.equal(custom.hero.primaryButtonText, 'Shop now');
+  assert.equal(mergeHomepage(custom).hero.showBadge, false);
+  rejects({ ...valid(), hero: { ...valid().hero, secondaryButtonText: 'x'.repeat(41) } }, /at most 40/);
+});
+
 test('nothing saved → built-in defaults; saved values override them', () => {
   assert.deepEqual(mergeHomepage(null), HOMEPAGE_DEFAULTS);
   const m = mergeHomepage({ hero: { headline: 'New', desktopImage: img() }, announcement: { enabled: false, messages: [{ text: 'Hi', icon: 'card_logos' }] } });

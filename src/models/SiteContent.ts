@@ -22,6 +22,13 @@ export interface ISiteContent extends mongoose.Document {
     headline?: string;
     subtext?: string;
     imageAlt?: string;
+    primaryButtonText?: string;
+    secondaryButtonText?: string;
+    disclaimer?: string;
+    showBadge?: boolean;
+    badgeTitle?: string;
+    badgeSubtitle?: string;
+    badgeLinkText?: string;
     desktopImage?: ContentImage | null;
     mobileImage?: ContentImage | null;
   };
@@ -46,6 +53,13 @@ const siteContentSchema = new mongoose.Schema<ISiteContent>(
       headline: String,
       subtext: String,
       imageAlt: String,
+      primaryButtonText: String,
+      secondaryButtonText: String,
+      disclaimer: String,
+      showBadge: { type: Boolean, default: true }, // PepFinder badge card
+      badgeTitle: String,
+      badgeSubtitle: String,
+      badgeLinkText: String,
       desktopImage: { type: imageSchema, default: null },
       mobileImage: { type: imageSchema, default: null },
     },
