@@ -20,7 +20,7 @@
 import Order from '../../models/order.model';
 import Customer from '../../models/Customer';
 import Discount from '../../models/Discount';
-import AnalyticsEvent from '../../models/analyticsEvent.model';
+import { recordOrderEvent } from '../analytics/serverEvents';
 import { decrementInventoryForOrder } from './inventory';
 import { checkDiscountEligibility } from '../../domain/discountEligibility';
 import { escapeRegExp } from '../../domain/escapeRegExp';
@@ -242,31 +242,10 @@ export async function onOrderPaid(
 
   // 7) Server-side purchase analytics event (trusted; clientReported:false)
   await step('analytics', async () => {
-    // Same session as the visitor's own events (sent at checkout), so Live View and the funnel see
-    // one visitor; location = where the visitor was (IP lookup at checkout, or their latest event
-    // with a known location) — never the shipping address.
-    const visitorSid: string | undefined = order.visitor?.sessionId || undefined;
-    const known = (c: unknown) => typeof c === 'string' && c.trim() !== '' && c !== 'Unknown';
-    let loc: { country?: string; region?: string; city?: string } | null =
-      known(order.visitor?.country) ? { country: order.visitor.country, region: order.visitor.region, city: order.visitor.city } : null;
-    if (!loc && visitorSid) {
-      const last: any = await AnalyticsEvent.findOne({ sessionId: visitorSid, country: { $nin: [null, '', 'Unknown'] } })
-        .sort({ timestamp: -1 }).select('country region city').lean();
-      if (last) loc = { country: last.country, region: last.region, city: last.city };
-    }
-    await AnalyticsEvent.create({
-      ...(loc ? { country: loc.country, region: loc.region || undefined, city: loc.city || undefined } : {}),
-      sessionId: visitorSid || order.attribution?.lastTouch?.sessionId || order.attribution?.firstTouch?.sessionId || `order:${order._id}`,
-      eventType: 'purchase',
-      orderId: order._id,
-      cartValue: order.grandTotal ?? order.totalAmount ?? 0,
-      // No location: analytics shows where the VISITOR is (the browser's purchase event carries
-      // that); the shipping address is where the order goes, not the visitor
-      page: `/order/${order._id}`,
-      path: `/order/${order._id}`,
-      clientReported: false,
-      timestamp: order.paidAt ?? new Date(),
-    });
+    // "purchase" = payment confirmed, in the visitor's own session (sent at checkout) at the time it
+    // was paid; location = where the visitor was, never the shipping address. Recorded once per
+    // order (event id "purchase:<orderId>"), so a retried side effect cannot double-count it.
+    await recordOrderEvent(order, 'purchase', { at: order.paidAt ? new Date(order.paidAt) : new Date() });
   });
 
   if (errors.length === 0) {

@@ -221,7 +221,7 @@ export interface IOrder extends mongoose.Document {
   };
 
   /** The storefront visitor who checked out: analytics session + IP-detected location (not the address). */
-  visitor?: { sessionId?: string; country?: string; region?: string; city?: string };
+  visitor?: { sessionId?: string; visitorId?: string; checkoutId?: string; country?: string; region?: string; city?: string };
 
   // ── Attribution ──────────────────────────────────────────────────────────────
   attribution?: {
@@ -477,6 +477,8 @@ const orderSchema = new mongoose.Schema<IOrder>(
     // joins the visitor's session in Live View / funnels (the shipping address is not the visitor)
     visitor: {
       sessionId: { type: String, trim: true, maxlength: 128 },
+      visitorId: { type: String, trim: true, maxlength: 64 },
+      checkoutId: { type: String, trim: true, maxlength: 64 },
       country: { type: String, trim: true, maxlength: 100 },
       region: { type: String, trim: true, maxlength: 100 },
       city: { type: String, trim: true, maxlength: 100 },

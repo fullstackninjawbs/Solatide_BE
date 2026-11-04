@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import AnalyticsEvent from '../models/analyticsEvent.model';
+import { validateCollectBatch, ingestBatch, CollectInputError } from '../services/analytics/collect';
 
 export const VALID_EVENT_TYPES = ['page_view', 'product_view', 'add_to_cart', 'begin_checkout', 'purchase'] as const;
 export const ANALYTICS_MAX_STRING = 200;
@@ -46,6 +47,36 @@ export const validateAnalyticsEvent = (body: any): string | null => {
 export const BOT_UA = /bot\b|crawler|spider|crawling|headless|lighthouse|pagespeed|gtmetrix|pingdom|uptime|monitor|preview|facebookexternalhit|slurp|bingpreview|ahrefs|semrush|mj12|dotbot|petalbot|yandex|baidu|python-requests|curl\/|wget\//i;
 export const isBotUserAgent = (ua: unknown): boolean => typeof ua !== 'string' || ua.trim() === '' || BOT_UA.test(ua);
 
+/**
+ * POST /api/analytics/collect — storefront tracking batches (visitor / session / events).
+ * Public, rate limited, body-capped. Validated before the response; stored after it, so the
+ * storefront is never slowed down. Bots are acknowledged but not stored.
+ */
+export const collect = async (req: Request, res: Response): Promise<void> => {
+  let batch;
+  try {
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch { throw new CollectInputError('Invalid JSON'); }
+    }
+    batch = validateCollectBatch(body);
+  } catch (err) {
+    if (err instanceof CollectInputError) {
+      res.status(400).json({ success: false, message: err.message });
+      return;
+    }
+    throw err;
+  }
+  res.status(200).json({ success: true });
+  if (isBotUserAgent(req.headers['user-agent'])) return;
+  try {
+    await ingestBatch(batch, { ip: req.ip, userAgent: req.headers['user-agent'] });
+  } catch (err) {
+    console.error('[Analytics] collect error:', (err as Error).message);
+  }
+};
+
+/** Previous single-event endpoint, kept for storefront pages still open from before the update. */
 export const logEvent = async (req: Request, res: Response): Promise<void> => {
   const error = validateAnalyticsEvent(req.body);
   if (error) {

@@ -26,6 +26,7 @@ import { getCheckoutModeState, getEffectiveCheckoutMode } from '../services/chec
 import { applyDiscountCode, reserveDiscountUse, undoReservedUse, type AppliedDiscount } from '../services/discounts/discountService';
 import { orderRequestShippingConfig } from '../services/checkout/orderRequest';
 import { toPublicOrder } from './order.controller';
+import { recordOrderEvent } from '../services/analytics/serverEvents';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 // Single-variant products are often titled "Default Title" (Shopify placeholder): not shown
@@ -193,8 +194,15 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
   const shipTo = { name, company: address.company, street1: address.street1, street2: address.street2, city: address.city, state: address.state, zip: address.zip, country: address.country, phone: customer.phone };
   const accessToken = generateOrderAccessToken();
   const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+  // Analytics IDs (visitor / session / checkout attempt) link the order to the visitor's journey
+  const trackingId = (v: unknown) => (typeof v === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(v) ? v : undefined);
   const visitor = req.body?.visitor && typeof req.body.visitor === 'object'
-    ? { sessionId: str(req.body.visitor.sessionId, 128), country: str(req.body.visitor.country, 100), region: str(req.body.visitor.region, 100), city: str(req.body.visitor.city, 100) }
+    ? {
+      sessionId: str(req.body.visitor.sessionId, 128),
+      visitorId: trackingId(req.body.visitor.visitorId),
+      checkoutId: trackingId(req.body.visitor.checkoutId),
+      country: str(req.body.visitor.country, 100), region: str(req.body.visitor.region, 100), city: str(req.body.visitor.city, 100),
+    }
     : undefined;
   const clipTouch = (t: any) => (t && typeof t === 'object' ? { ...t, source: str(t.source, 255), channel: str(t.channel, 255) } : undefined);
   const attribution = req.body?.attribution && typeof req.body.attribution === 'object'
@@ -259,6 +267,9 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
   }
 
   console.log(`[Checkout] Bank transfer order ${order.orderNumber} placed (${METHOD_LABELS[method]}, $${grandTotal} AUD, ${lines.length} line(s))`);
+
+  // Analytics: "order placed" (not paid yet), checkout attempt → submitted. Never blocks the order.
+  void recordOrderEvent(order, 'order_placed', { at: now });
 
   // 6) Emails + low-stock alert — never fail the order because of them
   // eslint-disable-next-line @typescript-eslint/no-var-requires
