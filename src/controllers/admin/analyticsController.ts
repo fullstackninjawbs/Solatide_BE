@@ -7,6 +7,19 @@ import { buildRevenueMatch, netRevenueExpr, grossRevenueExpr } from '../../domai
 /** Trusted purchase events only (client-sent purchase events are spoofable). */
 const PURCHASE_EVENT = { eventType: 'purchase', clientReported: { $ne: true } };
 
+/**
+ * Unpaid orders that are genuinely abandoned (a started card payment that never completed).
+ * Bank transfer / PayID orders were submitted on purpose and are awaiting payment: they are
+ * counted separately as "awaiting payment", never as abandoned.
+ */
+const BANK_PAYMENT_METHODS = ['payid', 'bank_transfer', 'international_bank_transfer'];
+const unpaidMatch = (createdAt: Record<string, Date>, bank: boolean) => ({
+  createdAt,
+  paymentStatus: 'pending',
+  isDeleted: { $ne: true },
+  paymentMethod: bank ? { $in: BANK_PAYMENT_METHODS } : { $nin: BANK_PAYMENT_METHODS },
+});
+
 const buildMatchFilter = (req: Request) => {
   const { from, to, paymentMethod } = req.query;
   const match: any = {};
@@ -215,6 +228,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     checkoutSessionsFull,
     purchaseSessionsFull,
     pendingOrdersValueAgg,
+    awaitingPaymentAgg,
     purchasedCount,
     rawEvents,
     countryResultInitial
@@ -239,12 +253,17 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: liveWindow } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: liveWindow } }),
     AnalyticsEvent.distinct('sessionId', { ...PURCHASE_EVENT, timestamp: { $gte: liveWindow } }),
-    Order.countDocuments({ createdAt: { $gte: liveWindow }, paymentStatus: 'pending', isDeleted: { $ne: true } }),
+    // Still checking out = unpaid and not a submitted bank transfer order
+    Order.countDocuments(unpaidMatch({ $gte: liveWindow }, false)),
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { ...PURCHASE_EVENT, timestamp: { $gte: from, $lte: to } }),
     Order.aggregate([
-      { $match: { createdAt: { $gte: from, $lte: to }, paymentStatus: 'pending', isDeleted: { $ne: true } } },
+      { $match: unpaidMatch({ $gte: from, $lte: to }, false) },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } }, count: { $sum: 1 } } }
+    ]),
+    Order.aggregate([
+      { $match: unpaidMatch({ $gte: from, $lte: to }, true) },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } }, count: { $sum: 1 } } }
     ]),
     Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: liveWindow } })),
@@ -282,6 +301,8 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
 
   const abandonedCartValue = pendingOrdersValueAgg[0]?.total ?? 0;
   const abandonedCartCount = pendingOrdersValueAgg[0]?.count ?? 0;
+  const awaitingPaymentValue = awaitingPaymentAgg[0]?.total ?? 0;
+  const awaitingPaymentCount = awaitingPaymentAgg[0]?.count ?? 0;
   const conversionRate = sessions > 0 ? Number(((orders / sessions) * 100).toFixed(1)) : 0;
 
   const funnel = {
@@ -330,21 +351,12 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   }
 
   // 5. Clean up recent events output.
-  // One card per purchase: the browser's event (visitor's location + page) is shown; the server's
-  // trusted event (used for revenue) only when the browser never reported it (e.g. tab closed).
-  const serverPurchaseOrderIds = (rawEvents as any[])
-    .filter((e: any) => e.eventType === 'purchase' && e.clientReported !== true && e.orderId)
-    .map((e: any) => e.orderId);
-  const browserReported = new Set(
-    serverPurchaseOrderIds.length
-      ? (await AnalyticsEvent.distinct('orderId', { eventType: 'purchase', clientReported: true, orderId: { $in: serverPurchaseOrderIds } })).map(String)
-      : []
-  );
-  const streamEvents = (rawEvents as any[])
-    .filter((e: any) => !(e.eventType === 'purchase' && e.clientReported !== true && e.orderId && browserReported.has(String(e.orderId))))
-    .slice(0, 15);
-  const recentEvents = streamEvents.map((evt: any) => ({
+  // The browser sends "purchase" when the order is submitted (a bank transfer is then still unpaid),
+  // so it is shown as "order_placed". "purchase" in the stream is only the server's trusted event,
+  // recorded when the payment is confirmed (paid time, the visitor's session).
+  const recentEvents = (rawEvents as any[]).slice(0, 15).map((evt: any) => ({
     ...evt,
+    eventType: evt.eventType === 'purchase' && evt.clientReported === true ? 'order_placed' : evt.eventType,
     country: evt.country && evt.country !== 'undefined' ? evt.country : 'Unknown',
     path: evt.path || evt.page || '/',
     productName: evt.productName || (evt.page && evt.page.includes('/product/') ? evt.page.split('/product/')[1]?.replace(/-/g, ' ') : undefined)
@@ -363,6 +375,9 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       ordersChangePct,
       abandonedCarts: abandonedCartCount,
       abandonedCartValue,
+      // Submitted bank transfer / PayID orders not paid yet (not abandoned, not revenue)
+      awaitingPayment: awaitingPaymentCount,
+      awaitingPaymentValue,
       conversionRate,
       funnel,
       customerBehavior: {
