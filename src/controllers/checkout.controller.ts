@@ -27,6 +27,7 @@ import { applyDiscountCode, reserveDiscountUse, undoReservedUse, type AppliedDis
 import { orderRequestShippingConfig } from '../services/checkout/orderRequest';
 import { toPublicOrder } from './order.controller';
 import { recordOrderEvent } from '../services/analytics/serverEvents';
+import { lookupIp } from '../services/analytics/geo';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 // Single-variant products are often titled "Default Title" (Shopify placeholder): not shown
@@ -204,6 +205,12 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
       country: str(req.body.visitor.country, 100), region: str(req.body.visitor.region, 100), city: str(req.body.visitor.city, 100),
     }
     : undefined;
+  // Location from the request IP (our own GeoIP file, IP not stored); the storefront's timezone
+  // guess is kept only when the IP cannot be looked up
+  if (visitor) {
+    const ipGeo = await lookupIp(req.ip).catch(() => null);
+    if (ipGeo) Object.assign(visitor, { country: ipGeo.country, region: ipGeo.region || undefined, city: ipGeo.city || undefined });
+  }
   const clipTouch = (t: any) => (t && typeof t === 'object' ? { ...t, source: str(t.source, 255), channel: str(t.channel, 255) } : undefined);
   const attribution = req.body?.attribution && typeof req.body.attribution === 'object'
     ? { firstTouch: clipTouch(req.body.attribution.firstTouch), lastTouch: clipTouch(req.body.attribution.lastTouch) }

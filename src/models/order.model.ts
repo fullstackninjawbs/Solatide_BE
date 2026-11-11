@@ -220,7 +220,7 @@ export interface IOrder extends mongoose.Document {
     checkedAt?: Date;
   };
 
-  /** The storefront visitor who checked out: analytics session + IP-detected location (not the address). */
+  /** The storefront visitor who checked out: analytics IDs + approximate location (server IP lookup, IP not stored; not the address). */
   visitor?: { sessionId?: string; visitorId?: string; checkoutId?: string; country?: string; region?: string; city?: string };
 
   // ── Attribution ──────────────────────────────────────────────────────────────
