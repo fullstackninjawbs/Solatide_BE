@@ -6,7 +6,7 @@ import { starshipitService } from '../../services/shipping/starshipit.service';
 import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail, sendShipmentConfirmationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
 import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shipping/shipmentWeight';
-import { applyTrackingStage, deliverySummary, stageFromStatus, MANUAL_STAGES, type DeliveryStage } from '../../services/shipping/deliveryStatus';
+import { applyTrackingStage, deliverySummary, deliveryFilterQuery, stageFromStatus, MANUAL_STAGES, DELIVERY_FILTERS, type DeliveryStage, type DeliveryFilter } from '../../services/shipping/deliveryStatus';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -44,6 +44,10 @@ const STARSHIPIT_TIMEOUT_MS = 15000;
  *   paymentStatus     - pending | paid | failed | refunded
  *   fulfilmentStatus  - unfulfilled | fulfilled | partial
  *   q                 - search by orderNumber or customer.email
+ *   delivery          - not_shipped | label_pending | label_created | in_transit | out_for_delivery | delayed | issue | delivered
+ *   destination       - au | international (shipping country)
+ *   paymentMethod     - payid | bank_transfer | international_bank_transfer | tagada | manual_offline
+ *   from, to          - order date range (ISO times; to is exclusive)
  *   page              - 1-indexed page number (default: 1)
  *   limit             - results per page (default: 50)
  */
@@ -80,18 +84,56 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
     ];
   }
 
-  if (status) filter.status = status;
-  if (paymentStatus) filter.paymentStatus = paymentStatus;
-  // Bank transfer / PayID orders waiting for the admin to confirm the payment
-  if (req.query.awaitingPayment === 'true') {
+  // Filters (Admin → Orders filter bar). Only known values are used, so a query string can never
+  // inject a MongoDB operator. Each filter adds an AND condition.
+  const pick = (v: unknown, allowed: readonly string[]) => (typeof v === 'string' && allowed.includes(v) ? v : undefined);
+  const extra: Record<string, any>[] = [];
+  const BANK = ['payid', 'bank_transfer', 'international_bank_transfer'];
+
+  const statusQ = pick(status, ['pending', 'processing', 'shipped', 'delivered', 'cancelled']);
+  if (statusQ) filter.status = statusQ;
+
+  // Payment: "awaiting_payment" = bank transfer / PayID orders waiting for the admin to confirm
+  const paymentQ = req.query.awaitingPayment === 'true' ? 'awaiting_payment'
+    : pick(paymentStatus, ['pending', 'awaiting_payment', 'paid', 'partially_refunded', 'refunded', 'cancelled', 'failed']);
+  if (paymentQ === 'awaiting_payment') {
     filter.paymentStatus = 'pending';
-    filter.paymentMethod = { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] };
+    filter.paymentMethod = { $in: BANK };
+  } else if (paymentQ) {
+    filter.paymentStatus = paymentQ;
   }
-  const paymentMethod = req.query.paymentMethod;
-  if (typeof paymentMethod === 'string' && /^[a-z_]{3,40}$/.test(paymentMethod) && req.query.awaitingPayment !== 'true') {
-    filter.paymentMethod = paymentMethod;
+
+  const methodQ = pick(req.query.paymentMethod, ['payid', 'bank_transfer', 'international_bank_transfer', 'tagada', 'manual_offline']);
+  if (methodQ === 'tagada') {
+    // Card payments; older card orders may have no payment method saved
+    extra.push({ $or: [{ paymentMethod: 'tagada' }, { paymentMethod: { $in: [null, ''] }, source: { $nin: ['admin_manual', 'shopify_import'] } }] });
+  } else if (methodQ && paymentQ !== 'awaiting_payment') filter.paymentMethod = methodQ;
+  else if (methodQ) extra.push({ paymentMethod: methodQ });
+
+  const fulfilQ = pick(fulfilmentStatus, ['unfulfilled', 'fulfilled', 'partial']);
+  if (fulfilQ === 'unfulfilled') extra.push({ fulfilmentStatus: { $in: ['unfulfilled', null] } });
+  else if (fulfilQ) filter.fulfilmentStatus = fulfilQ;
+
+  // Delivery: the same rules as the Delivery Status column (services/shipping/deliveryStatus.ts)
+  const deliveryQ = pick(req.query.delivery, DELIVERY_FILTERS);
+  if (deliveryQ) extra.push(deliveryFilterQuery(deliveryQ as DeliveryFilter));
+
+  // Destination: shipping country Australia vs anywhere else
+  const AU_RX = /^\s*(au|aus|australia)\s*$/i;
+  if (req.query.destination === 'au') extra.push({ 'shippingAddressObj.country': { $regex: AU_RX } });
+  else if (req.query.destination === 'international') {
+    extra.push({ 'shippingAddressObj.country': { $nin: [null, ''] } }, { 'shippingAddressObj.country': { $not: AU_RX } });
   }
-  if (fulfilmentStatus) filter.fulfilmentStatus = fulfilmentStatus;
+
+  // Date range on the order date (the admin sends exact ISO times for Sydney day boundaries)
+  const asDate = (v: unknown) => {
+    if (typeof v !== 'string' || v.length > 40) return undefined;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? undefined : d;
+  };
+  const from = asDate(req.query.from);
+  const to = asDate(req.query.to);
+  if (from || to) extra.push({ createdAt: { ...(from ? { $gte: from } : {}), ...(to ? { $lt: to } : {}) } });
 
   // Handle deleted orders toggle
   if (req.query.isDeleted === 'true') {
@@ -122,6 +164,8 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
       filter.$or = searchFilter.$or;
     }
   }
+
+  if (extra.length) filter.$and = [...(filter.$and || []), ...extra];
 
   let sort: Record<string, 1 | -1> = { createdAt: -1, _id: -1 };
   if (sortBy === 'orderNumber') {

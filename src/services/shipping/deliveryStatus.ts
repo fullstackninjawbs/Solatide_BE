@@ -188,3 +188,83 @@ export function parseCarrierTime(raw: unknown, timeZone = 'Australia/Sydney'): s
   if (wall - check !== utc) utc = wall - check;
   return new Date(utc).toISOString();
 }
+
+// ─── Orders list filter ───────────────────────────────────────────────────────
+
+export const DELIVERY_FILTERS = [
+  'not_shipped', 'label_pending', 'label_created', 'in_transit', 'out_for_delivery', 'delayed', 'issue', 'delivered',
+] as const;
+export type DeliveryFilter = typeof DELIVERY_FILTERS[number];
+
+// Status-text rules for orders from before `tracking.stage` existed — the same checks, in the same
+// order, as stageFromStatus() + deliverySummary(), so the filter matches the Delivery Status column.
+const RX = {
+  issue: /returned|return\s*to\s*sender|rts|attempted|undeliver|not\s*delivered|exception|failed|damaged|lost|card\s*left/i,
+  delivered: /delivered/i,
+  outForDelivery: /out\s*for\s*delivery|with\s*driver|on\s*board\s*for\s*delivery|awaiting\s*collection|ready\s*for\s*(collection|pick\s*up)/i,
+  pending: /pending|unshipped|order\s*created/i,
+  inTransit: /transit|dispatched|shipped|processed|picked\s*up|collected|accepted|departed|arrived/i,
+  labelCreated: /printed|label|manifest|information\s*received|created|booked/i,
+};
+
+/**
+ * MongoDB condition for the Delivery filter on the orders list (matches deliverySummary()).
+ */
+export function deliveryFilterQuery(filter: DeliveryFilter, now: Date = new Date()): Record<string, any> {
+  const is = (rx: RegExp) => ({ shipmentStatus: { $regex: rx } });
+  const not = (rx: RegExp) => ({ shipmentStatus: { $not: rx } }); // also true when there is no status
+  const noStage = { 'tracking.stage': { $in: [null] } };
+  const empty = (field: string) => ({ [field]: { $in: [null, ''] } });
+  const set = (field: string) => ({ [field]: { $nin: [null, ''] } });
+
+  // What the status text of an older order says (each excludes the checks before it)
+  const L = {
+    issue: [noStage, is(RX.issue)],
+    delivered: [noStage, not(RX.issue), is(RX.delivered)],
+    outForDelivery: [noStage, not(RX.issue), not(RX.delivered), is(RX.outForDelivery)],
+    pending: [noStage, not(RX.issue), not(RX.delivered), not(RX.outForDelivery), is(RX.pending)],
+    inTransit: [noStage, not(RX.issue), not(RX.delivered), not(RX.outForDelivery), not(RX.pending), is(RX.inTransit)],
+    labelStatus: [noStage, not(RX.issue), not(RX.delivered), not(RX.outForDelivery), not(RX.pending), not(RX.inTransit), is(RX.labelCreated)],
+    none: [noStage, not(RX.issue), not(RX.delivered), not(RX.outForDelivery), not(RX.pending), not(RX.inTransit), not(RX.labelCreated)],
+  };
+  const all = (...parts: any[]) => ({ $and: parts.flat() });
+
+  // Delayed = in transit with no update for DELAYED_AFTER_DAYS (last update → in transit → shipped)
+  const before = new Date(now.getTime() - DELAYED_AFTER_DAYS * 86_400_000);
+  const staleStage = { $or: [
+    { 'tracking.lastUpdateAt': { $lt: before } },
+    { 'tracking.lastUpdateAt': { $in: [null] }, 'tracking.inTransitAt': { $lt: before } },
+    { 'tracking.lastUpdateAt': { $in: [null] }, 'tracking.inTransitAt': { $in: [null] }, shippedAt: { $lt: before } },
+  ] };
+  const staleLegacy = { shippedAt: { $lt: before } };
+
+  switch (filter) {
+    case 'issue':
+      return { $or: [{ 'tracking.stage': { $in: ['exception', 'returned'] } }, all(L.issue)] };
+    case 'delivered':
+      return { $or: [{ 'tracking.stage': 'delivered' }, all(L.delivered)] };
+    case 'out_for_delivery':
+      return { $or: [{ 'tracking.stage': 'out_for_delivery' }, all(L.outForDelivery)] };
+    case 'in_transit':
+      return { $or: [all({ 'tracking.stage': 'in_transit' }, { $nor: [staleStage] }), all(L.inTransit, { $nor: [staleLegacy] })] };
+    case 'delayed':
+      return { $or: [all({ 'tracking.stage': 'in_transit' }, staleStage), all(L.inTransit, staleLegacy)] };
+    case 'label_created':
+      return { $or: [
+        { 'tracking.stage': 'label_created' },
+        all(L.labelStatus),
+        all(L.pending, set('trackingNumber')),
+        all(L.none, { $or: [set('trackingNumber'), set('labelUrl')] }),
+      ] };
+    case 'label_pending':
+      return { $or: [
+        { 'tracking.stage': 'label_pending' },
+        all(L.pending, empty('trackingNumber')),
+        all(L.none, empty('trackingNumber'), empty('labelUrl'), set('starshipitOrderId')),
+      ] };
+    case 'not_shipped':
+      return all(L.none, empty('trackingNumber'), empty('labelUrl'), empty('starshipitOrderId'));
+    default:
+      return {};
+  }
+}
