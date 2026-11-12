@@ -1,4 +1,5 @@
 import { buildTrackingUrl, isGenericTrackingUrl, sendShipmentEmailOnce } from './shipmentNotify';
+import { applyTrackingStage, stageFromStatus } from './deliveryStatus';
 
 /** Tracking fields as reported by Starshipit (webhook payload or GET /orders details). */
 export interface StarshipitTrackingUpdate {
@@ -27,15 +28,38 @@ export async function applyStarshipitTrackingUpdate(order: any, update: Starship
   let isNewlyShipped = false;
   const wasShipped = order.status === 'shipped';
 
+  // Tracking entered manually by an admin (label made outside Starshipit) is not overwritten.
+  // If Starshipit reports a different number, note it once on the order so the admin can check.
+  if (order.trackingSource === 'manual') {
+    const reported = update.tracking_number;
+    if (reported && reported !== order.trackingNumber) {
+      const note = `Starshipit reported tracking number ${reported}; the manually entered ${order.trackingNumber || 'tracking'} was kept.`;
+      if (!(order.comments || []).some((c: any) => c?.text === note)) {
+        order.comments = [...(order.comments || []), { text: note, createdAt: new Date() }];
+        await order.save();
+        return { changed: true, newlyShipped: false };
+      }
+    }
+    return { changed: false, newlyShipped: false };
+  }
+
   if (update.tracking_number && order.trackingNumber !== update.tracking_number) {
     order.trackingNumber = update.tracking_number;
     hasChanges = true;
+    order.trackingSource = 'starshipit';
+    applyTrackingStage(order, 'label_created');
   }
 
   if (update.tracking_status && order.shipmentStatus !== update.tracking_status) {
     order.shipmentStatus = update.tracking_status;
     hasChanges = true;
-    if (SHIPPED_STATUSES.has(update.tracking_status.toLowerCase())) {
+    // Delivery stage: forward only, so the refresh's order status (e.g. "Dispatched") can't undo
+    // a carrier status from the webhook (e.g. "InTransit")
+    applyTrackingStage(order, stageFromStatus(update.tracking_status));
+    const stage = stageFromStatus(update.tracking_status);
+    const isShippedStatus = SHIPPED_STATUSES.has(update.tracking_status.toLowerCase())
+      || stage === 'in_transit' || stage === 'out_for_delivery' || stage === 'delivered';
+    if (isShippedStatus && order.status !== 'delivered') {
       if (order.status !== 'shipped' || order.fulfilmentStatus !== 'fulfilled') {
         order.status = 'shipped';
         order.fulfilmentStatus = 'fulfilled';

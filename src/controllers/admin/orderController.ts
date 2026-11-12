@@ -3,9 +3,10 @@ import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
-import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail } from '../../services/emailService';
+import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail, sendShipmentConfirmationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
 import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shipping/shipmentWeight';
+import { applyTrackingStage, deliverySummary, stageFromStatus, MANUAL_STAGES, type DeliveryStage } from '../../services/shipping/deliveryStatus';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -52,6 +53,8 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
     paymentStatus,
     fulfilmentStatus,
     q,
+    sortBy,
+    sortOrder,
     page = '1',
     limit = '50',
   } = req.query as Record<string, string>;
@@ -120,15 +123,23 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
     }
   }
 
+  let sort: Record<string, 1 | -1> = { createdAt: -1, _id: -1 };
+  if (sortBy === 'orderNumber') {
+    sort = { orderNumber: sortOrder === 'asc' ? 1 : -1, _id: -1 };
+  } else if (sortBy === 'createdAt' || sortBy === 'date') {
+    sort = { createdAt: sortOrder === 'asc' ? 1 : -1, _id: -1 };
+  }
+
   const [orders, total] = await Promise.all([
     Order.find(filter)
-      .sort({ createdAt: -1, _id: -1 })
+      .sort(sort)
       .skip(skip)
       .limit(limitNum)
       .lean(),
     Order.countDocuments(filter),
   ]);
 
+  const now = new Date();
   res.status(200).json({
     success: true,
     results: orders.length,
@@ -137,7 +148,8 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
     limit: limitNum,
     pages: Math.ceil(total / limitNum),
     data: {
-      orders,
+      // delivery: the status shown in the Delivery Status column (same logic as the order page)
+      orders: orders.map((o: any) => ({ ...o, delivery: deliverySummary(o, now) })),
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -456,6 +468,11 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Cannot create shipping labels for historical imported Shopify orders.', 400));
   }
 
+  // Tracking was entered manually (label made outside Starshipit): don't create a second label
+  if (order.trackingSource === 'manual' && order.trackingNumber) {
+    return next(new AppError('This order already has tracking entered manually. Use Edit tracking to change it.', 400));
+  }
+
   // ─── If order is already in Starshipit, skip import and try to pull latest details / generate label ───
   if (order.starshipitOrderId) {
     const starshipitOrderId = order.starshipitOrderId;
@@ -519,6 +536,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       if (trackingUrl) order.trackingUrl = trackingUrl;
       order.shipmentStatus = trackingNumber ? 'Label Generated' : (shipmentStatus || 'Order Created in Starshipit (Label Pending)');
       if (trackingNumber) { order.status = 'shipped'; order.shippedAt = new Date(); }
+      if (trackingNumber) { order.trackingSource = 'starshipit'; applyTrackingStage(order, 'label_created'); }
+      else applyTrackingStage(order, 'label_pending');
 
       await order.save();
 
@@ -625,6 +644,11 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       order.status = 'processing';
     }
 
+    // Delivery stage: AU labels come back straight away; international orders are only created in
+    // Starshipit (the label is printed in the Starshipit dashboard, then the webhook syncs it)
+    if (trackingNumber) { order.trackingSource = 'starshipit'; applyTrackingStage(order, 'label_created'); }
+    else applyTrackingStage(order, 'label_pending');
+
     await order.save();
 
     // At most once per order (Starshipit's "Printed" webhook can race this request)
@@ -642,6 +666,211 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     console.error(`Starshipit Error for order ${order.orderNumber ?? order._id}: ${error?.message}`);
     return next(new AppError(error.message || 'Failed to create shipment with Starshipit', 500));
   }
+});
+
+/** Why tracking can't be added to this order yet (null = it can). Editing existing tracking is always allowed. */
+function manualTrackingBlockReason(order: any): string | null {
+  if (order.isDeleted) return 'This order is deleted. Restore it first.';
+  if (order.source === 'shopify_import' || order.tags?.includes('shopify-import')) return 'Historical Shopify orders cannot be changed.';
+  if (order.trackingNumber) return null; // correcting tracking that is already there
+  if (order.status === 'cancelled' || ['cancelled', 'failed', 'refunded'].includes(order.paymentStatus)) {
+    return 'This order is cancelled or refunded, so it cannot be shipped.';
+  }
+  if (isBankMethod(order.paymentMethod) && !['paid', 'partially_refunded'].includes(order.paymentStatus)) {
+    return 'Mark the order as paid first.';
+  }
+  if (order.source !== 'admin_manual' && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
+    return 'Payment is still pending.';
+  }
+  return null;
+}
+
+const TRACKING_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9 -]{3,49}$/;
+
+/**
+ * POST /api/admin/order/:id/tracking
+ *
+ * Enter or correct the tracking number by hand, for a label made outside Starshipit (e.g. directly
+ * in Australia Post) or to fix the number on an order that already has a label. Saved as
+ * trackingSource "manual", so the Starshipit webhook / refresh no longer overwrites it.
+ * Body: { trackingNumber, trackingCarrier?, trackingUrl?, stage?, markFulfilled? = true, notifyCustomer? }
+ *  - stage: label_created | in_transit | out_for_delivery | delivered (Starshipit can't track a
+ *    number it didn't create, so the admin sets the delivery status of manual tracking)
+ *  - notifyCustomer: sends the "your order has shipped" email; the first time at most once
+ *    (same guard as Starshipit), again only when asked for explicitly
+ */
+export const updateManualTracking = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order: any = await Order.findById(req.params.id);
+  if (!order) return next(new AppError('No order found with that ID', 404));
+
+  const blocked = manualTrackingBlockReason(order);
+  if (blocked) return next(new AppError(blocked, 400));
+
+  const body = req.body || {};
+  const trackingNumber = String(body.trackingNumber ?? '').trim().replace(/\s+/g, ' ');
+  if (!TRACKING_NUMBER_RE.test(trackingNumber)) {
+    return next(new AppError('Enter a valid tracking number (letters, numbers, spaces or dashes).', 400));
+  }
+  const carrier = String(body.trackingCarrier ?? '').trim().slice(0, 60) || 'Australia Post';
+  const rawUrl = String(body.trackingUrl ?? '').trim();
+  if (rawUrl) {
+    let ok = false;
+    try { ok = ['http:', 'https:'].includes(new URL(rawUrl).protocol); } catch { ok = false; }
+    if (!ok || rawUrl.length > 500) return next(new AppError('The tracking link must be a web address starting with https://', 400));
+  }
+  const stage: DeliveryStage | undefined = body.stage === undefined || body.stage === '' ? undefined : body.stage;
+  if (stage && !MANUAL_STAGES.includes(stage)) return next(new AppError('Invalid delivery status.', 400));
+  const markFulfilled = body.markFulfilled !== false;
+  const notifyCustomer = body.notifyCustomer === true;
+
+  const prevNumber = order.trackingNumber;
+  const numberChanged = prevNumber !== trackingNumber;
+  const now = new Date();
+
+  order.trackingNumber = trackingNumber;
+  order.trackingCarrier = carrier;
+  order.trackingUrl = buildTrackingUrl(carrier, trackingNumber, rawUrl || undefined);
+  order.trackingSource = 'manual';
+  order.starshipitTrackingMisses = undefined;
+
+  if (numberChanged) {
+    // A different parcel: its delivery progress starts again
+    order.tracking = {};
+    order.shipmentStatus = 'Tracking added manually';
+    applyTrackingStage(order, stage || 'label_created', now, { force: true });
+  } else if (stage && order.tracking?.stage !== stage) {
+    applyTrackingStage(order, stage, now, { force: true });
+  }
+
+  if (markFulfilled && order.status !== 'delivered') {
+    order.status = 'shipped';
+    order.fulfilmentStatus = 'fulfilled';
+    if (!order.shippedAt) order.shippedAt = now;
+  }
+
+  const by = adminLabelOf((req as any).user);
+  const notes: string[] = [];
+  if (!prevNumber) notes.push(`Tracking number ${trackingNumber} (${carrier}) added manually by ${by}.`);
+  else if (numberChanged) notes.push(`Tracking number changed from ${prevNumber} to ${trackingNumber} (${carrier}) by ${by}.`);
+  if (stage && !numberChanged) notes.push(`Delivery status set to "${stage.replace(/_/g, ' ')}" by ${by}.`);
+  if (!notes.length) notes.push(`Tracking details for ${trackingNumber} updated by ${by}.`);
+  order.comments = [...(order.comments || []), ...notes.map((text) => ({ text, createdAt: now }))];
+
+  await order.save();
+
+  let emailSent = false;
+  let emailError = '';
+  if (notifyCustomer) {
+    if (!order.shipmentEmailSentAt) {
+      emailSent = await sendShipmentEmailOnce(order);
+      if (!emailSent) emailError = 'The shipping email could not be sent.';
+    } else {
+      try {
+        await sendShipmentConfirmationEmail(order);
+        await Order.updateOne({ _id: order._id }, { $set: { shipmentEmailSentAt: new Date() } });
+        emailSent = true;
+      } catch (err: any) {
+        console.error(`[Manual tracking] shipping email failed for ${order.orderNumber ?? order._id}:`, err?.message ?? err);
+        emailError = 'The shipping email could not be sent.';
+      }
+    }
+    if (emailSent) {
+      await Order.updateOne({ _id: order._id }, {
+        $push: { comments: { text: `Shipping email with tracking ${trackingNumber} sent to ${customerEmailOf(order) || 'the customer'} by ${by}.`, createdAt: new Date() } },
+      });
+    }
+  }
+
+  const fresh = await Order.findById(order._id).lean();
+  res.status(200).json({
+    success: true,
+    message: emailSent
+      ? 'Tracking saved and the shipping email was sent to the customer.'
+      : emailError ? `Tracking saved. ${emailError}` : 'Tracking saved.',
+    data: { order: fresh, emailSent },
+  });
+});
+
+// Starshipit carrier events, cached briefly so opening an order page doesn't hit Starshipit's
+// rate limit (the scheduled refresh already had 429s)
+const TRACKING_EVENTS_TTL_MS = 10 * 60 * 1000;
+type TrackingEvents = Awaited<ReturnType<typeof starshipitService.getTrackingEvents>>;
+const trackingEventsCache = new Map<string, { at: number; data: TrackingEvents }>();
+async function cachedTrackingEvents(trackingNumber: string, orderNumber?: string): Promise<TrackingEvents> {
+  const hit = trackingEventsCache.get(trackingNumber);
+  if (hit && Date.now() - hit.at < TRACKING_EVENTS_TTL_MS) return hit.data;
+  const data = await starshipitService.getTrackingEvents(trackingNumber, orderNumber);
+  if (trackingEventsCache.size > 500) trackingEventsCache.clear();
+  trackingEventsCache.set(trackingNumber, { at: Date.now(), data });
+  return data;
+}
+
+const MILESTONES: Array<{ key: DeliveryStage; label: string; field: string }> = [
+  { key: 'label_created', label: 'Label Created', field: 'labelCreatedAt' },
+  { key: 'in_transit', label: 'In Transit', field: 'inTransitAt' },
+  { key: 'out_for_delivery', label: 'Out for Delivery', field: 'outForDeliveryAt' },
+  { key: 'delivered', label: 'Delivered', field: 'deliveredAt' },
+];
+
+/**
+ * GET /api/admin/order/:id/tracking
+ *
+ * Delivery timeline for the order page: the 4 milestones (Label Created → In Transit → Out for
+ * Delivery → Delivered) with their dates, the current status, and the carrier scan history.
+ * Starshipit labels: carrier events from Starshipit (cached 10 min), which also move the stage on.
+ * Manual tracking: the stage the admin set (Starshipit can't track numbers it didn't create).
+ */
+export const getOrderTracking = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order: any = await Order.findById(req.params.id);
+  if (!order) return next(new AppError('No order found with that ID', 404));
+
+  const source = order.trackingSource || (order.trackingNumber ? 'starshipit' : undefined);
+  let events: Array<{ datetime: string; status: string; details: string }> = [];
+  const live = Boolean(order.trackingNumber && source !== 'manual' && order.starshipitOrderId);
+
+  if (live) {
+    const data = await cachedTrackingEvents(order.trackingNumber, order.orderNumber);
+    events = (data.events || [])
+      .filter((e) => e && (e.status || e.details))
+      .sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
+    // Scans move the stage on (forward only) with the carrier's own dates
+    let changed = false;
+    for (const ev of events) {
+      const at = new Date(ev.datetime);
+      if (isNaN(at.getTime())) continue;
+      changed = applyTrackingStage(order, stageFromStatus(ev.status) ?? stageFromStatus(ev.details), at) || changed;
+    }
+    if (changed) await order.save();
+  }
+
+  const summary = deliverySummary(order);
+  const t = order.tracking || {};
+  // Highest milestone reached (exception / delayed keep the milestones reached before)
+  let reached = MILESTONES.findIndex((m) => m.key === (t.stage || summary.stage));
+  if (reached < 0) MILESTONES.forEach((m, i) => { if (t[m.field]) reached = i; });
+  if (reached < 0 && order.trackingNumber && summary.stage !== 'label_pending') reached = 0;
+
+  const milestones = MILESTONES.map((m, i) => ({
+    key: m.key,
+    label: m.label,
+    date: t[m.field] || (i === 0 && reached >= 0 ? (order.shippedAt || null) : null),
+    state: i < reached || (i === reached && m.key === 'delivered') ? 'done' : i === reached ? 'current' : 'pending',
+  }));
+
+  res.status(200).json({
+    success: true,
+    data: {
+      source: source || null,
+      trackingNumber: order.trackingNumber || '',
+      trackingCarrier: order.trackingCarrier || '',
+      trackingUrl: order.trackingUrl || '',
+      summary,
+      milestones,
+      events: events.slice().reverse().slice(0, 30),
+      live,
+      lastUpdateAt: t.lastUpdateAt || null,
+    },
+  });
 });
 
 /**

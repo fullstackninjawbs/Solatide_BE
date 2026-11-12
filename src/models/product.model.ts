@@ -474,6 +474,7 @@ productSchema.index({ tagadaVariantId: 1 }, { sparse: true });
 productSchema.index({ price: 1 });
 productSchema.index({ tags: 1 });
 productSchema.index({ publishStatus: 1 });
+productSchema.index({ stockQuantity: 1 });
 
 productSchema.index({ isActive: 1, createdAt: -1 });
 productSchema.index({ publishStatus: 1, isActive: 1 });

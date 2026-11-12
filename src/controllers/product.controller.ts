@@ -206,6 +206,11 @@ export const getAllProducts = catchAsync(async (req: AuthenticatedRequest, res: 
     'Date, old to new': { createdAt: 1 },
     'Alphabetically, A-Z': { name: 1 },
     'Alphabetically, Z-A': { name: -1 },
+    // Admin only (stock levels are not shown to shoppers): Admin → Products sort by stock
+    ...(isStaff ? {
+      'Inventory: Low to High': { stockQuantity: 1 as const },
+      'Inventory: High to Low': { stockQuantity: -1 as const },
+    } : {}),
   };
   const sortSpec = (q.sort && SORTS[q.sort]) || { rating: -1 };
   query = query.sort({ ...sortSpec, _id: 1 });

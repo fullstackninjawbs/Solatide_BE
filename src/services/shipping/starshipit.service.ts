@@ -1,4 +1,5 @@
 import { starshipitRequest } from './starshipitHttp';
+import { parseCarrierTime } from './deliveryStatus';
 import { IOrder } from '../../models/order.model';
 import ShippingPackage from '../../models/shippingPackage.model';
 import { ShipmentWeight, PackageChoice, packageTareGrams } from './shipmentWeight';
@@ -338,6 +339,60 @@ export class StarshipitService {
       if (error.code === STARSHIPIT_ORDER_NOT_FOUND) throw error;
       console.error(`Starshipit Get Shipment Details Error: ${error.response?.status ?? ''} ${error.message}`);
       throw new Error(error.response?.data?.message || 'Failed to fetch shipment details from Starshipit');
+    }
+  }
+
+  public async getTrackingEvents(trackingNumber: string, orderNumber?: string): Promise<{
+    carrierName?: string;
+    carrierService?: string;
+    trackingStatus?: string;
+    shipmentDate?: string;
+    lastUpdatedDate?: string;
+    events: Array<{
+      datetime: string;
+      status: string;
+      details: string;
+    }>;
+  }> {
+    try {
+      const params: any = {};
+      if (trackingNumber) params.tracking_number = trackingNumber;
+      if (orderNumber) params.order_number = orderNumber;
+
+      const response = await starshipitRequest(
+        'get',
+        `${this.baseUrl}/track`,
+        undefined,
+        { ...this.requestConfig, params },
+        { repeatable: true }
+      );
+
+      const res = response.data?.results || response.data;
+      if (!res) {
+        return { events: [] };
+      }
+
+      const rawEvents = res.tracking_events || res.events || [];
+      const events = Array.isArray(rawEvents)
+        ? rawEvents.map((e: any) => ({
+            // Australian local time without a zone → exact time (see parseCarrierTime)
+            datetime: parseCarrierTime(e.event_datetime || e.datetime),
+            status: e.status || '',
+            details: e.details || e.description || '',
+          }))
+        : [];
+
+      return {
+        carrierName: res.carrier_name,
+        carrierService: res.carrier_service,
+        trackingStatus: res.tracking_status || res.order_status,
+        shipmentDate: res.shipment_date,
+        lastUpdatedDate: res.last_updated_date,
+        events,
+      };
+    } catch (err: any) {
+      console.warn(`[Starshipit] getTrackingEvents failed for tracking=${trackingNumber}:`, err.message);
+      return { events: [] };
     }
   }
 }

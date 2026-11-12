@@ -22,7 +22,9 @@ import {
   softDeleteOrder,
   restoreOrder,
   bulkSoftDeleteOrders,
-  bulkRestoreOrders
+  bulkRestoreOrders,
+  updateManualTracking,
+  getOrderTracking
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -85,8 +87,10 @@ router.post('/:id/resend-payment-details', privileged, resendPaymentDetails);
 router.post('/:id/refund', restrictTo(...ACCESS.orderRefund), refundOrder);
 router.get('/:id/refunds', getOrderRefunds);
 
-// Shipping labels
+// Shipping labels & tracking
 router.post('/:id/shipment', shipping, createShipment);
+router.get('/:id/tracking', shipping, getOrderTracking);
+router.post('/:id/tracking', shipping, updateManualTracking);
 router.post('/:id/revalidate-address', shipping, revalidateOrderAddress);
 
 export default router;

@@ -203,6 +203,15 @@ export interface IOrder extends mongoose.Document {
   starshipitOrderId?: string;
   /** Scheduled tracking refresh: consecutive "order not found in Starshipit" answers (stops at 3). */
   starshipitTrackingMisses?: number;
+  /** Where the tracking number came from. "manual" = entered by an admin (label made outside
+   *  Starshipit): the Starshipit webhook / refresh then leaves the tracking alone. */
+  trackingSource?: 'starshipit' | 'manual';
+  /** Delivery progress (services/shipping/deliveryStatus.ts): stage + when each milestone happened. */
+  tracking?: {
+    stage?: 'label_pending' | 'label_created' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'exception' | 'returned';
+    labelCreatedAt?: Date; inTransitAt?: Date; outForDeliveryAt?: Date; deliveredAt?: Date;
+    exceptionAt?: Date; returnedAt?: Date; lastUpdateAt?: Date;
+  };
 
   // ── Metadata ─────────────────────────────────────────────────────────────────
   tags?: string[];
@@ -453,6 +462,12 @@ const orderSchema = new mongoose.Schema<IOrder>(
     easyPostShipmentId: { type: String },
     starshipitOrderId: { type: String },
     starshipitTrackingMisses: { type: Number },
+    trackingSource: { type: String, enum: ['starshipit', 'manual'] },
+    tracking: {
+      stage: { type: String, enum: ['label_pending', 'label_created', 'in_transit', 'out_for_delivery', 'delivered', 'exception', 'returned'] },
+      labelCreatedAt: { type: Date }, inTransitAt: { type: Date }, outForDeliveryAt: { type: Date }, deliveredAt: { type: Date },
+      exceptionAt: { type: Date }, returnedAt: { type: Date }, lastUpdateAt: { type: Date },
+    },
 
     // ── Metadata ─────────────────────────────────────────────────────────────────
     tags: [{ type: String }],

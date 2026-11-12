@@ -32,6 +32,8 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
     isDeleted: { $ne: true },
     createdAt: { $gte: since },
     shipmentStatus: { $not: /delivered/i },
+    'tracking.stage': { $ne: 'delivered' },
+    trackingSource: { $ne: 'manual' }, // entered by an admin: Starshipit doesn't track it
     starshipitTrackingMisses: { $not: { $gte: TRACKING_MAX_MISSES } },
   }).sort({ updatedAt: 1 }).limit(50);
 
