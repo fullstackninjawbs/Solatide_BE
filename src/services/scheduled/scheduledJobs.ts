@@ -1,8 +1,8 @@
 /**
  * Scheduled maintenance jobs (run by the 'maintenance' queue worker on a cron schedule).
- * Every job is OFF unless its schedule env variable is set — see .env.example:
+ * Jobs run when their schedule env variable is set (some have a default) — see .env.example:
  *
- *   STARSHIPIT_TRACKING_CRON     e.g. "* /30 * * * *" (no space)  refresh tracking for open shipments
+ *   STARSHIPIT_TRACKING_CRON     default every 30 min ("off" disables)  refresh tracking for open shipments
  *   BACKUP_CRON                  e.g. "0 3 * * *"                 mongodump (read-only URI) to disk
  *   ABANDONED_REMINDER_CRON      e.g. "* /15 * * * *" (no space)  one reminder per unpaid checkout
  *
@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import Order from '../../models/order.model';
 import { starshipitService, STARSHIPIT_ORDER_NOT_FOUND } from '../shipping/starshipit.service';
-import { applyStarshipitTrackingUpdate } from '../shipping/starshipitTracking';
+import { applyStarshipitTrackingUpdate, syncCarrierScans } from '../shipping/starshipitTracking';
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e } from '../../utils/escapeHtml';
 
@@ -23,7 +23,13 @@ const TRACKING_MAX_MISSES = 3;
 // Gap between orders on top of the client's own 500 ms spacing: the job hit 429s every run.
 const TRACKING_ORDER_GAP_MS = 1000;
 
-/** Refresh Starshipit tracking for recent paid orders that are not delivered yet (same logic as the webhook). */
+/**
+ * Refresh Starshipit tracking for recent paid orders that are not delivered yet, so the Orders list
+ * shows the current delivery status without anyone opening the order (same logic as the webhook):
+ *  - no tracking number yet: ask Starshipit for the order (label printed? tracking number?)
+ *  - tracking number: read the carrier scans (received by Australia Post, in transit, delivered…)
+ * Orders are checked oldest-checked first, so each run moves on to the next 50 open orders.
+ */
 export async function refreshStarshipitTracking(): Promise<{ checked: number; updated: number; shipped: number; errors: number }> {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const orders = await Order.find({
@@ -35,25 +41,35 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
     'tracking.stage': { $ne: 'delivered' },
     trackingSource: { $ne: 'manual' }, // entered by an admin: Starshipit doesn't track it
     starshipitTrackingMisses: { $not: { $gte: TRACKING_MAX_MISSES } },
-  }).sort({ updatedAt: 1 }).limit(50);
+  }).sort({ starshipitCheckedAt: 1, createdAt: 1 }).limit(50);
 
   let updated = 0, shipped = 0, errors = 0;
   for (const [i, order] of orders.entries()) {
     if (i > 0) await new Promise((r) => setTimeout(r, TRACKING_ORDER_GAP_MS));
     try {
-      const d = await starshipitService.getShipmentDetails(String(order.starshipitOrderId));
-      const r = await applyStarshipitTrackingUpdate(order, {
-        tracking_number: d.trackingNumber,
-        tracking_status: d.shipmentStatus,
-        carrier: d.trackingCarrier,
-        label_url: d.labelUrl,
-      });
-      if (r.changed) updated++;
-      if (r.newlyShipped) shipped++;
-      if (order.starshipitTrackingMisses) await Order.updateOne({ _id: order._id }, { $unset: { starshipitTrackingMisses: 1 } });
+      let changed = false, newlyShipped = false;
+      if (!order.trackingNumber) {
+        const d = await starshipitService.getShipmentDetails(String(order.starshipitOrderId));
+        const r = await applyStarshipitTrackingUpdate(order, {
+          tracking_number: d.trackingNumber,
+          tracking_status: d.shipmentStatus,
+          carrier: d.trackingCarrier,
+          label_url: d.labelUrl,
+        });
+        changed = r.changed; newlyShipped = r.newlyShipped;
+      }
+      if (order.trackingNumber) {
+        const r = await syncCarrierScans(order, { applyStatus: true });
+        changed = changed || r.changed; newlyShipped = newlyShipped || r.newlyShipped;
+      }
+      if (changed) updated++;
+      if (newlyShipped) shipped++;
+      await Order.updateOne({ _id: order._id }, { $set: { starshipitCheckedAt: new Date() }, $unset: { starshipitTrackingMisses: 1 } });
     } catch (err: any) {
       errors++;
       const label = order.orderNumber ?? order._id;
+      // Checked even when it failed, so one failing order can't stay first in line every run
+      await Order.updateOne({ _id: order._id }, { $set: { starshipitCheckedAt: new Date() } }).catch(() => undefined);
       if (err?.code === STARSHIPIT_ORDER_NOT_FOUND) {
         const misses = (order.starshipitTrackingMisses || 0) + 1;
         await Order.updateOne({ _id: order._id }, { $set: { starshipitTrackingMisses: misses } });

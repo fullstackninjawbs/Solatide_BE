@@ -24,7 +24,8 @@ import {
   bulkSoftDeleteOrders,
   bulkRestoreOrders,
   updateManualTracking,
-  getOrderTracking
+  getOrderTracking,
+  syncOrdersTracking
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -62,6 +63,9 @@ router.post('/', privileged, createAdminOrder);
 
 // GET  /api/admin/order/:id           — full order detail
 router.get('/:id', getOrderById);
+
+// POST /api/admin/order/tracking-sync — Orders list: refresh the shown orders' carrier scans
+router.post('/tracking-sync', shipping, syncOrdersTracking);
 
 // Bulk soft delete / restore
 router.post('/bulk-soft-delete', privileged, bulkSoftDeleteOrders);

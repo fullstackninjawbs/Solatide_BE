@@ -1,5 +1,6 @@
 import { buildTrackingUrl, isGenericTrackingUrl, sendShipmentEmailOnce } from './shipmentNotify';
-import { applyTrackingStage, stageFromStatus } from './deliveryStatus';
+import { applyTrackingStage, stageFromStatus, STAGE_RANK } from './deliveryStatus';
+import { starshipitService } from './starshipit.service';
 
 /** Tracking fields as reported by Starshipit (webhook payload or GET /orders details). */
 export interface StarshipitTrackingUpdate {
@@ -92,4 +93,62 @@ export async function applyStarshipitTrackingUpdate(order: any, update: Starship
     await sendShipmentEmailOnce(order);
   }
   return { changed: hasChanges, newlyShipped: isNewlyShipped };
+}
+
+// ─── Carrier scans (Starshipit GET /track) ───────────────────────────────────────────────────
+// The order status Starshipit returns from GET /orders stops at "Printed" / "Dispatched"; where the
+// parcel actually is (received by Australia Post, in transit, delivered…) only comes from the carrier
+// scans. The order page and the scheduled refresh both read them here, so the Orders list shows the
+// same delivery status as the order page without anyone opening the order.
+
+const TRACKING_EVENTS_TTL_MS = 10 * 60 * 1000;
+export type TrackingEvents = Awaited<ReturnType<typeof starshipitService.getTrackingEvents>>;
+const trackingEventsCache = new Map<string, { at: number; data: TrackingEvents }>();
+
+/** Carrier scans for a tracking number, cached 10 minutes (Starshipit rate limits). */
+export async function cachedTrackingEvents(trackingNumber: string, orderNumber?: string): Promise<TrackingEvents> {
+  const hit = trackingEventsCache.get(trackingNumber);
+  if (hit && Date.now() - hit.at < TRACKING_EVENTS_TTL_MS) return hit.data;
+  const data = await starshipitService.getTrackingEvents(trackingNumber, orderNumber);
+  if (trackingEventsCache.size > 500) trackingEventsCache.clear();
+  trackingEventsCache.set(trackingNumber, { at: Date.now(), data });
+  return data;
+}
+
+/**
+ * Read the carrier scans and move the order's delivery stage on (forward only, with the carrier's
+ * own scan times). Saves the order when the stage changed.
+ *  - applyStatus: also apply the overall carrier status like the webhook does (marks the order shipped
+ *    and sends the shipment email once if it wasn't shipped yet). Used by the scheduled refresh; the
+ *    order page leaves it off so opening an order never emails a customer.
+ * Manually tracked orders are left alone (Starshipit can't track a number it didn't create).
+ */
+export async function syncCarrierScans(order: any, opts: { applyStatus?: boolean } = {}): Promise<{
+  changed: boolean; newlyShipped: boolean; events: TrackingEvents['events'];
+}> {
+  if (!order.trackingNumber || order.trackingSource === 'manual' || !order.starshipitOrderId) {
+    return { changed: false, newlyShipped: false, events: [] };
+  }
+  const data = await cachedTrackingEvents(order.trackingNumber, order.orderNumber);
+  const events = (data.events || [])
+    .filter((e) => e && (e.status || e.details))
+    .sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
+  let changed = false;
+  for (const ev of events) {
+    const at = new Date(ev.datetime);
+    if (isNaN(at.getTime())) continue;
+    changed = applyTrackingStage(order, stageFromStatus(ev.status) ?? stageFromStatus(ev.details), at) || changed;
+  }
+  let r = { changed: false, newlyShipped: false };
+  if (opts.applyStatus && data.trackingStatus) {
+    // /track may answer with the ORDER status ("Printed") when the carrier has no status yet: never let
+    // that overwrite a later carrier status text (the stage itself is forward-only regardless)
+    const statusStage = stageFromStatus(data.trackingStatus);
+    const current = order.tracking?.stage;
+    const behind = statusStage && current && STAGE_RANK[statusStage] !== undefined && STAGE_RANK[current] !== undefined
+      && STAGE_RANK[statusStage] < STAGE_RANK[current];
+    if (!behind) r = await applyStarshipitTrackingUpdate(order, { tracking_status: data.trackingStatus }); // saves if it changed
+  }
+  if (changed && !r.changed) await order.save();
+  return { changed: changed || r.changed, newlyShipped: r.newlyShipped, events };
 }

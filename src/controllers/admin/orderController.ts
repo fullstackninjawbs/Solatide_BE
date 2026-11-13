@@ -5,6 +5,7 @@ import StoreSettings from '../../models/StoreSettings';
 import { starshipitService } from '../../services/shipping/starshipit.service';
 import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail, sendShipmentConfirmationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
+import { syncCarrierScans } from '../../services/shipping/starshipitTracking';
 import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shipping/shipmentWeight';
 import { applyTrackingStage, deliverySummary, deliveryFilterQuery, stageFromStatus, MANUAL_STAGES, DELIVERY_FILTERS, type DeliveryStage, type DeliveryFilter } from '../../services/shipping/deliveryStatus';
 import AppError from '../../utils/appError';
@@ -835,26 +836,67 @@ export const updateManualTracking = catchAsync(async (req: Request, res: Respons
   });
 });
 
-// Starshipit carrier events, cached briefly so opening an order page doesn't hit Starshipit's
-// rate limit (the scheduled refresh already had 429s)
-const TRACKING_EVENTS_TTL_MS = 10 * 60 * 1000;
-type TrackingEvents = Awaited<ReturnType<typeof starshipitService.getTrackingEvents>>;
-const trackingEventsCache = new Map<string, { at: number; data: TrackingEvents }>();
-async function cachedTrackingEvents(trackingNumber: string, orderNumber?: string): Promise<TrackingEvents> {
-  const hit = trackingEventsCache.get(trackingNumber);
-  if (hit && Date.now() - hit.at < TRACKING_EVENTS_TTL_MS) return hit.data;
-  const data = await starshipitService.getTrackingEvents(trackingNumber, orderNumber);
-  if (trackingEventsCache.size > 500) trackingEventsCache.clear();
-  trackingEventsCache.set(trackingNumber, { at: Date.now(), data });
-  return data;
-}
-
 const MILESTONES: Array<{ key: DeliveryStage; label: string; field: string }> = [
   { key: 'label_created', label: 'Label Created', field: 'labelCreatedAt' },
   { key: 'in_transit', label: 'In Transit', field: 'inTransitAt' },
   { key: 'out_for_delivery', label: 'Out for Delivery', field: 'outForDeliveryAt' },
   { key: 'delivered', label: 'Delivered', field: 'deliveredAt' },
 ];
+
+// Orders list tracking refresh: how stale an order's scans may be before the list re-reads them,
+// how many orders one call checks, and the time it may take (Starshipit allows ~2 requests/second).
+const LIST_SYNC_STALE_MS = 10 * 60 * 1000;
+const LIST_SYNC_MAX_ORDERS = 20;
+const LIST_SYNC_BUDGET_MS = 15 * 1000;
+const listSyncInProgress = new Set<string>();
+
+/**
+ * POST /api/admin/order/tracking-sync   body: { ids: string[] }
+ *
+ * Called by the Orders list right after it loads: re-reads the carrier scans of the shown orders
+ * that are on their way (Starshipit label, not delivered, not checked in the last 10 minutes) and
+ * returns their new Delivery Status, so the list is current without opening each order.
+ * Delivery stage only (like the order page) — marking orders shipped / the shipment email stay with
+ * the webhook and the scheduled refresh. Read-only towards Starshipit.
+ */
+export const syncOrdersTracking = catchAsync(async (req: Request, res: Response) => {
+  const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const ids = raw.filter((v: unknown) => typeof v === 'string' && /^[a-f0-9]{24}$/i.test(v)).slice(0, 100);
+  if (!ids.length) return res.status(200).json({ success: true, data: { updated: [], pending: 0 } });
+
+  const staleBefore = new Date(Date.now() - LIST_SYNC_STALE_MS);
+  const orders = await Order.find({
+    _id: { $in: ids },
+    isDeleted: { $ne: true },
+    starshipitOrderId: { $exists: true, $nin: [null, ''] },
+    trackingNumber: { $exists: true, $nin: [null, ''] },
+    trackingSource: { $ne: 'manual' },
+    'tracking.stage': { $ne: 'delivered' },
+    shipmentStatus: { $not: /delivered/i },
+    $or: [{ starshipitCheckedAt: { $exists: false } }, { starshipitCheckedAt: null }, { starshipitCheckedAt: { $lt: staleBefore } }],
+  }).sort({ starshipitCheckedAt: 1 });
+
+  const started = Date.now();
+  const updated: Array<{ _id: string; delivery: ReturnType<typeof deliverySummary> }> = [];
+  let checked = 0;
+  for (const order of orders) {
+    if (checked >= LIST_SYNC_MAX_ORDERS || Date.now() - started > LIST_SYNC_BUDGET_MS) break;
+    const id = String(order._id);
+    if (listSyncInProgress.has(id)) continue; // another admin's list is checking it right now
+    listSyncInProgress.add(id);
+    try {
+      checked++;
+      const r = await syncCarrierScans(order);
+      await Order.updateOne({ _id: order._id }, { $set: { starshipitCheckedAt: new Date() } });
+      if (r.changed) updated.push({ _id: id, delivery: deliverySummary(order) });
+    } catch (err: any) {
+      console.warn(`[Tracking] list refresh failed for order ${order.orderNumber ?? id}: ${err?.message}`);
+    } finally {
+      listSyncInProgress.delete(id);
+    }
+  }
+  res.status(200).json({ success: true, data: { updated, checked, pending: Math.max(0, orders.length - checked) } });
+});
 
 /**
  * GET /api/admin/order/:id/tracking
@@ -869,23 +911,10 @@ export const getOrderTracking = catchAsync(async (req: Request, res: Response, n
   if (!order) return next(new AppError('No order found with that ID', 404));
 
   const source = order.trackingSource || (order.trackingNumber ? 'starshipit' : undefined);
-  let events: Array<{ datetime: string; status: string; details: string }> = [];
   const live = Boolean(order.trackingNumber && source !== 'manual' && order.starshipitOrderId);
-
-  if (live) {
-    const data = await cachedTrackingEvents(order.trackingNumber, order.orderNumber);
-    events = (data.events || [])
-      .filter((e) => e && (e.status || e.details))
-      .sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
-    // Scans move the stage on (forward only) with the carrier's own dates
-    let changed = false;
-    for (const ev of events) {
-      const at = new Date(ev.datetime);
-      if (isNaN(at.getTime())) continue;
-      changed = applyTrackingStage(order, stageFromStatus(ev.status) ?? stageFromStatus(ev.details), at) || changed;
-    }
-    if (changed) await order.save();
-  }
+  // Carrier scans (cached 10 min) move the stage on, forward only, with the carrier's own dates.
+  // The scheduled refresh does the same for the Orders list (services/shipping/starshipitTracking.ts).
+  const { events } = live ? await syncCarrierScans(order) : { events: [] as Array<{ datetime: string; status: string; details: string }> };
 
   const summary = deliverySummary(order);
   const t = order.tracking || {};

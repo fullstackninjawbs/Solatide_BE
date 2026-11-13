@@ -20,7 +20,8 @@ export function shouldRunWorkersInApi(): boolean {
 
 /** Cron schedules for the maintenance queue — each job only runs when its env var is set. */
 const SCHEDULES: Array<{ id: keyof typeof MAINTENANCE_JOBS; env: string; extraCheck?: () => string | null; defaultPattern?: string }> = [
-  { id: 'starshipit-tracking', env: 'STARSHIPIT_TRACKING_CRON' },
+  // On by default: keeps the Orders list delivery status current ("off" disables)
+  { id: 'starshipit-tracking', env: 'STARSHIPIT_TRACKING_CRON', defaultPattern: '*/30 * * * *' },
   { id: 'db-backup', env: 'BACKUP_CRON', extraCheck: () => (process.env.BACKUP_MONGO_URI ? null : 'BACKUP_MONGO_URI is not set') },
   { id: 'abandoned-reminders', env: 'ABANDONED_REMINDER_CRON' },
   // On by default: unpaid bank transfer / PayID orders must not hold stock forever ("off" disables)

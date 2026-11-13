@@ -203,6 +203,8 @@ export interface IOrder extends mongoose.Document {
   starshipitOrderId?: string;
   /** Scheduled tracking refresh: consecutive "order not found in Starshipit" answers (stops at 3). */
   starshipitTrackingMisses?: number;
+  /** Scheduled tracking refresh: when this order was last checked (oldest first, so every open order gets its turn). */
+  starshipitCheckedAt?: Date;
   /** Where the tracking number came from. "manual" = entered by an admin (label made outside
    *  Starshipit): the Starshipit webhook / refresh then leaves the tracking alone. */
   trackingSource?: 'starshipit' | 'manual';
@@ -462,6 +464,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     easyPostShipmentId: { type: String },
     starshipitOrderId: { type: String },
     starshipitTrackingMisses: { type: Number },
+    starshipitCheckedAt: { type: Date },
     trackingSource: { type: String, enum: ['starshipit', 'manual'] },
     tracking: {
       stage: { type: String, enum: ['label_pending', 'label_created', 'in_transit', 'out_for_delivery', 'delivered', 'exception', 'returned'] },

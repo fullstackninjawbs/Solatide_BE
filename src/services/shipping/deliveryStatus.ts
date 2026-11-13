@@ -42,7 +42,8 @@ export function stageFromStatus(raw: unknown): DeliveryStage | null {
   if (/outfordelivery|withdriver|onboardfordelivery|awaitingcollection|readyforcollection|readyforpickup/.test(s)) return 'out_for_delivery';
   // Before "in transit": "Unshipped" contains "shipped"
   if (/labelpending|unshipped|pending|ordercreated/.test(s)) return 'label_pending';
-  if (/intransit|transit|dispatched|shipped|processed|pickedup|collected|accepted|departed|arrived/.test(s)) return 'in_transit';
+  // "Received by Australia Post" = lodged; "Shipping information received by…" = label only (below)
+  if (/intransit|transit|dispatched|shipped|processed|pickedup|collected|accepted|departed|arrived|lodged|(?<!information)receivedby/.test(s)) return 'in_transit';
   if (/printed|label|manifest|informationreceived|created|booked/.test(s)) return 'label_created';
   return null;
 }
@@ -203,7 +204,7 @@ const RX = {
   delivered: /delivered/i,
   outForDelivery: /out\s*for\s*delivery|with\s*driver|on\s*board\s*for\s*delivery|awaiting\s*collection|ready\s*for\s*(collection|pick\s*up)/i,
   pending: /pending|unshipped|order\s*created/i,
-  inTransit: /transit|dispatched|shipped|processed|picked\s*up|collected|accepted|departed|arrived/i,
+  inTransit: /transit|dispatched|shipped|processed|picked\s*up|collected|accepted|departed|arrived|lodged|(?<!information)(?<!information )received\s*by/i,
   labelCreated: /printed|label|manifest|information\s*received|created|booked/i,
 };
 

@@ -11,6 +11,9 @@ test('stageFromStatus: Starshipit order + carrier statuses', () => {
   assert.equal(stageFromStatus('InTransit'), 'in_transit');
   assert.equal(stageFromStatus('OutForDelivery'), 'out_for_delivery');
   assert.equal(stageFromStatus('AwaitingCollection'), 'out_for_delivery');
+  assert.equal(stageFromStatus('Received by Australia Post'), 'in_transit');
+  assert.equal(stageFromStatus('Lodged at Post Office'), 'in_transit');
+  assert.equal(stageFromStatus('Shipping information received by Australia Post'), 'label_created');
   assert.equal(stageFromStatus('Delivered'), 'delivered');
   assert.equal(stageFromStatus('AttemptedDelivery'), 'exception');
   assert.equal(stageFromStatus('Not delivered - card left'), 'exception');
