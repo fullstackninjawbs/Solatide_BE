@@ -27,7 +27,17 @@ export const STAGE_RANK: Record<string, number> = {
   delivered: 4,
 };
 
-export const MANUAL_STAGES: DeliveryStage[] = ['label_created', 'in_transit', 'out_for_delivery', 'delivered'];
+/** Statuses an admin can set on manually tracked orders (no carrier scans to read). */
+export const MANUAL_STAGES: DeliveryStage[] = ['label_created', 'in_transit', 'out_for_delivery', 'delivered', 'exception', 'returned'];
+export const STAGE_LABELS: Record<DeliveryStage, string> = {
+  label_pending: 'label pending',
+  label_created: 'label created',
+  in_transit: 'in transit',
+  out_for_delivery: 'out for delivery',
+  delivered: 'delivered',
+  exception: 'delivery issue',
+  returned: 'returned to sender',
+};
 
 /** In transit with no update for this many days → shown as "Delayed". */
 export const DELAYED_AFTER_DAYS = 5;
@@ -85,7 +95,8 @@ export function applyTrackingStage(order: any, stage: DeliveryStage | null, at: 
   }
 
   const field = STAGE_FIELD[next];
-  if (field && !t[field]) t[field] = at;
+  // An issue set by the admin is dated now, even if there was an earlier one; forward milestones keep their first date
+  if (field && (!t[field] || (opts.force && STAGE_RANK[next] === undefined))) t[field] = at;
   // Reaching a forward stage implies the earlier ones happened (dates unknown → this time)
   if (STAGE_RANK[next] !== undefined) {
     for (const [s, rank] of Object.entries(STAGE_RANK)) {

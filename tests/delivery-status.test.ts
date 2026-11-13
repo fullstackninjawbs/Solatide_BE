@@ -57,6 +57,20 @@ test('applyTrackingStage: forward only, fills earlier milestones, exceptions', (
   assert.equal(m.tracking.stage, 'in_transit');
   assert.equal(m.tracking.deliveredAt, undefined);
   assert.equal(m.tracking.outForDeliveryAt, undefined);
+  // Manual: the admin can mark a delivery issue / return, and clear it again
+  assert.equal(applyTrackingStage(m, 'returned', d3, { force: true }), true);
+  assert.equal(m.tracking.stage, 'returned');
+  assert.equal(m.tracking.returnedAt, d3);
+  assert.equal(m.tracking.inTransitAt, d2, 'milestones reached before are kept');
+  const d4 = new Date('2026-11-04T01:00:00Z');
+  applyTrackingStage(m, 'in_transit', d4, { force: true });
+  assert.equal(m.tracking.stage, 'in_transit');
+  assert.equal(applyTrackingStage(m, 'exception', d4, { force: true }), true);
+  applyTrackingStage(m, 'delivered', d4, { force: true });
+  assert.equal(m.tracking.stage, 'delivered');
+  const d5 = new Date('2026-11-05T01:00:00Z');
+  assert.equal(applyTrackingStage(m, 'exception', d5, { force: true }), true, 'admin can still flag an issue after delivered');
+  assert.equal(m.tracking.exceptionAt, d5, 'a new issue gets the new date');
 });
 
 test('deliverySummary: list status incl. legacy orders and delays', () => {

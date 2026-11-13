@@ -7,7 +7,7 @@ import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail, sendShi
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
 import { syncCarrierScans } from '../../services/shipping/starshipitTracking';
 import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shipping/shipmentWeight';
-import { applyTrackingStage, deliverySummary, deliveryFilterQuery, stageFromStatus, MANUAL_STAGES, DELIVERY_FILTERS, type DeliveryStage, type DeliveryFilter } from '../../services/shipping/deliveryStatus';
+import { applyTrackingStage, deliverySummary, deliveryFilterQuery, stageFromStatus, MANUAL_STAGES, STAGE_LABELS, DELIVERY_FILTERS, type DeliveryStage, type DeliveryFilter } from '../../services/shipping/deliveryStatus';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
 import { getTagadaClient } from '../../services/tagadaClient';
@@ -797,7 +797,7 @@ export const updateManualTracking = catchAsync(async (req: Request, res: Respons
   const notes: string[] = [];
   if (!prevNumber) notes.push(`Tracking number ${trackingNumber} (${carrier}) added manually by ${by}.`);
   else if (numberChanged) notes.push(`Tracking number changed from ${prevNumber} to ${trackingNumber} (${carrier}) by ${by}.`);
-  if (stage && !numberChanged) notes.push(`Delivery status set to "${stage.replace(/_/g, ' ')}" by ${by}.`);
+  if (stage && !numberChanged) notes.push(`Delivery status set to "${STAGE_LABELS[stage] || stage}" by ${by}.`);
   if (!notes.length) notes.push(`Tracking details for ${trackingNumber} updated by ${by}.`);
   order.comments = [...(order.comments || []), ...notes.map((text) => ({ text, createdAt: now }))];
 
