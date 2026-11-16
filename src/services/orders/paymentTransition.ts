@@ -8,6 +8,7 @@
  */
 import Order from '../../models/order.model';
 import { PaymentStatus, allowedPredecessors, planPaymentTransition, isPaymentStatus } from '../../domain/orderTransitions';
+import { recordOrderEvent } from '../analytics/serverEvents';
 
 export type TransitionOutcome =
   | { result: 'applied'; order: any; from: PaymentStatus; to: PaymentStatus }
@@ -66,5 +67,10 @@ export async function transitionPaymentStatus(
     return { result: 'rejected', order: fresh, from: fresh?.paymentStatus, to, reason: 'Concurrent status change' };
   }
   console.log(`[PaymentTransition] order=${orderId} ${from} → ${to}`);
+  // Analytics: cancellations and refunds as order events (never blocks the transition)
+  if (to === 'cancelled') void recordOrderEvent(updated, 'order_cancelled', { at: now });
+  if (to === 'refunded' || to === 'partially_refunded') {
+    void recordOrderEvent(updated, 'order_refunded', { at: now, eventKey: to, value: Number((updated as any).refundedAmount) || undefined });
+  }
   return { result: 'applied', order: updated, from, to };
 }
