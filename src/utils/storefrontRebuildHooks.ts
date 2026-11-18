@@ -5,7 +5,7 @@ import { cacheDel, cacheDelIndexed, isRedisConnected } from './cache';
 /**
  * Request a (debounced, single-flight) storefront rebuild whenever a document that is
  * rendered into the prerendered HTML / JSON-LD actually changes — no matter which code path
- * wrote it: admin edits, CSV import, Tagada sync, batch/COA updates. Order stock decrements
+ * wrote it: admin edits, CSV import, batch/COA updates. Order stock decrements
  * only rebuild when a product/variant runs out (see STOCK_ONLY below).
  *
  * Bursts (e.g. a multi-line order or a full import) collapse into one rebuild via the
@@ -37,7 +37,7 @@ const changed = (res: any): boolean => {
 /**
  * Also clears the Redis API cache (cache keys only — never database data), so both the
  * storefront API and the rebuilt prerendered HTML show current price/stock instead of a value
- * cached for up to 10 minutes (order decrements and Tagada sync did not invalidate it before).
+ * cached for up to 10 minutes (order decrements did not invalidate it before).
  */
 const onChange = () => {
   if (!enabled) return;
@@ -83,7 +83,7 @@ const CONTENT_EDIT_OPS = new Set(['findOneAndUpdate', 'findOneAndReplace', 'find
  * Such writes only clear that product's API cache — the product page fetches live stock anyway —
  * and do NOT rebuild the storefront. The caller rebuilds via notifyStockAvailabilityChanged()
  * only when a product/variant actually runs out (the prerendered "Sold out" + schema.org
- * availability change). Admin edits, imports and Tagada sync are not tagged and rebuild as before.
+ * availability change). Admin edits and imports are not tagged and rebuild as before.
  */
 export const STOCK_ONLY = 'stockOnly';
 const isStockOnly = (query: any): boolean => !!(query && typeof query.getOptions === 'function' && query.getOptions()?.[STOCK_ONLY]);

@@ -8,7 +8,6 @@ import config from './config';
 import apiRoutes from './routes';
 import productRoutes from './routes/product.routes';
 import adminRoutes from './routes/admin';
-import paymentRoutes from './routes/payment.routes';
 import redirectRoutes from './routes/redirect.routes';
 import errorHandler from './middleware/errorHandler';
 import AppError from './utils/appError';
@@ -57,8 +56,6 @@ const needsLargeBody = (req: Request): boolean => {
 };
 
 app.use((req: Request, res: Response, next: NextFunction) => {
-  // Tagada webhook uses express.raw() in its own route for signature verification
-  if (req.path === '/api/payments/tagada/webhook') return next();
   return (needsLargeBody(req) ? largeJson : smallJson)(req, res, next);
 });
 
@@ -106,7 +103,6 @@ app.use('/api/products', publicLimiter, productRoutes);
 app.use('/api/pages', pageRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/v1', apiRoutes);
-app.use('/api/payments', paymentRoutes);
 app.use('/api/checkout', checkoutRoutes); // Storefront checkout: the mode is chosen in Admin → Settings → Checkout mode
 app.use('/api/analytics', analyticsLimiter, analyticsRoutes); // Public storefront event tracking
 app.use('/api/redirects', publicLimiter, redirectRoutes); // Old URL → new URL (nginx fallback + app)

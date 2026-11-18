@@ -12,7 +12,6 @@ export interface IParsedVariant {
   requiresShipping: boolean;
   taxable: boolean;
   weightGrams?: number;
-  tagadaVariantId?: string;
 }
 
 export interface IParsedImage {
@@ -48,7 +47,6 @@ export interface IParsedProduct {
   // Root compatibility properties
   price: number;
   sku: string;
-  tagadaVariantId?: string;
   stockQuantity: number;
   imageUrl: string;
   inStock: boolean;
@@ -197,10 +195,8 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
         const optionParts = [opt1, opt2, opt3].filter(Boolean);
         const variantTitle = optionParts.length > 0 ? optionParts.join(' / ') : 'Default Title';
 
-        const tagadaVariantId = row['Tagada Variant ID']?.trim();
-
-        // Add variant if we have a SKU, price, or Tagada Variant ID
-        if (variantSku || rawPrice || tagadaVariantId) {
+        // Add variant if we have a SKU or price
+        if (variantSku || rawPrice) {
           pObj.variants.push({
             title: variantTitle,
             sku: variantSku || `${handle}-var-${pObj.variants.length + 1}`,
@@ -211,7 +207,6 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
             requiresShipping,
             taxable,
             weightGrams,
-            tagadaVariantId
           });
           variantsCount++;
         }
@@ -270,7 +265,6 @@ export const parseCsvProducts = (stream: Readable): Promise<IParseResult> => {
           // Aggregate Root properties for backward compatibility
           pObj.price = pObj.variants[0].price;
           pObj.sku = pObj.variants[0].sku;
-          pObj.tagadaVariantId = pObj.variants[0].tagadaVariantId || '';
           pObj.stockQuantity = pObj.variants.reduce((sum: number, v: any) => sum + v.stockQty, 0);
           pObj.imageUrl = pObj.images[0]?.url || '';
           pObj.inStock = pObj.stockQuantity > 0;

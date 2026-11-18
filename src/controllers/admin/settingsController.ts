@@ -1,101 +1,16 @@
 /**
  * settingsController.ts
  * ─────────────────────
- * Admin settings handlers — currently focused on TagadaPay configuration.
- * Settings are persisted in MongoDB (PaymentSettings collection) so admins
- * can update credentials from the UI without redeploying the server.
- *
- * After saving new Tagada credentials, rebuildTagadaClient() is called to
- * hot-swap the singleton without a server restart.
+ * Admin settings handlers (store, checkout mode, bank transfer, ...).
+ * Settings are persisted in MongoDB so admins can update them from the UI
+ * without redeploying the server.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import PaymentSettings from '../../models/PaymentSettings';
 import StoreSettings from '../../models/StoreSettings';
-import { rebuildTagadaClient } from '../../services/tagadaClient';
 import catchAsync from '../../utils/catchAsync';
 import AppError from '../../utils/appError';
-
-// ─── GET /api/admin/settings/tagada ──────────────────────────────────────────
-
-export const getTagadaSettings = catchAsync(
-  async (_req: Request, res: Response) => {
-    // Return the first (singleton) settings document; create defaults if none
-    let settings = await PaymentSettings.findOne();
-    if (!settings) {
-      settings = await PaymentSettings.create({});
-    }
-
-    // Mask sensitive keys — return only the last 4 characters
-    const mask = (key: string) =>
-      key && key.length > 4 ? `${'*'.repeat(key.length - 4)}${key.slice(-4)}` : '****';
-
-    res.status(200).json({
-      success: true,
-      data: {
-        tagadaEnv: settings.tagadaEnv,
-        tagadaApiKeySandbox: mask(settings.tagadaApiKeySandbox),
-        tagadaApiKeyProd: mask(settings.tagadaApiKeyProd),
-        tagadaWebhookSecret: mask(settings.tagadaWebhookSecret),
-        tagadaEnabled: settings.tagadaEnabled,
-      },
-    });
-  }
-);
-
-// ─── PUT /api/admin/settings/tagada ──────────────────────────────────────────
-
-/**
- * A secret field is only updated when a NEW value is typed. The GET above returns masked values
- * ("****abcd") and the form sends the whole form back, so a masked or empty value means
- * "unchanged" — saving the page must never replace the real key with its mask.
- */
-const isNewSecret = (v: unknown): v is string =>
-  typeof v === 'string' && v.trim() !== '' && !v.includes('****');
-
-export const updateTagadaSettings = catchAsync(
-  async (req: Request, res: Response, next: NextFunction) => {
-    const {
-      tagadaEnv,
-      tagadaApiKeySandbox,
-      tagadaApiKeyProd,
-      tagadaWebhookSecret,
-      tagadaEnabled,
-    } = req.body;
-
-    if (tagadaEnv && !['sandbox', 'production'].includes(tagadaEnv)) {
-      return next(new AppError("tagadaEnv must be 'sandbox' or 'production'", 400));
-    }
-
-    let settings = await PaymentSettings.findOne();
-    if (!settings) {
-      settings = await PaymentSettings.create({});
-    }
-
-    // Only update fields that were actually sent
-    if (tagadaEnv !== undefined) settings.tagadaEnv = tagadaEnv;
-    if (isNewSecret(tagadaApiKeySandbox)) settings.tagadaApiKeySandbox = tagadaApiKeySandbox.trim();
-    if (isNewSecret(tagadaApiKeyProd)) settings.tagadaApiKeyProd = tagadaApiKeyProd.trim();
-    if (isNewSecret(tagadaWebhookSecret)) settings.tagadaWebhookSecret = tagadaWebhookSecret.trim();
-    if (tagadaEnabled !== undefined) settings.tagadaEnabled = tagadaEnabled;
-
-    await settings.save();
-
-    // Hot-reload the Tagada client singleton with the new credentials
-    rebuildTagadaClient({
-      env: settings.tagadaEnv,
-      apiKeySandbox: settings.tagadaApiKeySandbox,
-      apiKeyProd: settings.tagadaApiKeyProd,
-    });
-
-    console.log('[Settings] TagadaPay settings updated and client rebuilt.');
-
-    res.status(200).json({
-      success: true,
-      message: 'TagadaPay settings saved successfully',
-    });
-  }
-);
 
 // ─── GET /api/admin/settings/store ──────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 /**
  * checkoutItems.ts — server-side resolution of checkout lines (M-11).
- * Client sends {productId, variantId?, tagadaVariantId?, quantity}; price,
- * variant and Tagada variant id are resolved from the database only.
+ * Client sends {productId, variantId?, quantity} (variantId = our variant _id);
+ * price, variant and stock are resolved from the database only.
  */
 export const MAX_LINE_QUANTITY = 100;
 export const MAX_LINES = 50;
@@ -10,7 +10,6 @@ export interface CheckoutLineInput {
   productId?: unknown;
   product?: unknown;
   variantId?: unknown;
-  tagadaVariantId?: unknown;
   quantity?: unknown;
 }
 
@@ -19,8 +18,6 @@ export interface ResolvedLine {
   variant: any | null;
   quantity: number;
   price: number;
-  /** '' when not required (bank transfer checkout) and the product has none */
-  tagadaVariantId: string;
   sku?: string;
   title?: string;
   variantTitle?: string;
@@ -42,15 +39,14 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : v != null && typeof v === 'object' && 'toString' in (v as any) ? String(v) : undefined;
 }
 
-export function resolveVariant(product: any, variantId?: string, tagadaVariantId?: string): any | null {
+export function resolveVariant(product: any, variantId?: string): any | null {
   const variants: any[] = Array.isArray(product?.variants) ? product.variants : [];
   if (variants.length === 0) return null;
-  let v = variantId ? variants.find((x) => String(x._id) === variantId || x.tagadaVariantId === variantId) : undefined;
-  if (!v && tagadaVariantId) v = variants.find((x) => x.tagadaVariantId === tagadaVariantId);
-  if (!v && !variantId && !tagadaVariantId && variants.length === 1) v = variants[0];
+  let v = variantId ? variants.find((x) => String(x._id) === variantId) : undefined;
+  if (!v && !variantId && variants.length === 1) v = variants[0];
   if (!v) {
     throw new CheckoutValidationError(
-      variantId || tagadaVariantId
+      variantId
         ? `Selected variant was not found for '${product.name}'.`
         : `Please select a variant for '${product.name}'.`
     );
@@ -70,11 +66,8 @@ export function isDenyPolicy(product: any, variant: any | null): boolean {
 
 export async function resolveCheckoutLines(
   inputs: CheckoutLineInput[],
-  loadProduct: (id: string) => Promise<any | null>,
-  /** Tagada checkout needs a Tagada variant id per line; our own bank transfer checkout does not. */
-  opts: { requireTagadaVariant?: boolean } = {}
+  loadProduct: (id: string) => Promise<any | null>
 ): Promise<ResolvedLine[]> {
-  const requireTagadaVariant = opts.requireTagadaVariant !== false;
   if (!Array.isArray(inputs) || inputs.length === 0) throw new CheckoutValidationError('At least one item is required.');
   if (inputs.length > MAX_LINES) throw new CheckoutValidationError(`At most ${MAX_LINES} lines per order.`);
 
@@ -88,14 +81,9 @@ export async function resolveCheckoutLines(
     if (!product || product.publishStatus === 'draft' || product.publishStatus === 'archived') {
       throw new CheckoutValidationError('An item in your cart is no longer available. Please remove it from your cart and try again.');
     }
-    const variant = resolveVariant(product, str(input.variantId), str(input.tagadaVariantId));
+    const variant = resolveVariant(product, str(input.variantId));
     const price = Number(variant ? variant.price : product.price);
     if (!Number.isFinite(price) || price < 0) throw new CheckoutValidationError(`Product '${product.name}' has no valid price.`);
-
-    const tagadaVariantId = variant?.tagadaVariantId || (!variant ? product.tagadaVariantId : undefined);
-    if (!tagadaVariantId && requireTagadaVariant) {
-      throw new CheckoutValidationError(`'${product.name}' is not configured for checkout (missing Tagada variant id).`);
-    }
 
     if (isDenyPolicy(product, variant)) {
       const key = `${productId}:${variant?._id ?? '-'}`;
@@ -114,7 +102,6 @@ export async function resolveCheckoutLines(
       variant: variant?._id ?? null,
       quantity,
       price,
-      tagadaVariantId: tagadaVariantId ? String(tagadaVariantId) : '',
       sku: variant?.sku || product.sku || undefined,
       title: product.name,
       variantTitle: variant?.title,

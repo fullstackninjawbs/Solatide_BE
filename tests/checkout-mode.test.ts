@@ -18,17 +18,17 @@ test('checkout mode: the mode saved in Admin wins when it is ready', () => {
   assert.equal(effectiveCheckoutMode('order_request', { ...BANK, enabled: true }, env()), 'order_request', 'saved mode beats the old bank switch');
 });
 
-test('checkout mode: nothing saved → legacy switches (deploy changes nothing)', () => {
+test('checkout mode: nothing saved → legacy switches, else order_request', () => {
   assert.equal(effectiveCheckoutMode(null, BANK, env('true')), 'order_request');
   assert.equal(effectiveCheckoutMode(null, { ...BANK, enabled: true }, env()), 'bank_transfer');
-  assert.equal(effectiveCheckoutMode(null, BANK, env()), 'tagada');
-  assert.equal(effectiveCheckoutMode(undefined, { ...NO_BANK, enabled: true }, env()), 'tagada', 'bank switch without details is not a checkout');
+  assert.equal(effectiveCheckoutMode(null, BANK, env()), 'order_request', 'fallback is order_request (always ready)');
+  assert.equal(effectiveCheckoutMode(undefined, { ...NO_BANK, enabled: true }, env()), 'order_request', 'bank switch without details is not a checkout');
 });
 
 test('checkout mode: a saved mode that is not ready falls back instead of breaking checkout', () => {
   assert.equal(effectiveCheckoutMode('bank_transfer', NO_BANK, env('true')), 'order_request');
   assert.equal(effectiveCheckoutMode('external_processor', BANK, env('true')), 'order_request');
-  assert.equal(effectiveCheckoutMode('pay_by_bank', BANK, env()), 'tagada');
+  assert.equal(effectiveCheckoutMode('pay_by_bank', BANK, env()), 'order_request');
   assert.equal(effectiveCheckoutMode('nonsense', BANK, env('true')), 'order_request');
 });
 

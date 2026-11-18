@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import {
-  createOrder,
   getMyOrders,
   getAllOrders,
   updateOrderStatus,
@@ -15,9 +14,6 @@ const router = Router();
 
 // Starshipit Webhook — shared-secret authenticated (STARSHIPIT_WEBHOOK_SECRET)
 router.post('/webhook/starshipit', verifyStarshipitWebhook, handleStarshipitWebhook);
-
-// Public Routes (Guest checkout allowed, but populate user if logged in)
-router.post('/', optionalAuth, createOrder);
 
 // Authenticated customer order history — must be registered before '/:id'
 router.get('/my-orders', protect, getMyOrders);

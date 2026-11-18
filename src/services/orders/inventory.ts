@@ -168,8 +168,10 @@ export async function decrementLineForOrder(
 }
 
 /**
- * Resolve a Tagada line item (sku / tagadaVariantId only) to a product+variant.
- * Used for legacy orders that have no resolved `products[]`.
+ * Resolve a legacy line item (sku / tagadaVariantId only) to a product+variant.
+ * Legacy: only old orders from the retired TagadaPay checkout have no resolved
+ * `products[]`. tagadaVariantId is no longer in the product schema, but old product
+ * documents still hold it (queried directly; Mongoose 8 does not strip unknown query paths).
  */
 async function resolveBySkuOrTagadaVariant(sku?: string, tagadaVariantId?: string) {
   const or: any[] = [];
@@ -186,7 +188,7 @@ async function resolveBySkuOrTagadaVariant(sku?: string, tagadaVariantId?: strin
 
 /**
  * Decrement inventory for every line of a paid order. Prefers the
- * server-resolved `products[]` (with variant); falls back to Tagada `lineItems`.
+ * server-resolved `products[]` (with variant); falls back to legacy `lineItems` (old TagadaPay orders).
  */
 export async function decrementInventoryForOrder(order: any): Promise<{ decremented: number; oversold: number; lowStock: LowStockCrossing[] }> {
   let decremented = 0;

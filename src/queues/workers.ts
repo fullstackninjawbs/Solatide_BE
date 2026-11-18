@@ -30,7 +30,7 @@ const SCHEDULES: Array<{ id: keyof typeof MAINTENANCE_JOBS; env: string; extraCh
   { id: 'payment-reminders', env: 'PAYMENT_REMINDER_CRON', defaultPattern: '*/15 * * * *' },
 ];
 
-/** Schedules of removed jobs (Tagada product sync): cleared from Redis so nothing runs without a handler. */
+/** Schedules of removed jobs (the retired TagadaPay product sync): cleared from Redis so a stale schedule left on a server never fires without a handler. Harmless no-op once gone. */
 const RETIRED_SCHEDULES = ['tagada-sync'];
 
 let workers: Worker[] = [];

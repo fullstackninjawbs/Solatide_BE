@@ -119,6 +119,6 @@ export function pickDiscountFields(body: any, { partial }: { partial: boolean })
     if (r.errors.length) errors.push(...r.errors);
     else data.rules = r.rules;
   }
-  // usesSoFar, tagadaPromotionId, tagadaPromotionCodeId are server-managed — never accepted from the client.
+  // usesSoFar is server-managed — never accepted from the client.
   return { data, errors };
 }

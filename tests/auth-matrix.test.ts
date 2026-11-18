@@ -126,10 +126,10 @@ test("customer ('user') token → 403 on every admin route", async () => {
 // [role, allowed route, forbidden route]
 const MATRIX: Array<[string, RouteDef, RouteDef | null]> = [
   ['super_admin', { method: 'GET', path: '/api/admin/dashboard' }, null],
-  ['admin', { method: 'GET', path: '/api/admin/dashboard' }, { method: 'PUT', path: '/api/admin/settings/tagada' }],
+  ['admin', { method: 'GET', path: '/api/admin/dashboard' }, { method: 'PUT', path: '/api/admin/settings/checkout-mode' }],
   ['operations', { method: 'GET', path: '/api/admin/dashboard' }, { method: 'GET', path: '/api/admin/settings/store' }],
   ['content_manager', { method: 'GET', path: '/api/admin/dashboard' }, { method: 'GET', path: '/api/admin/order' }],
-  ['support', { method: 'GET', path: '/api/admin/dashboard' }, { method: 'PUT', path: '/api/admin/settings/tagada' }],
+  ['support', { method: 'GET', path: '/api/admin/dashboard' }, { method: 'PUT', path: '/api/admin/settings/checkout-mode' }],
 ];
 
 for (const [role, allowed, forbidden] of MATRIX) {
@@ -161,7 +161,7 @@ test('role matrix spot checks', async () => {
     ['support', { method: 'GET', path: '/api/admin/analytics/overview' }, 403],
     ['admin', { method: 'DELETE', path: '/api/admin/discount/:id' }, 403],
     ['operations', { method: 'GET', path: '/api/admin/shipping/packages' }, 403],
-    ['admin', { method: 'GET', path: '/api/admin/settings/tagada/test' }, 403],
+    ['admin', { method: 'PUT', path: '/api/admin/settings/bank-transfer' }, 403],
     ['operations', { method: 'GET', path: '/api/admin/users' }, 403],
   ];
   const failures: string[] = [];

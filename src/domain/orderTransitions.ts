@@ -1,8 +1,7 @@
 /**
  * orderTransitions.ts
  * ───────────────────
- * Pure, side-effect-free rules for order payment-status transitions and for
- * mapping TagadaPay statuses/events to our internal payment status.
+ * Pure, side-effect-free rules for order payment-status transitions.
  *
  * Forward-only state machine (H-5):
  *   pending            → paid | failed | cancelled
@@ -102,50 +101,4 @@ export function paidStatusSideFields(order: {
   if (!order.fulfilmentStatus) fields.fulfilmentStatus = 'unfulfilled';
   if (!order.deliveryStatus) fields.deliveryStatus = 'pending';
   return fields;
-}
-
-/**
- * Map a TagadaPay status and/or webhook event type to our payment status.
- * Returns null when the status carries no payment-state information.
- *
- * NOTE: partially_refunded maps to 'partially_refunded' (refund branch), never
- * to 'paid' (H-5).
- */
-export function mapTagadaStatus(tagadaStatus?: string | null, eventType?: string | null): PaymentStatus | null {
-  const ev = String(eventType ?? '').toLowerCase();
-  if (ev === 'order/paid' || ev === 'payment/succeeded' || ev === 'payment/captured') return 'paid';
-  if (ev === 'order/refunded' || ev === 'payment/refunded') {
-    return String(tagadaStatus ?? '').toLowerCase() === 'partially_refunded' ? 'partially_refunded' : 'refunded';
-  }
-  if (ev === 'payment/partially_refunded') return 'partially_refunded';
-  if (ev === 'order/failed' || ev === 'payment/failed' || ev === 'payment/rejected') return 'failed';
-
-  switch (String(tagadaStatus ?? '').toLowerCase()) {
-    case 'succeeded':
-    case 'paid':
-    case 'captured':
-    case 'authorized':
-    case 'completed':
-      return 'paid';
-    case 'partially_refunded':
-      return 'partially_refunded';
-    case 'refunded':
-      return 'refunded';
-    case 'failed':
-    case 'declined':
-    case 'error':
-    case 'rejected':
-      return 'failed';
-    case 'cancelled':
-    case 'canceled':
-    case 'voided':
-    case 'expired':
-      return 'cancelled';
-    case 'pending':
-    case 'created':
-    case 'initiated':
-      return 'pending';
-    default:
-      return null;
-  }
 }

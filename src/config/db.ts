@@ -55,7 +55,7 @@ const attachConnectionListeners = () => {
  * Connects to MongoDB, retrying with backoff until it succeeds. It never exits the process:
  * during an Atlas outage the HTTP server stays up (answering 503, /api/health reports "disconnected")
  * instead of PM2 restarting every worker in a loop, which left nginx with no upstream (502).
- * Resolves once connected, so DB-backed startup (Tagada client, queue workers) runs after that.
+ * Resolves once connected, so DB-backed startup (queue workers) runs after that.
  */
 const connectDB = async (): Promise<void> => {
   const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/solatide';

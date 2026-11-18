@@ -6,7 +6,6 @@ import Review from '../src/models/review.model';
 import Order from '../src/models/order.model';
 import User from '../src/models/user.model';
 import AnalyticsEvent from '../src/models/analyticsEvent.model';
-import PaymentSettings from '../src/models/PaymentSettings';
 import { buildErrorHandler } from '../src/middleware/errorHandler';
 import AppError from '../src/utils/appError';
 import { validateCoaUrl } from '../src/utils/coaProxy';
@@ -123,7 +122,7 @@ test('public product list forces publishStatus active, clamps limit, escapes reg
     assert.deepEqual(calls.limit?.[0], [100]);
     assert.equal(filter.$or[0].name.$regex, 'a\\.\\*\\(b\\+');
     const projection = String((calls.select as any)?.[0]?.[0] || '');
-    for (const f of ['-costPerItem', '-lowStockThreshold', '-tagadaSync', '-pendingBatchDocs', '-hsCode']) {
+    for (const f of ['-costPerItem', '-lowStockThreshold', '-tagadaSync', '-tagadaVariantId', '-pendingBatchDocs', '-hsCode']) {
       assert.ok(projection.includes(f), `projection excludes ${f}`);
     }
   } finally {
@@ -293,34 +292,20 @@ test('/my-orders is not shadowed by /:id', async () => {
   assert.equal(res.status, 401);
 });
 
-test('createOrder validates quantities and product ids', async () => {
-  const post = (products: unknown) =>
-    req(ctx.base + '/api/v1/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ products }),
-    });
-  assert.equal((await post([{ product: OID(1), quantity: 0 }])).status, 400);
-  assert.equal((await post([{ product: OID(1), quantity: 101 }])).status, 400);
-  assert.equal((await post([{ product: OID(1), quantity: 1.5 }])).status, 400);
-  assert.equal((await post([{ product: 'not-an-id', quantity: 1 }])).status, 400);
-});
-
-test('old Tagada checkout calls are refused when Admin chose another checkout mode (stale browser tab)', async () => {
-  const undo = stub(PaymentSettings, 'findOne', () => fakeQuery({ checkoutMode: 'order_request', bankTransfer: {} }));
-  let orderLookups = 0;
-  const undoOrder = stub(Order, 'findById', () => { orderLookups++; return fakeQuery(null); });
+test('retired TagadaPay checkout endpoints are gone (404)', async () => {
+  let orderWrites = 0;
+  const undoOrder = stub(Order, 'findById', () => { orderWrites++; return fakeQuery(null); });
   try {
     const json = (body: unknown) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    // Placeholder order creation existed only for the Tagada checkout
     const placeholder = await req(ctx.base + '/api/v1/orders', json({ products: [{ product: OID(1), quantity: 1 }], paymentMethod: 'tagada' }));
-    assert.equal(placeholder.status, 503);
-    assert.match(placeholder.body.message, /refresh the page/);
-    const session = await req(ctx.base + '/api/payments/tagada/create', json({ orderId: OID(2), accessToken: 'a'.repeat(64) }));
-    assert.equal(session.status, 503);
-    assert.match(session.body.message, /refresh the page/);
-    assert.equal(orderLookups, 0, 'no order is read or created');
+    assert.equal(placeholder.status, 404);
+    for (const path of ['/api/payments/tagada/create', '/api/payments/tagada/webhook', `/api/payments/tagada/sync/${OID(2)}`]) {
+      const r = await req(ctx.base + path, json({ orderId: OID(2), accessToken: 'a'.repeat(64) }));
+      assert.equal(r.status, 404, `${path} → ${r.status}`);
+    }
+    assert.equal(orderWrites, 0, 'no order is read or created');
   } finally {
-    undo();
     undoOrder();
   }
 });

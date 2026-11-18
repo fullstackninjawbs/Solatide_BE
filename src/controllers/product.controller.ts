@@ -21,13 +21,19 @@ export const PUBLIC_PRODUCT_EXCLUDE = [
   'costPerItem',
   'variants.costPerItem',
   'lowStockThreshold',
+  // Legacy fields from the retired TagadaPay integration: no longer in the schema, but old
+  // product documents still hold them and .lean() returns them.
   'tagadaSync',
+  'tagadaProductId',
+  'tagadaStoreId',
+  'tagadaVariantId',
   'pendingBatchDocs',
   'hsCode',
   'slugHistory',
   'barcode',
   'images.cloudinarySync',
   'variants.tagadaUpdatedAt',
+  'variants.tagadaVariantId',
   '__v',
 ];
 export const PUBLIC_PRODUCT_PROJECTION = PUBLIC_PRODUCT_EXCLUDE.map((f) => `-${f}`).join(' ');
@@ -37,7 +43,10 @@ const stripInternalProductFields = (p: any) => {
   if (!p || typeof p !== 'object') return p;
   delete p.costPerItem;
   delete p.lowStockThreshold;
-  delete p.tagadaSync;
+  delete p.tagadaSync; // legacy TagadaPay fields (see PUBLIC_PRODUCT_EXCLUDE)
+  delete p.tagadaProductId;
+  delete p.tagadaStoreId;
+  delete p.tagadaVariantId;
   delete p.pendingBatchDocs;
   delete p.hsCode;
   delete p.slugHistory;
@@ -49,6 +58,7 @@ const stripInternalProductFields = (p: any) => {
       if (v) {
         delete v.costPerItem;
         delete v.tagadaUpdatedAt;
+        delete v.tagadaVariantId;
       }
     });
   }

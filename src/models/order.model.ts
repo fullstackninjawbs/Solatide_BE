@@ -39,6 +39,7 @@ export interface IOrderItem {
   price: number;
   /** Selected variant (_id of product.variants[]) — resolved server-side (M-11) */
   variant?: mongoose.Types.ObjectId | null;
+  /** legacy, read-only: from the retired TagadaPay checkout */
   tagadaVariantId?: string;
   sku?: string;
   title?: string;
@@ -89,7 +90,9 @@ export interface IAttributionTouch {
 export interface IOrder extends mongoose.Document {
   // ── Identifiers ──────────────────────────────────────────────────────────────
   orderNumber?: string;             // SOL-00042
+  /** legacy, read-only: from the retired TagadaPay checkout */
   tagadaOrderId?: string;
+  /** legacy, read-only: from the retired TagadaPay checkout */
   tagadaSessionId?: string;
 
   // ── Customer ─────────────────────────────────────────────────────────────────
@@ -108,6 +111,7 @@ export interface IOrder extends mongoose.Document {
   shippingAddress?: string;
 
   // ── Line Items ───────────────────────────────────────────────────────────────
+  /** Display lines. Legacy TagadaPay orders may have ONLY these (no products[]); new orders use products[]. */
   lineItems?: ILineItem[];
   /** @deprecated use lineItems */
   products?: IOrderItem[];
@@ -131,6 +135,7 @@ export interface IOrder extends mongoose.Document {
   // ── Status ───────────────────────────────────────────────────────────────────
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   fulfilmentStatus: 'unfulfilled' | 'fulfilled' | 'partial';
+  /** 'tagada' = legacy card order from the retired TagadaPay checkout (kept so old orders still validate) */
   paymentMethod?: 'tagada' | 'payid' | 'bank_transfer' | 'international_bank_transfer' | 'manual_offline';
   paymentStatus: 'pending' | 'paid' | 'failed' | 'cancelled' | 'partially_refunded' | 'refunded';
   /** 'shopify_import' = historical order imported from the old Shopify store (scripts/importShopifyOrders.ts) */
@@ -140,10 +145,12 @@ export interface IOrder extends mongoose.Document {
     email: string;
     name?: string;
   };
-  /** Tagada checkout-session id set at session creation (null, never 'unknown') */
+  // ── legacy, read-only: from the retired TagadaPay checkout (never written by new orders) ──
+  /** Tagada checkout-session id */
   tagadaPaymentId?: string | null;
-  /** Tagada Payment object id (pay_...) from payment/* webhooks — used for refunds */
+  /** Tagada Payment object id (pay_...) */
   tagadaProviderPaymentId?: string | null;
+  /** Still honoured by the shipping guards so an unpaid legacy card order is never shippable */
   tagadaPaymentStatus?: string;
   tagadaEnv?: 'sandbox' | 'production';
   /** Reserved + confirmed refunds (major units). Guarded so it never exceeds grandTotal. */
@@ -282,6 +289,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
   {
     // ── Identifiers ─────────────────────────────────────────────────────────────
     orderNumber: { type: String, unique: true, sparse: true },
+    // legacy, read-only: from the retired TagadaPay checkout
     tagadaOrderId: { type: String },
     tagadaSessionId: { type: String },
 
@@ -309,7 +317,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
         quantity: { type: Number, min: 1 },
         price: { type: Number },
         variant: { type: mongoose.Schema.Types.ObjectId, default: null },
-        tagadaVariantId: { type: String },
+        tagadaVariantId: { type: String }, // legacy, read-only: from the retired TagadaPay checkout
         sku: { type: String },
         title: { type: String },
         variantTitle: { type: String },
@@ -347,6 +355,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
     },
     paymentMethod: {
       type: String,
+      // 'tagada': legacy card orders (retired TagadaPay checkout) — must stay so old orders validate on save
       enum: ['tagada', 'payid', 'bank_transfer', 'international_bank_transfer', 'manual_offline'],
     },
     paymentStatus: {
@@ -365,9 +374,10 @@ const orderSchema = new mongoose.Schema<IOrder>(
       name: { type: String }
     },
 
-    // ── TagadaPay ────────────────────────────────────────────────────────────────
-    tagadaPaymentId: { type: String, default: null },
-    tagadaProviderPaymentId: { type: String, default: null },
+    // ── TagadaPay — legacy, read-only: from the retired TagadaPay checkout ──────────
+    // No defaults: new orders no longer get these fields at all.
+    tagadaPaymentId: { type: String },
+    tagadaProviderPaymentId: { type: String },
     tagadaPaymentStatus: {
       type: String,
       enum: ['initiated', 'authorized', 'captured', 'failed', 'refunded', 'partially_refunded', 'succeeded', 'pending', 'cancelled', 'unknown'],
@@ -375,7 +385,6 @@ const orderSchema = new mongoose.Schema<IOrder>(
     tagadaEnv: {
       type: String,
       enum: ['sandbox', 'production'],
-      default: 'sandbox'
     },
     refundedAmount: {
       type: Number,
@@ -551,6 +560,7 @@ const orderSchema = new mongoose.Schema<IOrder>(
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ fulfilmentStatus: 1 });
 orderSchema.index({ status: 1 });
+// Legacy TagadaPay indexes (kept; the fields are read-only history from the retired checkout).
 // tagadaPaymentId is unique only among real string values (null / missing allowed many times).
 // Coexists with the old non-unique `tagadaPaymentId_1` index (nothing is dropped). Placeholder
 // 'unknown' values must be set to null first — see src/scripts/migrations/2026-10-payment-indexes.ts.

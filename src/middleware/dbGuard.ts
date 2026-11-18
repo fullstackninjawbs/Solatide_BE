@@ -7,7 +7,7 @@ const WAIT_MS = 3000;
 
 /**
  * While MongoDB is unavailable, answer 503 (with Retry-After) instead of letting every query
- * time out into a 500. Webhook senders (Tagada, Starshipit) retry non-2xx deliveries, so nothing is lost.
+ * time out into a 500. Webhook senders (Starshipit) retry non-2xx deliveries, so nothing is lost.
  */
 export const dbGuard = async (req: Request, res: Response, next: NextFunction) => {
   if (isDbConnected() || (await waitForDb(WAIT_MS))) return next();

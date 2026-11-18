@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import config from './config';
 import connectDB from './config/db';
 import app from './app';
-import { initializeTagadaClientFromDB } from './services/tagadaClient';
 import { enableStorefrontAutoRebuild } from './utils/storefrontRebuildHooks';
 import { shouldRunWorkersInApi, startWorkers, stopWorkers } from './queues/workers';
 import { closeQueues } from './queues/queues';
@@ -20,9 +19,8 @@ process.on('uncaughtException', (err: Error) => {
   process.exit(1);
 });
 
-// Connect to MongoDB Database and initialize DB-backed singletons
+// Connect to MongoDB Database, then start background workers
 connectDB().then(() => {
-  initializeTagadaClientFromDB();
   // Background job workers (BullMQ): first PM2 instance only, unless RUN_WORKERS says otherwise
   if (shouldRunWorkersInApi()) {
     startWorkers().catch((err) => console.error('[Queue] workers failed to start:', err?.message ?? err));

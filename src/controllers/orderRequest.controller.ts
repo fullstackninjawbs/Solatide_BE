@@ -50,8 +50,7 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
   try {
     lines = await resolveCheckoutLines(
       items.map((i: any) => ({ productId: i?.productId, variantId: i?.variantId, quantity: i?.quantity })),
-      (id) => Product.findById(id).lean(),
-      { requireTagadaVariant: false }
+      (id) => Product.findById(id).lean()
     );
   } catch (err) {
     if (err instanceof CheckoutValidationError) return next(new AppError(err.message, 400));

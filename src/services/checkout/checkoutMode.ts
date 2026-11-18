@@ -13,16 +13,16 @@
  *
  * A mode can only be selected when it is ready (bank transfer needs payment details). If the saved
  * mode stops being ready, or nothing was ever saved, the legacy switches decide (the
- * ORDER_REQUEST_CHECKOUT env flag, then the old bank transfer on/off), so deploying this changes
- * nothing until a mode is chosen in Admin.
+ * ORDER_REQUEST_CHECKOUT env flag, then the old bank transfer on/off), and otherwise the storefront
+ * falls back to order_request (always ready).
  */
 import PaymentSettings from '../../models/PaymentSettings';
 import { getBankTransferSettings, methodsForCountry, type BankTransferSettings } from './bankTransfer';
 
 export const CHECKOUT_MODES = ['order_request', 'bank_transfer', 'external_processor', 'pay_by_bank'] as const;
 export type CheckoutMode = (typeof CHECKOUT_MODES)[number];
-/** What the storefront receives: one of the modes, or the previous Tagada checkout (legacy). */
-export type EffectiveCheckoutMode = CheckoutMode | 'tagada';
+/** What the storefront receives: always one of the modes (a usable one). */
+export type EffectiveCheckoutMode = CheckoutMode;
 
 export const isCheckoutMode = (m: unknown): m is CheckoutMode =>
   typeof m === 'string' && (CHECKOUT_MODES as readonly string[]).includes(m);
@@ -75,11 +75,11 @@ export function checkoutModeOptions(bank: BankTransferSettings): CheckoutModeOpt
   ];
 }
 
-/** Legacy behaviour when no (usable) mode is saved: env flag, then the old bank on/off switch. */
+/** Fallback when no (usable) mode is saved: env flag, then the old bank on/off switch, else order_request. */
 export function legacyCheckoutMode(bank: BankTransferSettings, env: NodeJS.ProcessEnv = process.env): EffectiveCheckoutMode {
   if (env.ORDER_REQUEST_CHECKOUT === 'true') return 'order_request';
   if (bank.enabled && bankTransferReady(bank)) return 'bank_transfer';
-  return 'tagada';
+  return 'order_request';
 }
 
 /** The mode the storefront uses (pure: easy to test). */

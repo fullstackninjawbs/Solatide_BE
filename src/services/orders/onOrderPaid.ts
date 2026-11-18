@@ -1,8 +1,8 @@
 /**
  * onOrderPaid.ts — idempotent post-payment side effects (H-4).
  *
- * Every code path that moves an order to `paid` (webhook, public success-page
- * sync, admin auto-sync, admin manual order / status change) calls
+ * Every code path that moves an order to `paid` (admin "mark paid", admin
+ * manual order / status change) calls
  * `onOrderPaid(orderId)`. Only the caller that wins the atomic claim
  *   {paymentStatus ∈ paid-ish, paidAt ≠ null, sideEffectsClaimedAt: null} → now
  * runs the side effects, so they happen exactly once regardless of ordering.
@@ -30,12 +30,8 @@ export interface OnOrderPaidDeps {
   sendOrderConfirmationEmail: (order: any) => Promise<unknown>;
   sendAdminNewOrderNotificationEmail: (order: any) => Promise<unknown>;
   validateOrderAddress: (orderId: unknown) => Promise<unknown>;
-  /** Best-effort deactivation of a provider promotion once its usage cap is reached */
-  deactivatePromotion?: (tagadaPromotionId: string) => Promise<unknown>;
   /** Admin email when this order took products to/below their low-stock threshold (optional) */
   sendLowStockAlert?: (orderId: unknown) => Promise<unknown>;
-  /** Optional enrichment before emails when the paid order still lacks a customer email */
-  refreshOrderDetails?: (orderId: unknown) => Promise<unknown>;
 }
 
 let defaultDeps: OnOrderPaidDeps | null = null;
@@ -45,7 +41,7 @@ export function setDefaultOnOrderPaidDeps(deps: OnOrderPaidDeps | null): void {
   defaultDeps = deps;
 }
 
-/** Lazily resolve real implementations so tests (and module load) never touch SMTP/Google/Tagada. */
+/** Lazily resolve real implementations so tests (and module load) never touch SMTP/Google. */
 function loadDefaultDeps(): OnOrderPaidDeps {
   if (defaultDeps) return defaultDeps;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -57,13 +53,6 @@ function loadDefaultDeps(): OnOrderPaidDeps {
     sendAdminNewOrderNotificationEmail: email.sendAdminNewOrderNotificationEmail,
     validateOrderAddress: (id: unknown) => addr.validateOrderAddress(id),
     sendLowStockAlert: (orderId: unknown) => require('../lowStockAlert').sendOrderLowStockAlert(orderId),
-    refreshOrderDetails: (id: unknown) => require('./tagadaSync').refreshTagadaDetails(id),
-    deactivatePromotion: async (promoId: string) => {
-      const { getTagadaClient } = require('../tagadaClient');
-      const { withTimeout } = require('../../domain/withTimeout');
-      const client = await getTagadaClient();
-      return withTimeout(client.promotions.update(promoId, { active: false }), 15000, 'tagada.promotions.update');
-    },
   };
   return defaultDeps;
 }
@@ -132,13 +121,6 @@ export async function onOrderPaid(
   };
 
   console.log(`[onOrderPaid] order=${order._id} number=${order.orderNumber ?? '-'} ${resumed ? 'resumed' : 'claimed'} side effects`);
-
-  // 0) If the customer email is still missing (webhook arrived before Tagada populated it), try once more.
-  if (!order.customerEmail && !order.customer?.email && d.refreshOrderDetails) {
-    await step('refresh_details', () => d.refreshOrderDetails!(order._id));
-    const fresh = await Order.findById(order._id);
-    if (fresh) Object.assign(order, { customer: fresh.customer, customerEmail: fresh.customerEmail, customerName: fresh.customerName, shippingAddressObj: fresh.shippingAddressObj, lineItems: fresh.lineItems });
-  }
 
   // 1) Inventory (skipped if already decremented, e.g. admin manual orders)
   if (!order.inventoryDecrementedAt) {
@@ -235,7 +217,6 @@ export async function onOrderPaid(
       }
       if (updated && maxUses > 0 && updated.usesSoFar >= maxUses) {
         await Discount.updateOne({ _id: discount._id }, { $set: { status: 'expired' } });
-        if (discount.tagadaPromotionId && d.deactivatePromotion) await d.deactivatePromotion(discount.tagadaPromotionId);
       }
     });
   }

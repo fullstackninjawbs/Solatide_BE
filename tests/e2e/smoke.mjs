@@ -28,7 +28,7 @@ await db.collection('users').insertMany([
   { name: 'Ad', email: 'admin@test.local', password: hash, role: 'admin', createdAt: new Date() },
   { name: 'Sup', email: 'support@test.local', password: hash, role: 'support', createdAt: new Date() },
 ]);
-const prod = { id: 9001, name: 'Active P', slug: 'active-p', price: 10, publishStatus: 'active', costPerItem: 3, tagadaVariantId: 'v1', inStock: true, stockQuantity: 5, variants: [], images: [], createdAt: new Date(), updatedAt: new Date() };
+const prod = { id: 9001, name: 'Active P', slug: 'active-p', price: 10, publishStatus: 'active', costPerItem: 3, inStock: true, stockQuantity: 5, variants: [], images: [], createdAt: new Date(), updatedAt: new Date() };
 await db.collection('products').insertMany([prod, { ...prod, id: 9002, name: 'Draft P', slug: 'draft-p', publishStatus: 'draft' }]);
 
 // 1. Health: no internals
@@ -36,7 +36,7 @@ let r = await req('GET', '/api/health');
 check('health exposes only status/db/timestamp', r.json && Object.keys(r.json).sort().join(',') === 'db,status,timestamp', JSON.stringify(r.json));
 
 // 2. C-1: admin endpoints require auth
-for (const [m, p] of [['GET', '/api/admin/settings/tagada'], ['PUT', '/api/admin/settings/tagada'], ['POST', '/api/admin/discount'], ['GET', '/api/admin/customer'], ['GET', '/api/admin/dashboard'], ['GET', '/api/admin/batches/proxy-coa?url=https://example.com/x.pdf'], ['POST', '/api/admin/tagada/products/sync']]) {
+for (const [m, p] of [['GET', '/api/admin/settings/checkout-mode'], ['PUT', '/api/admin/settings/checkout-mode'], ['POST', '/api/admin/discount'], ['GET', '/api/admin/customer'], ['GET', '/api/admin/dashboard'], ['GET', '/api/admin/batches/proxy-coa?url=https://example.com/x.pdf']]) {
   r = await req(m, p, { body: m === 'GET' ? undefined : {} });
   check(`anon ${m} ${p} → 401`, r.status === 401, `got ${r.status}`);
 }
@@ -63,13 +63,12 @@ for (const [m, p] of [['GET', '/api/admin/order'], ['POST', '/api/admin/order/00
 }
 
 // 5. Role matrix + H-2
-r = await req('GET', '/api/admin/settings/tagada', { token: saTok });
-check('super_admin GET settings/tagada → 200', r.status === 200, `got ${r.status}`);
-check('tagada settings secrets are masked', !/stub|sk_/.test(r.text));
-r = await req('PUT', '/api/admin/settings/tagada', { token: supTok, body: { tagadaWebhookSecret: 'x' } });
-check('support PUT settings/tagada → 403', r.status === 403, `got ${r.status}`);
-r = await req('PUT', '/api/admin/settings/tagada', { token: adTok, body: { tagadaWebhookSecret: 'x' } });
-check('admin PUT settings/tagada → 403 (super_admin only)', r.status === 403, `got ${r.status}`);
+r = await req('GET', '/api/admin/settings/checkout-mode', { token: saTok });
+check('super_admin GET settings/checkout-mode → 200', r.status === 200, `got ${r.status}`);
+r = await req('PUT', '/api/admin/settings/checkout-mode', { token: supTok, body: { mode: 'order_request' } });
+check('support PUT settings/checkout-mode → 403', r.status === 403, `got ${r.status}`);
+r = await req('PUT', '/api/admin/settings/checkout-mode', { token: adTok, body: { mode: 'order_request' } });
+check('admin PUT settings/checkout-mode → 403 (super_admin only)', r.status === 403, `got ${r.status}`);
 const adUser = await db.collection('users').findOne({ email: 'admin@test.local' });
 r = await req('PUT', `/api/admin/users/${adUser._id}`, { token: adTok, body: { role: 'super_admin' } });
 const adAfter = await db.collection('users').findOne({ _id: adUser._id });
@@ -97,8 +96,6 @@ r = await req('GET', `/api/v1/orders/${order.insertedId}`);
 check('order lookup without token → 404', r.status === 404 && !r.text.includes('victim@'), `got ${r.status}`);
 r = await req('GET', `/api/v1/orders/${order.insertedId}?accessToken=${'a'.repeat(64)}`);
 check('order lookup with token → 200 without email', r.status === 200 && !r.text.includes('victim@'), `got ${r.status}`);
-r = await req('POST', `/api/payments/tagada/sync/${order.insertedId}`);
-check('payment sync without token → 404', r.status === 404 && !r.text.includes('victim@'), `got ${r.status}`);
 
 // 9. Production error handling: malformed JSON → 4xx, no stack
 r = await req('POST', '/api/v1/auth/login', { body: '{"email":' });

@@ -6,7 +6,6 @@
 import mongoose from 'mongoose';
 import './config';
 import connectDB from './config/db';
-import { initializeTagadaClientFromDB } from './services/tagadaClient';
 import { enableStorefrontAutoRebuild } from './utils/storefrontRebuildHooks';
 import { queuesEnabled } from './queues/connection';
 import { startWorkers, stopWorkers } from './queues/workers';
@@ -18,11 +17,10 @@ if (!queuesEnabled()) {
   process.exit(1);
 }
 
-// Writes made by jobs (e.g. Tagada sync, stock) should refresh caches / request rebuilds too
+// Writes made by jobs (e.g. stock updates) should refresh caches / request rebuilds too
 enableStorefrontAutoRebuild();
 
 connectDB().then(async () => {
-  initializeTagadaClientFromDB();
   await startWorkers();
 });
 

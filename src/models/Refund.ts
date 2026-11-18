@@ -8,6 +8,7 @@ export interface IRefund extends Document {
   type: 'full' | 'partial';
   status: 'pending' | 'succeeded' | 'failed';
   source?: 'admin' | 'provider_webhook';
+  /** legacy, read-only: from the retired TagadaPay checkout (provider refund id) */
   tagadaRefundId?: string | null;
   initiatedBy?: string;
   failureReason?: string;
@@ -47,9 +48,9 @@ const RefundSchema: Schema = new Schema(
       enum: ['admin', 'provider_webhook'],
       default: 'admin',
     },
+    // legacy, read-only: from the retired TagadaPay checkout — not written by new refunds
     tagadaRefundId: {
       type: String,
-      default: null,
     },
     initiatedBy: { type: String },
     failureReason: { type: String },
@@ -61,7 +62,7 @@ const RefundSchema: Schema = new Schema(
 
 RefundSchema.index({ order: 1, createdAt: -1 });
 RefundSchema.index({ order: 1, status: 1 });
-// Unique among real provider ids only, so webhook redeliveries cannot create duplicates.
+// Legacy (retired TagadaPay checkout): unique among real provider ids only. Kept as-is.
 RefundSchema.index(
   { tagadaRefundId: 1 },
   { name: 'tagadaRefundId_unique_str', unique: true, partialFilterExpression: { tagadaRefundId: { $type: 'string' } } }

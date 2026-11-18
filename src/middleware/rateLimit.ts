@@ -125,11 +125,7 @@ export const generalLimiter = makeLimiter(
   'general',
   15 * 60 * 1000,
   2000,
-  'Too many requests from this IP, please try again after 15 minutes.',
-  {
-    // Tagada webhook is secured by HMAC signature instead
-    skip: (req) => req.path === '/api/payments/tagada/webhook',
-  }
+  'Too many requests from this IP, please try again after 15 minutes.'
 );
 
 /**

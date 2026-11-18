@@ -51,9 +51,6 @@ export interface IDiscount extends Document {
   };
   tags: string[];
   salesChannelAccess: boolean;
-  /** Set when imported from Tagada (scripts/importTagadaDiscounts.ts) */
-  tagadaPromotionId?: string;
-  tagadaPromotionCodeId?: string;
 }
 
 const DiscountRuleSchema = new Schema(
@@ -87,9 +84,7 @@ const DiscountSchema = new Schema({
     shipping: { type: Boolean, default: false }
   },
   tags: [{ type: String }],
-  salesChannelAccess: { type: Boolean, default: false },
-  tagadaPromotionId: { type: String },
-  tagadaPromotionCodeId: { type: String }
+  salesChannelAccess: { type: Boolean, default: false }
 }, { timestamps: true });
 
 export default mongoose.model<IDiscount>('Discount', DiscountSchema);

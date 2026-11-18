@@ -4,7 +4,7 @@
  * Every environment variable that exists in Server/.env is overridden here with a
  * safe value, because some modules call dotenv.config() and dotenv never overrides
  * variables that are already set. Nothing in the tests connects to MongoDB, Redis,
- * SMTP, Tagada, Starshipit or Cloudinary: model statics are stubbed and mongoose
+ * SMTP, Starshipit or Cloudinary: model statics are stubbed and mongoose
  * command buffering is disabled so any un-stubbed query fails immediately.
  */
 import path from 'path';
@@ -18,15 +18,6 @@ const SAFE_ENV: Record<string, string> = {
   MONGO_URI: 'mongodb://127.0.0.1:27018/solatide_authtest?directConnection=true',
   REDIS_URL: 'disabled',
   CORS_ORIGIN: 'http://localhost:5173',
-  TAGADA_ENV: 'sandbox',
-  TAGADA_API_KEY_SANDBOX: '',
-  TAGADA_API_KEY_PROD: '',
-  TAGADA_WEBHOOK_SECRET: '',
-  TAGADA_DEFAULT_CURRENCY: 'AUD',
-  TAGADA_STORE_ID: '',
-  TAGADA_ACCOUNT_ID: '',
-  TAGADA_ORG_ID: '',
-  TAGADA_CHECKOUT_URL: '',
   SMTP_HOST: 'invalid.localhost',
   SMTP_PORT: '2525',
   SMTP_SECURE: 'false',

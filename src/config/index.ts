@@ -14,16 +14,6 @@ interface Config {
   jwtExpiresIn: string;
   corsOrigin: string | string[];
   trustProxy: boolean | number | string;
-  // TagadaPay
-  tagadaEnv: 'sandbox' | 'production';
-  tagadaApiKeySandbox: string;
-  tagadaApiKeyProd: string;
-  tagadaWebhookSecret: string;
-  tagadaDefaultCurrency: string;
-  tagadaStoreId: string;
-  tagadaAccountId: string;
-  tagadaOrgId: string;
-  tagadaCheckoutUrl: string;
   // Cloudinary
   cloudinary: {
     cloudName: string;
@@ -83,16 +73,6 @@ export const config: Config = {
     ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
     : 'http://localhost:5173',
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
-  // TagadaPay
-  tagadaEnv: (process.env.TAGADA_ENV as 'sandbox' | 'production') || 'sandbox',
-  tagadaApiKeySandbox: process.env.TAGADA_API_KEY_SANDBOX || '',
-  tagadaApiKeyProd: process.env.TAGADA_API_KEY_PROD || '',
-  tagadaWebhookSecret: process.env.TAGADA_WEBHOOK_SECRET || '',
-  tagadaDefaultCurrency: process.env.TAGADA_DEFAULT_CURRENCY || 'AUD',
-  tagadaStoreId: process.env.TAGADA_STORE_ID || '',
-  tagadaAccountId: process.env.TAGADA_ACCOUNT_ID || '',
-  tagadaOrgId: process.env.TAGADA_ORG_ID || 'gracie-collins-1779009767064524065',
-  tagadaCheckoutUrl: process.env.TAGADA_CHECKOUT_URL || '',
   // Cloudinary
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',

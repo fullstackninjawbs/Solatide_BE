@@ -597,7 +597,7 @@ export const sendAdminNewOrderNotificationEmail = async (order: any) => {
               <tr>
                 <td><img src="${companyLogo}" alt="Solatide Biosciences" style="height: 50px;" /></td>
                 <td style="text-align: right;">
-                  <span class="badge">Paid • ${order.paymentMethod === 'tagada' ? 'TagadaPay' : e(order.paymentMethod || 'Online')}</span>
+                  <span class="badge">Paid • ${order.paymentMethod === 'tagada' ? 'Card' : e(order.paymentMethod || 'Online')}</span>
                   <div style="color: #64748b; font-size: 13px; font-weight: 600; margin-top: 6px;">ORDER #${e(order.orderNumber)}</div>
                 </td>
               </tr>

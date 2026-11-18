@@ -1,25 +1,9 @@
 /**
  * money.ts
  * ────────
- * Unit conversion and refund-amount validation.
- *
- * TagadaPay amounts are MINOR units (cents): the SDK README processes
- * `amount: 4999` for $49.99 and variant `price: 2999`; order summaries
- * (`totalAdjustedAmount`, `unitAmount`, …) were already divided by 100 in the
- * original webhook code. Our database stores MAJOR units (dollars, 2 dp).
- * All conversions go through these two helpers.
+ * Rounding and refund-amount validation. Our database stores MAJOR units
+ * (dollars, 2 dp).
  */
-
-export function toMinorUnits(major: number): number {
-  if (!Number.isFinite(major)) throw new Error(`Invalid amount: ${major}`);
-  return Math.round(major * 100);
-}
-
-export function fromMinorUnits(minor: number | string | null | undefined): number {
-  const n = typeof minor === 'string' ? Number(minor) : minor;
-  if (n == null || !Number.isFinite(n)) return 0;
-  return Math.round(n) / 100;
-}
 
 /** Round to cents, avoiding float drift (0.1 + 0.2). */
 export function roundMoney(v: number): number {
@@ -72,15 +56,4 @@ export function validateRefundRequest(input: {
   const amt = roundMoney(amount);
   const type: 'full' | 'partial' = refunded === 0 && amt === grandTotal ? 'full' : 'partial';
   return { ok: true, amount: amt, type, remaining };
-}
-
-/**
- * Refunds are disabled unless explicitly enabled. Default: enabled in the
- * Tagada sandbox, disabled in production — the business owner decides by
- * setting REFUNDS_ENABLED=true.
- */
-export function refundsEnabled(env: NodeJS.ProcessEnv, tagadaEnv: string): boolean {
-  const flag = env.REFUNDS_ENABLED;
-  if (flag !== undefined && flag !== '') return ['true', '1', 'yes'].includes(flag.toLowerCase());
-  return tagadaEnv === 'sandbox';
 }

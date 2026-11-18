@@ -2,100 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Order from '../models/order.model';
-import Product from '../models/product.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { withOrderNumberRetry } from '../services/orders/orderNumber';
-import { resolveCheckoutLines, CheckoutValidationError } from '../services/orders/checkoutItems';
 import { applyStarshipitTrackingUpdate } from '../services/shipping/starshipitTracking';
 import { isStaffRole } from '../config/roles';
-import { getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
-
-const MAX_ITEM_QUANTITY = 100;
-const MAX_ORDER_LINES = 50;
-
-/**
- * Place a new Order.
- * Resolves prices from Database (client prices are not trusted) and aggregates total amount.
- */
-export const createOrder = catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  const { products, shippingAddress, customerEmail, customerName, paymentMethod } = req.body;
-
-  if (!products || !Array.isArray(products) || products.length === 0) {
-    return next(new AppError('Please provide a list of products for your order.', 400));
-  }
-  if (products.length > MAX_ORDER_LINES) {
-    return next(new AppError(`An order may contain at most ${MAX_ORDER_LINES} lines.`, 400));
-  }
-  for (const item of products) {
-    const productId = item?.product;
-    if (typeof productId !== 'string' || !mongoose.Types.ObjectId.isValid(productId) || !/^[a-f0-9]{24}$/i.test(productId)) {
-      return next(new AppError('Invalid product ID in order.', 400));
-    }
-    const q = item.quantity === undefined ? 1 : item.quantity;
-    if (typeof q !== 'number' || !Number.isInteger(q) || q < 1 || q > MAX_ITEM_QUANTITY) {
-      return next(new AppError(`Item quantity must be a whole number between 1 and ${MAX_ITEM_QUANTITY}.`, 400));
-    }
-  }
-
-  // This placeholder order is only for the Tagada checkout. A browser still running an older site
-  // version can call it after the admin chose another checkout mode — refuse instead of saving it.
-  if ((await getEffectiveCheckoutMode()) !== 'tagada') {
-    return next(new AppError('Our checkout has just been updated. Please refresh the page and try again — your cart is saved.', 503));
-  }
-
-  // Address collected via Tagada hosted checkout
-
-  // 1) Resolve products/variants, prices and stock server-side — same resolver as createTagadaPayment (M-11)
-  let lines;
-  try {
-    lines = await resolveCheckoutLines(
-      products.map((p: any) => ({ ...p, variantId: p.variantId ?? p.variant })),
-      (id) => Product.findById(id)
-    );
-  } catch (err) {
-    if (err instanceof CheckoutValidationError) return next(new AppError(err.message, 400));
-    throw err;
-  }
-  const orderItems = lines.map((l) => ({
-    product: l.product,
-    variant: l.variant,
-    tagadaVariantId: l.tagadaVariantId,
-    variantTitle: l.variantTitle,
-    quantity: l.quantity,
-    price: l.price,
-  }));
-  const totalAmount = Math.round(lines.reduce((sum, l) => sum + l.price * l.quantity, 0) * 100) / 100;
-
-  // 2) Create the order document (retry on orderNumber collision)
-  // Per-order secret for guest order lookups (GET /api/v1/orders/:id?accessToken=...).
-  const publicAccessToken = crypto.randomBytes(32).toString('hex');
-  const newOrder = await withOrderNumberRetry((orderNumber) =>
-    Order.create({
-      orderNumber,
-      publicAccessToken,
-      user: req.user?._id,
-      products: orderItems,
-      totalAmount,
-      shippingAddress,
-      customerEmail: customerEmail || '',
-      customerName: customerName || '',
-      paymentMethod: paymentMethod || undefined,
-    })
-  );
-
-  const orderJson: any = newOrder.toObject();
-  orderJson.publicAccessToken = publicAccessToken;
-
-  res.status(201).json({
-    success: true,
-    data: {
-      order: orderJson,
-      accessToken: publicAccessToken,
-    },
-  });
-});
 
 /**
  * Get all orders placed by the authenticated user

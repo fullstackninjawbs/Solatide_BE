@@ -38,8 +38,6 @@ export interface IProductVariant {
   taxable: boolean;
   weightGrams?: number;
   shippingPackage?: string;
-  tagadaVariantId?: string;
-  tagadaUpdatedAt?: Date;
   currentBatchId?: mongoose.Types.ObjectId; // Per-variant batch reference
 }
 
@@ -63,15 +61,7 @@ export interface IProduct extends mongoose.Document {
   reviewsCount?: number;
   imageUrl?: string;
   sku?: string;
-  tagadaProductId?: string;
-  tagadaStoreId?: string;
-  tagadaVariantId?: string;
-  tagadaSync?: {
-    lastSyncedAt?: Date;
-    tagadaUpdatedAt?: Date;
-    syncStatus?: 'synced' | 'pending' | 'failed' | 'manual_override';
-    lastSyncError?: string;
-  };
+  /** 'tagada' = legacy: imported by the retired TagadaPay product sync (kept so old products still validate) */
   source?: 'tagada' | 'manual';
   compareAtPrice?: number;
   stockQuantity: number;
@@ -169,13 +159,6 @@ const variantSchema = new mongoose.Schema<IProductVariant>({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'ShippingPackage',
   },
-  tagadaVariantId: {
-    type: String,
-    index: true,
-  },
-  tagadaUpdatedAt: {
-    type: Date,
-  },
   currentBatchId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Batch',
@@ -265,31 +248,9 @@ const productSchema = new mongoose.Schema<IProduct>(
       type: String,
       sparse: true,
     },
-    tagadaProductId: {
-      type: String,
-      unique: true,
-      sparse: true,
-      index: true,
-    },
-    tagadaStoreId: {
-      type: String,
-    },
-    tagadaVariantId: {
-      type: String,
-      trim: true,
-    },
-    tagadaSync: {
-      lastSyncedAt: Date,
-      tagadaUpdatedAt: Date,
-      syncStatus: {
-        type: String,
-        enum: ['synced', 'pending', 'failed', 'manual_override'],
-        default: 'pending'
-      },
-      lastSyncError: String
-    },
     source: {
       type: String,
+      // 'tagada' is legacy (retired TagadaPay product sync) — kept so existing products still validate
       enum: ['tagada', 'manual'],
       default: 'manual'
     },
@@ -457,7 +418,7 @@ productSchema.virtual('reviews', {
 
 // Pre-save hook — stable URLs: an explicitly set slug is cleaned; a slug is generated from the
 // name ONLY when the product has none (i.e. on create). A name change never changes the URL
-// (Tagada sync and CSV import rename products; that used to silently change live URLs).
+// (CSV import — and formerly the TagadaPay sync — rename products; that used to silently change live URLs).
 productSchema.pre('save', function (next) {
   if (this.isModified('slug') && this.slug) this.slug = slugify(this.slug);
   if (!this.slug) this.slug = slugify(this.name);
@@ -467,10 +428,8 @@ productSchema.pre('save', function (next) {
 // Indexes
 productSchema.index({ category: 1 });
 // Lookup indexes for checkout / inventory / webhook resolution (M-15).
-// variants.tagadaVariantId is already indexed via the variant sub-schema (index: true).
 // sku: indexed via the field's sparse option.
 productSchema.index({ 'variants.sku': 1 });
-productSchema.index({ tagadaVariantId: 1 }, { sparse: true });
 productSchema.index({ price: 1 });
 productSchema.index({ tags: 1 });
 productSchema.index({ publishStatus: 1 });

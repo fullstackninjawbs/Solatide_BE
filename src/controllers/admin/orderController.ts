@@ -10,25 +10,20 @@ import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shi
 import { applyTrackingStage, deliverySummary, deliveryFilterQuery, stageFromStatus, MANUAL_STAGES, STAGE_LABELS, DELIVERY_FILTERS, type DeliveryStage, type DeliveryFilter } from '../../services/shipping/deliveryStatus';
 import AppError from '../../utils/appError';
 import catchAsync from '../../utils/catchAsync';
-import { getTagadaClient } from '../../services/tagadaClient';
-import config from '../../config';
 import Refund from '../../models/Refund';
 import Customer from '../../models/Customer';
 import AddressValidationService from '../../services/addressValidation.service';
 import axios from 'axios';
 import { starshipitRequest } from '../../services/shipping/starshipitHttp';
 import { PAYMENT_STATUSES, PaymentStatus } from '../../domain/orderTransitions';
-import { validateRefundRequest, refundsEnabled, toMinorUnits } from '../../domain/money';
-import { withTimeout, TAGADA_TIMEOUT_MS } from '../../domain/withTimeout';
-import { isUsableExternalId } from '../../domain/tagadaWebhook';
+import { validateRefundRequest } from '../../domain/money';
 import { generateOrderAccessToken } from '../../domain/orderAccess';
 import { transitionPaymentStatus } from '../../services/orders/paymentTransition';
 import { scheduleOnOrderPaid } from '../../services/orders/onOrderPaid';
 import { sendConfirmationWithTimeline, customerEmailOf, adminLabelOf } from '../../services/orders/confirmationEmail';
 import { isBankMethod } from '../../services/checkout/bankTransfer';
-import { syncOrderFromTagada, pickTagadaLookupId } from '../../services/orders/tagadaSync';
 import { withOrderNumberRetry } from '../../services/orders/orderNumber';
-import { reserveRefund, releaseRefund, confirmReservedRefund, refundTargetStatus, extractRefundId } from '../../services/orders/refunds';
+import { reserveRefund, confirmReservedRefund, refundTargetStatus } from '../../services/orders/refunds';
 import { decrementLineForOrder, LowStockCrossing, releaseReservedStock } from '../../services/orders/inventory';
 import { releaseDiscountUse } from '../../services/discounts/discountService';
 import { sendOrderLowStockAlert } from '../../services/lowStockAlert';
@@ -47,7 +42,7 @@ const STARSHIPIT_TIMEOUT_MS = 15000;
  *   q                 - search by orderNumber or customer.email
  *   delivery          - not_shipped | label_pending | label_created | in_transit | out_for_delivery | delayed | issue | delivered
  *   destination       - au | international (shipping country)
- *   paymentMethod     - payid | bank_transfer | international_bank_transfer | tagada | manual_offline
+ *   paymentMethod     - payid | bank_transfer | international_bank_transfer | tagada (legacy card orders) | manual_offline
  *   from, to          - order date range (ISO times; to is exclusive)
  *   page              - 1-indexed page number (default: 1)
  *   limit             - results per page (default: 50)
@@ -106,7 +101,7 @@ export const getOrders = catchAsync(async (req: Request, res: Response, next: Ne
 
   const methodQ = pick(req.query.paymentMethod, ['payid', 'bank_transfer', 'international_bank_transfer', 'tagada', 'manual_offline']);
   if (methodQ === 'tagada') {
-    // Card payments; older card orders may have no payment method saved
+    // Legacy card orders from the retired TagadaPay checkout; the oldest have no payment method saved
     extra.push({ $or: [{ paymentMethod: 'tagada' }, { paymentMethod: { $in: [null, ''] }, source: { $nin: ['admin_manual', 'shopify_import'] } }] });
   } else if (methodQ && paymentQ !== 'awaiting_payment') filter.paymentMethod = methodQ;
   else if (methodQ) extra.push({ paymentMethod: methodQ });
@@ -228,18 +223,6 @@ export const getOrderById = catchAsync(async (req: Request, res: Response, next:
       }
     } catch (err) {
       console.error(`[getOrderById] Failed to validate order address for ${order._id}:`, err);
-    }
-  }
-
-  // If the order is still pending, proactively check TagadaPay for the latest status.
-  // Uses the guarded transition and the idempotent onOrderPaid side effects (H-4/H-5).
-  if (order.paymentStatus === 'pending' && order.paymentMethod === 'tagada' && pickTagadaLookupId(order)) {
-    try {
-      const result = await syncOrderFromTagada(order._id, { timeoutMs: 8000 });
-      if (result.order) order = result.order;
-      if (result.becamePaid) scheduleOnOrderPaid(req.params.id);
-    } catch (err: any) {
-      console.error(`[getOrderById] Auto-sync failed for pending Tagada order ${req.params.id}: ${err?.message}`);
     }
   }
 
@@ -610,6 +593,8 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   if (['payid', 'bank_transfer', 'international_bank_transfer'].includes(String(order.paymentMethod)) && !['paid', 'partially_refunded'].includes(order.paymentStatus)) {
     return next(new AppError('Cannot create shipment: mark the order as paid first', 400));
   }
+  // tagadaPaymentStatus: legacy field on orders from the retired TagadaPay checkout — still honoured
+  // so an unpaid legacy card order never becomes shippable.
   if (!isManual && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
     return next(new AppError('Cannot create shipment: Payment is still pending', 400));
   }
@@ -628,7 +613,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Starshipit API keys are not configured', 500));
   }
 
-  // Weight of the contents: per line from the variant weights (products[] or Tagada lineItems);
+  // Weight of the contents: per line from the variant weights (products[], or legacy lineItems on old TagadaPay orders);
   // missing/invalid weights use a fallback and are reported to the admin
   const weight = await computeShipmentWeight(order);
   const weightKg = weight.itemsGrams / 1000;
@@ -724,6 +709,7 @@ function manualTrackingBlockReason(order: any): string | null {
   if (isBankMethod(order.paymentMethod) && !['paid', 'partially_refunded'].includes(order.paymentStatus)) {
     return 'Mark the order as paid first.';
   }
+  // tagadaPaymentStatus: legacy (retired TagadaPay checkout) — an unpaid legacy card order stays blocked
   if (order.source !== 'admin_manual' && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
     return 'Payment is still pending.';
   }
@@ -949,7 +935,9 @@ export const getOrderTracking = catchAsync(async (req: Request, res: Response, n
 /**
  * POST /api/admin/orders/:id/refund
  *
- * Process a refund for an order. If paid via Tagada, it calls the Tagada API.
+ * Record a refund for an order. No payment provider is called: the money is returned outside the
+ * admin (bank transfer / PayID, or — for legacy card orders from the retired TagadaPay checkout —
+ * the card processor's own dashboard); this records it and updates the order's payment status.
  */
 export const refundOrder = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const order: any = await Order.findById(req.params.id).lean();
@@ -962,40 +950,18 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
     return next(new AppError('Cannot process refunds for historical imported Shopify orders.', 400));
   }
 
-  // Bank transfer / PayID: the money is returned from the bank account; this only records the refund
-  // (offline path below), so the gateway refund switch does not apply.
-  const isBankOrder = ['payid', 'bank_transfer', 'international_bank_transfer'].includes(order.paymentMethod);
-
-  // 1. Explicit business switch (H-6). Default: enabled in sandbox, disabled in production.
-  if (!isBankOrder && !refundsEnabled(process.env, config.tagadaEnv)) {
-    return next(new AppError(
-      'Refunds from the admin panel are disabled (REFUNDS_ENABLED is not "true"). ' +
-      'Ask the business owner to enable them, or issue the refund in the Tagada dashboard — it will sync here via webhook.',
-      403
-    ));
-  }
-  if (order.paymentMethod === 'tagada' && order.tagadaEnv && order.tagadaEnv !== config.tagadaEnv) {
-    return next(new AppError(`This order was paid in the Tagada ${order.tagadaEnv} environment but the server is configured for ${config.tagadaEnv}.`, 409));
-  }
-
   if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'partially_refunded') {
     return next(new AppError('Only paid or partially refunded orders can be refunded', 400));
   }
 
-  // 2. Validate amount (finite, > 0, <= remaining, <= 2 dp; full refund only with full:true)
+  // 1. Validate amount (finite, > 0, <= remaining, <= 2 dp; full refund only with full:true)
   const { amount, full, reason = 'Admin initiated refund' } = req.body ?? {};
   const v = validateRefundRequest({ amount, full, grandTotal: order.grandTotal ?? order.totalAmount, refundedAmount: order.refundedAmount });
   if (!v.ok) {
     return next(new AppError(v.error, v.status));
   }
 
-  const isTagada = order.paymentMethod === 'tagada';
-  const tagadaPaymentRef = [order.tagadaProviderPaymentId, order.tagadaPaymentId].find(isUsableExternalId);
-  if (isTagada && !tagadaPaymentRef) {
-    return next(new AppError('No Tagada payment ID found for this order', 400));
-  }
-
-  // 3. Atomic reservation — concurrent refunds cannot exceed the order total.
+  // 2. Atomic reservation — concurrent refunds cannot exceed the order total.
   const reserved = await reserveRefund(order._id, v.amount, { pending: true });
   if (!reserved) {
     return next(new AppError('Refund exceeds the remaining refundable amount (another refund may be in progress).', 409));
@@ -1012,67 +978,22 @@ export const refundOrder = catchAsync(async (req: Request, res: Response, next: 
     initiatedBy: adminUser?.email,
   });
 
-  // 4. Provider call (amount in minor units). Roll back the reservation on failure.
-  if (isTagada) {
-    try {
-      const client = await getTagadaClient();
-      if (typeof client?.payments?.refund !== 'function') throw new Error('Tagada SDK does not support refunds in this version.');
-      // idempotencyKey: the SDK retries POSTs internally, so the key guarantees one refund per Refund doc.
-      const providerRes = await withTimeout(
-        client.payments.refund(
-          {
-            paymentIds: [tagadaPaymentRef as string],
-            amount: toMinorUnits(v.amount),
-            metadata: { reason: String(reason).slice(0, 200), orderId: String(order._id), refundId: String(refund._id) },
-          },
-          { idempotencyKey: `refund-${refund._id}`, timeout: TAGADA_TIMEOUT_MS }
-        ),
-        TAGADA_TIMEOUT_MS * 3 + 5000,
-        'tagada.payments.refund'
-      );
-      const tagadaRefundId = extractRefundId(providerRes);
-      if (tagadaRefundId) {
-        refund.tagadaRefundId = tagadaRefundId;
-        await refund.save();
-      }
-      // Stays 'pending' until the refund webhook confirms it.
-    } catch (error: any) {
-      const isTimeout = error?.name === 'TimeoutError' || /timed out|timeout|abort/i.test(String(error?.name) + String(error?.message));
-      if (isTimeout) {
-        // Outcome unknown: the provider may still have processed it. Keep the reservation and the
-        // pending Refund; the refund webhook (or a manual check) reconciles it. Never roll back here.
-        refund.failureReason = 'Provider timeout — outcome unknown, awaiting webhook confirmation';
-        await refund.save();
-        console.error(`[Refund] order=${order._id} provider refund timed out — left pending`);
-        return res.status(202).json({
-          success: true,
-          message: 'Refund request timed out at TagadaPay; it is pending confirmation. Check the Tagada dashboard before retrying.',
-          data: { refund },
-        });
-      }
-      await releaseRefund(order._id, v.amount, { pending: true });
-      refund.status = 'failed';
-      refund.failureReason = String(error?.response?.data?.message || error?.message || 'Provider error').slice(0, 500);
-      await refund.save();
-      console.error(`[Refund] order=${order._id} provider refund failed: ${refund.failureReason}`);
-      const status = error?.name === 'TimeoutError' ? 504 : 502;
-      return next(new AppError(`Refund failed at TagadaPay: ${refund.failureReason}`, status));
-    }
-  } else {
-    // Offline/manual payment: nothing to call — the refund is recorded as done.
-    refund.status = 'succeeded';
-    await refund.save();
-    await confirmReservedRefund(order._id, v.amount);
-  }
+  // 3. Record-only: nothing to call — the refund is recorded as done.
+  refund.status = 'succeeded';
+  await refund.save();
+  await confirmReservedRefund(order._id, v.amount);
 
-  // 5. Payment status via the transition guard.
+  // 4. Payment status via the transition guard.
   const latest: any = await Order.findById(order._id).lean();
   await transitionPaymentStatus(order._id, refundTargetStatus(latest));
   const updated = await Order.findById(order._id).lean();
 
   res.status(200).json({
     success: true,
-    message: isTagada ? 'Refund submitted to TagadaPay (pending confirmation)' : 'Refund recorded',
+    // Legacy card order (retired TagadaPay checkout): the card payment is not reversed from here
+    message: order.paymentMethod === 'tagada'
+      ? 'Refund recorded. This order was paid by card through the retired TagadaPay checkout — the money must be returned to the customer outside the admin.'
+      : 'Refund recorded',
     data: { order: updated, refund },
   });
 });
@@ -1168,7 +1089,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     });
   }
 
-  // 3. Resolve line items (variant by _id / tagadaVariantId / sku; quantity 1..100)
+  // 3. Resolve line items (variant by _id / sku; quantity 1..100)
   const processedLineItems: any[] = [];
   const stockLines: Array<{ product: unknown; variant: unknown | null; quantity: number; sku?: string; price: number }> = [];
   let calculatedSubtotal = 0;
@@ -1205,7 +1126,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
       if (Array.isArray(productDoc.variants) && productDoc.variants.length > 0) {
         const key = item.variantId != null ? String(item.variantId) : '';
         // Variants are not selectable in admin orders: an unmatched/missing key uses the primary (first) variant
-        variant = (key && productDoc.variants.find((v: any) => String(v._id) === key || v.tagadaVariantId === key || (v.sku && v.sku === key)))
+        variant = (key && productDoc.variants.find((v: any) => String(v._id) === key || (v.sku && v.sku === key)))
           || productDoc.variants[0];
         variantTitle = variant.title || variant.name || variantTitle;
         sku = variant.sku || sku;

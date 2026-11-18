@@ -34,7 +34,7 @@ const sameId = (a: unknown, b: unknown) => a != null && b != null && String(a) =
 
 /**
  * Weight of an order's contents, per line and in total. Lines come from the server-resolved
- * `products[]` (product + variant ids) when present, otherwise from Tagada `lineItems` (sku).
+ * `products[]` (product + variant ids) when present, otherwise from `lineItems` (sku) — legacy: only old orders from the retired TagadaPay checkout have those.
  * Each unit uses its variant's weightGrams (else the product's first variant / root weight);
  * a missing or absurd weight is replaced by the fallback and reported in `warnings`.
  */

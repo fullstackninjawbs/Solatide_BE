@@ -66,8 +66,7 @@ export const previewDiscount = catchAsync(async (req: Request, res: Response, ne
   try {
     lines = await resolveCheckoutLines(
       items.map((i: any) => ({ productId: i?.productId, variantId: i?.variantId, quantity: i?.quantity })),
-      (id) => Product.findById(id).lean(),
-      { requireTagadaVariant: false }
+      (id) => Product.findById(id).lean()
     );
   } catch (err) {
     if (err instanceof CheckoutValidationError) return next(new AppError(err.message, 400));
@@ -132,14 +131,13 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
     return res.status(200).json({ success: true, data: { orderId: already._id, orderNumber: already.orderNumber, accessToken: already.publicAccessToken, grandTotal: already.grandTotal, repeated: true } });
   }
 
-  // 3) Lines, prices and stock from the database (Tagada variant ids not needed here)
+  // 3) Lines, prices and stock from the database
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   let lines;
   try {
     lines = await resolveCheckoutLines(
       items.map((i: any) => ({ productId: i?.productId, variantId: i?.variantId, quantity: i?.quantity })),
-      (id) => Product.findById(id).lean(),
-      { requireTagadaVariant: false }
+      (id) => Product.findById(id).lean()
     );
   } catch (err) {
     if (err instanceof CheckoutValidationError) return next(new AppError(err.message, 400));
@@ -234,7 +232,7 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
       billingAddressObj: shipTo,
       shippingAddress: [address.street1, address.street2, address.city, address.state, address.zip, address.country].filter(Boolean).join(', '),
       lineItems: lines.map((l) => ({ title: l.title || 'Product', variantTitle: variantTitleOf(l.variantTitle), sku: l.sku, quantity: l.quantity, unitPrice: l.price, subtotal: round2(l.price * l.quantity), productImageUrl: imageOf(l.product) })),
-      products: lines.map((l) => ({ product: l.product, variant: l.variant, quantity: l.quantity, price: l.price, tagadaVariantId: l.tagadaVariantId || undefined, sku: l.sku, title: l.title, variantTitle: variantTitleOf(l.variantTitle) })),
+      products: lines.map((l) => ({ product: l.product, variant: l.variant, quantity: l.quantity, price: l.price, sku: l.sku, title: l.title, variantTitle: variantTitleOf(l.variantTitle) })),
       subtotal,
       shippingAmount: shipping.amount,
       shippingMethodName: shipping.name,

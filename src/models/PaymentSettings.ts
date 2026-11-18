@@ -1,9 +1,10 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 /**
- * PaymentSettings — stores gateway credentials and configuration.
- * Keys are stored in DB so the admin can update them from the UI
- * without redeploying the server.
+ * PaymentSettings — storefront checkout mode and payment configuration.
+ * Stored in DB so the admin can update it from the UI without redeploying
+ * the server. (Old documents may still hold fields from the retired
+ * TagadaPay integration; they are no longer in the schema and are ignored.)
  *
  * NOTE: In production, encrypt sensitive fields at rest.
  */
@@ -11,12 +12,6 @@ export interface IPaymentSettings extends Document {
   // Stripe (legacy)
   stripeKeys?: string;
   manualPaymentInstructions?: string;
-  // TagadaPay
-  tagadaEnv: 'sandbox' | 'production';
-  tagadaApiKeySandbox: string;
-  tagadaApiKeyProd: string;
-  tagadaWebhookSecret: string;
-  tagadaEnabled: boolean;
   /** Storefront checkout chosen in Admin (see services/checkout/checkoutMode.ts); unset = legacy switches */
   checkoutMode?: 'order_request' | 'bank_transfer' | 'external_processor' | 'pay_by_bank' | null;
   checkoutModeChangedAt?: Date;
@@ -52,16 +47,6 @@ const PaymentSettingsSchema = new Schema<IPaymentSettings>(
     // Stripe (kept for backward compat)
     stripeKeys: String,
     manualPaymentInstructions: String,
-    // TagadaPay
-    tagadaEnv: {
-      type: String,
-      enum: ['sandbox', 'production'],
-      default: 'sandbox',
-    },
-    tagadaApiKeySandbox: { type: String, default: '' },
-    tagadaApiKeyProd: { type: String, default: '' },
-    tagadaWebhookSecret: { type: String, default: '' },
-    tagadaEnabled: { type: Boolean, default: false },
     checkoutMode: {
       type: String,
       enum: ['order_request', 'bank_transfer', 'external_processor', 'pay_by_bank', null],
