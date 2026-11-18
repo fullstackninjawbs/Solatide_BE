@@ -7,6 +7,8 @@ import { enableStorefrontAutoRebuild } from './utils/storefrontRebuildHooks';
 import { shouldRunWorkersInApi, startWorkers, stopWorkers } from './queues/workers';
 import { closeQueues } from './queues/queues';
 import { closeProducerConnection } from './queues/connection';
+import { closeLiveStreams } from './controllers/admin/liveAnalyticsController';
+import { closeLiveBus } from './services/analytics/live/bus';
 
 // Product/batch/collection/FAQ changes refresh the prerendered storefront — only in the API process.
 enableStorefrontAutoRebuild();
@@ -53,9 +55,12 @@ const gracefulShutdown = (signal: string, exitCode = 0) => {
     process.exit(1);
   }, FORCE_EXIT_MS).unref();
 
+  // Open admin live streams would keep server.close() waiting until the forced exit
+  closeLiveStreams();
   server.close(async () => {
     // Stop background workers first (running jobs get a few seconds; unfinished ones are retried)
     await stopWorkers().catch(() => undefined);
+    await closeLiveBus().catch(() => undefined);
     await closeQueues().catch(() => undefined);
     await closeProducerConnection().catch(() => undefined);
     console.log('[Server] HTTP server closed — draining MongoDB connections...');

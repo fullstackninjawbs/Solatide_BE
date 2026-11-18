@@ -1,5 +1,6 @@
 import express from 'express';
 import * as analyticsController from '../../controllers/admin/analyticsController';
+import * as liveController from '../../controllers/admin/liveAnalyticsController';
 import { restrictTo } from '../../middleware/auth';
 import { ACCESS } from '../../config/roles';
 
@@ -14,5 +15,11 @@ router.get('/revenue/by-product', analyticsController.getRevenueByProduct);
 router.get('/customers/top', analyticsController.getTopCustomers);
 router.get('/overview', analyticsController.getOverview);
 router.get('/attribution', analyticsController.getAttributionStats);
+
+// Live customer activity (dashboard)
+router.get('/live/visitors', liveController.getLiveVisitors);
+router.get('/live/visitors/:sessionId', liveController.getLiveVisitor);
+router.get('/live/activity', liveController.getLiveActivity);
+router.get('/live/stream', liveController.streamLive);
 
 export default router;

@@ -10,6 +10,8 @@
  */
 import AnalyticsEvent from '../../models/analyticsEvent.model';
 import { AnalyticsSession, AnalyticsVisitor, CheckoutSession } from '../../models/analyticsSession.model';
+import { SESSION_TIMEOUT_MS } from './config';
+import { publishSessionUpdate } from './live/publish';
 
 type OrderEventType = 'order_placed' | 'purchase' | 'order_cancelled' | 'order_refunded';
 
@@ -35,7 +37,7 @@ export async function recordOrderEvent(
       ? { country: session.geo.country, region: session.geo.region, city: session.geo.city }
       : known(order.visitor?.country) ? { country: order.visitor.country, region: order.visitor.region, city: order.visitor.city } : null;
 
-    await AnalyticsEvent.create({
+    const created = await AnalyticsEvent.create({
       eventId: `${type}:${order._id}${opts.eventKey ? `:${opts.eventKey}` : ''}`,
       sessionId: sessionId || order.attribution?.lastTouch?.sessionId || order.attribution?.firstTouch?.sessionId || `order:${order._id}`,
       visitorId: visitorId || session?.visitorId,
@@ -50,7 +52,18 @@ export async function recordOrderEvent(
       ...(loc ? { country: loc.country, region: loc.region || undefined, city: loc.city || undefined } : {}),
     });
 
-    if (type === 'order_placed') await linkPlacedOrder(order, { sessionId, visitorId, checkoutId }, opts.at ?? new Date());
+    const at = opts.at ?? new Date();
+    if (type === 'order_placed') await linkPlacedOrder(order, { sessionId, visitorId, checkoutId }, at);
+    else if (sessionId) {
+      // Paid / cancelled / refunded while the visit is still open (e.g. a card payment straight after
+      // checkout) becomes the card's latest action. A bank transfer paid days later does not touch
+      // the old visit. Never counts as visitor activity (lastActivityAt unchanged).
+      await AnalyticsSession.updateOne(
+        { sessionId, lastActivityAt: { $gte: new Date(Date.now() - SESSION_TIMEOUT_MS) } },
+        { $set: { lastEvent: { type, path: `/order/${order._id}`, value: opts.value ?? orderTotal(order), orderId: order._id, at } } }
+      );
+    }
+    void publishSessionUpdate(sessionId || '', [created.toObject()], { orderNumber: order.orderNumber ? String(order.orderNumber) : undefined });
     return true;
   } catch (err: any) {
     if (err?.code === 11000) return false; // already recorded
@@ -91,7 +104,7 @@ async function linkPlacedOrder(order: any, ids: { sessionId?: string; visitorId?
         $set: {
           ...identity,
           lastActivityAt: at,
-          lastEvent: { type: 'order_placed', path: '/checkout', at },
+          lastEvent: { type: 'order_placed', path: '/checkout', value: orderTotal(order), orderId: order._id, at },
           // The cart was turned into this order
           cart: { items: [], itemCount: 0, value: 0, updatedAt: at },
         },

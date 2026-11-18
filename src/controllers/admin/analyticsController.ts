@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import Order from '../../models/order.model';
 import AnalyticsEvent from '../../models/analyticsEvent.model';
+import { AnalyticsSession } from '../../models/analyticsSession.model';
+import { ACTIVE_WINDOW_MS, liveStatus } from '../../services/analytics/config';
 import catchAsync from '../../utils/catchAsync';
 import { buildRevenueMatch, netRevenueExpr, grossRevenueExpr } from '../../domain/revenue';
 
@@ -233,11 +235,10 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     rawEvents,
     countryResultInitial
   ] = await Promise.all([
-    AnalyticsEvent.aggregate([
-      { $match: { timestamp: { $gte: liveWindow } } },
-      { $group: { _id: '$sessionId' } },
-      { $count: 'count' },
-    ]),
+    // Visitors right now = genuinely active (same definition as the live activity cards): activity or
+    // a heartbeat within the active window and the tab not closed/hidden since
+    AnalyticsSession.find({ lastActivityAt: { $gte: new Date(now.getTime() - ACTIVE_WINDOW_MS) } }).select('lastActivityAt leftAt').lean()
+      .then((rows: any[]) => [{ count: rows.filter((s) => liveStatus(s, now.getTime()) === 'active').length }]),
     Order.aggregate([
       { $match: buildRevenueMatch({ createdAt: { $gte: from, $lte: to } }) },
       { $group: { _id: null, total: { $sum: netRevenueExpr } } },

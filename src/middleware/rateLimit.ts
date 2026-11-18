@@ -163,6 +163,9 @@ export const discountCheckLimiter = makeLimiter('discount-check', 15 * 60 * 1000
 export const formSubmitLimiter = makeLimiter('forms', 60 * 60 * 1000, 10, 'Too many submissions, please try again later.');
 
 /**
- * Public analytics ingestion: 300 events / 5 min / IP.
+ * Public analytics ingestion: 600 requests / 5 min / IP. Each request is a batch of events or an
+ * activity heartbeat (every 30 s per active visitor, see services/analytics/config.ts). Many
+ * visitors can share one IP (mobile carrier NAT, offices), so the limit leaves room for
+ * heartbeats; being limited would make visitors drop out of "online now".
  */
-export const analyticsLimiter = makeLimiter('analytics', 5 * 60 * 1000, 300, 'Too many analytics events.');
+export const analyticsLimiter = makeLimiter('analytics', 5 * 60 * 1000, 600, 'Too many analytics events.');

@@ -79,7 +79,24 @@ const sessionSchema = new mongoose.Schema(
       removeFromCart: { type: Number, default: 0 },
       cartUpdates: { type: Number, default: 0 },
     },
-    lastEvent: { type: { type: String }, path: String, productName: String, productImage: String, at: Date },
+    /** Latest recorded action (live cards). Order events also set it; heartbeats never do. */
+    lastEvent: {
+      type: { type: String },
+      path: String,
+      productName: String,
+      productImage: String,
+      variantTitle: String,
+      quantity: Number,
+      stage: String,
+      value: Number,
+      orderId: mongoose.Schema.Types.ObjectId,
+      at: Date,
+    },
+    /**
+     * The visitor closed or hid the tab (the storefront's "left" heartbeat). They are not active from
+     * then on, until activity newer than this arrives (see services/analytics/config.ts liveStatus).
+     */
+    leftAt: Date,
     cart: { type: cartSchema, default: undefined },
     checkout: { checkoutId: String, stage: String, startedAt: Date },
     identity: { type: identitySchema, default: undefined },

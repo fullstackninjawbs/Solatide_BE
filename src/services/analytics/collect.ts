@@ -9,7 +9,9 @@
  *   the browser's own lookup only as a fallback). Later batches only update activity, counters,
  *   the live cart and the checkout progress.
  * - A ping (sent while the tab is visible and the visitor recently interacted) only refreshes
- *   lastActivityAt, so "active now" stays true while someone reads a page.
+ *   lastActivityAt, so "active now" stays true while someone reads a page. A ping with left:true
+ *   (tab hidden or closed) sets leftAt instead, so the visitor stops counting as active right away.
+ * - Every stored batch is announced on the live bus (admin live activity), see live/publish.ts.
  * - Server time is used; the browser only says how long ago (≤ 60 s) an event happened in a batch.
  */
 import AnalyticsEvent, { BROWSER_EVENT_TYPES, CheckoutStage } from '../../models/analyticsEvent.model';
@@ -18,6 +20,7 @@ import { parseUserAgent } from './device';
 import { classifyTrafficSource } from './trafficSource';
 import { lookupIp, GeoLocation } from './geo';
 import { CHECKOUT_ABANDON_MS } from './config';
+import { publishSessionUpdate } from './live/publish';
 
 export const MAX_EVENTS_PER_BATCH = 30;
 export const MAX_EVENT_AGE_MS = 15 * 60 * 1000;
@@ -75,6 +78,8 @@ export interface CleanBatch {
   visitorId: string;
   sessionId: string;
   ping: boolean;
+  /** The tab was hidden or closed (sent with ping) */
+  left: boolean;
   context: {
     landingPage?: string;
     referrer?: string;
@@ -161,13 +166,21 @@ export function validateCollectBatch(body: any): CleanBatch {
       paymentMethod: str(e.paymentMethod, 40),
     });
   }
-  return { visitorId, sessionId, ping: body.ping === true, context, events };
+  return { visitorId, sessionId, ping: body.ping === true, left: body.left === true, context, events };
 }
 
 const SITE_HOSTS = [
   'solatidebiosciences.com.au',
   ...[process.env.CLIENT_URL, process.env.ADMIN_URL].map((u) => { try { return u ? new URL(u).hostname.replace(/^www\./, '') : ''; } catch { return ''; } }),
 ].filter(Boolean);
+
+/** Location for a visit: server-side IP lookup first, else the browser's timezone guess. */
+async function resolveGeo(ip: string | undefined, browser: CleanBatch['context']['location']) {
+  const ipGeo: GeoLocation | null = await lookupIp(ip);
+  if (ipGeo) return { ...ipGeo, method: 'ip' };
+  if (browser?.country) return { country: browser.country, countryCode: '', region: browser.region || '', city: browser.city || '', method: 'browser' };
+  return undefined;
+}
 
 export interface CollectResult { stored: number; duplicates: number; sessionCreated: boolean }
 
@@ -176,8 +189,10 @@ export async function ingestBatch(batch: CleanBatch, req: { ip?: string; userAge
   const { visitorId, sessionId } = batch;
 
   // Session belongs to another visitor (tampered / copied storage): ignore
-  const existing: any = await AnalyticsSession.findOne({ sessionId }).select('visitorId').lean();
+  const existing: any = await AnalyticsSession.findOne({ sessionId }).select('visitorId geo').lean();
   if (existing && existing.visitorId !== visitorId) return { stored: 0, duplicates: 0, sessionCreated: false };
+  // "Left" for a visit we never saw (expired / cleared storage): nothing to mark, never create one
+  if (batch.left && !existing && !batch.events.length) return { stored: 0, duplicates: 0, sessionCreated: false };
 
   // Visitor (null = first time we see this browser)
   const visitorBefore: any = await AnalyticsVisitor.findOneAndUpdate(
@@ -189,10 +204,7 @@ export async function ingestBatch(batch: CleanBatch, req: { ip?: string; userAge
   let sessionCreated = false;
   if (!existing) {
     const ctx = batch.context;
-    const ipGeo: GeoLocation | null = await lookupIp(req.ip);
-    const geo = ipGeo
-      ? { ...ipGeo, method: 'ip' }
-      : ctx.location?.country ? { country: ctx.location.country, countryCode: '', region: ctx.location.region || '', city: ctx.location.city || '', method: 'browser' } : undefined;
+    const geo = await resolveGeo(req.ip, ctx.location);
     const source = classifyTrafficSource({ referrer: ctx.referrer, utmSource: ctx.utm.source, utmMedium: ctx.utm.medium, utmCampaign: ctx.utm.campaign, ...ctx.clickIds }, SITE_HOSTS);
     const clickId = (CLICK_IDS as readonly string[]).find((k) => (ctx.clickIds as any)[k]);
     try {
@@ -217,6 +229,22 @@ export async function ingestBatch(batch: CleanBatch, req: { ip?: string; userAge
     }
     if (sessionCreated) {
       await AnalyticsVisitor.updateOne({ visitorId }, { $inc: { sessionCount: 1 }, $set: { lastSessionId: sessionId } });
+    }
+  } else if (!existing.geo?.country || existing.geo.country === 'Unknown') {
+    // Visit created without a location (no IP match and the first batch had no browser guess):
+    // fill it in from this batch, and the actions already stored for this visit with it
+    const geo = await resolveGeo(req.ip, batch.context.location);
+    if (geo) {
+      const res = await AnalyticsSession.updateOne(
+        { sessionId, $or: [{ 'geo.country': { $exists: false } }, { 'geo.country': { $in: [null, '', 'Unknown'] } }] },
+        { $set: { geo } }
+      );
+      if (res.modifiedCount) {
+        await AnalyticsEvent.updateMany(
+          { sessionId, $or: [{ country: 'Unknown' }, { country: { $exists: false } }] },
+          { $set: { country: geo.country, ...(geo.region ? { region: geo.region } : {}), ...(geo.city ? { city: geo.city } : {}) } }
+        );
+      }
     }
   }
 
@@ -255,12 +283,18 @@ export async function ingestBatch(batch: CleanBatch, req: { ip?: string; userAge
 
   await applySessionUpdates(batch, fresh, now);
   await applyCheckoutUpdates(batch, fresh, now);
+  // Admin live activity: never delays or breaks ingest
+  const freshIds = new Set(fresh.map((e) => e.id));
+  void publishSessionUpdate(sessionId, docs.filter((d) => freshIds.has(d.eventId)));
   return { stored, duplicates: batch.events.length - stored, sessionCreated };
 }
 
 async function applySessionUpdates(batch: CleanBatch, allFresh: CleanEvent[], now: Date) {
   const inc: Record<string, number> = {};
-  const set: Record<string, unknown> = { lastActivityAt: now };
+  // A "left" heartbeat is not activity: it only records that the tab was hidden/closed. Events that
+  // arrive with it (sent as the page closes) still count as activity, and leftAt is set after them.
+  const set: Record<string, unknown> = batch.left ? { leftAt: now } : { lastActivityAt: now };
+  if (batch.left && allFresh.length) set.lastActivityAt = new Date(now.getTime() - 1);
   // Checkout messages that arrive after their order was submitted (the browser's last batch can
   // reach the server just after the order request) must not put the old cart back or become the
   // "latest action": the order already emptied the cart.
@@ -280,7 +314,13 @@ async function applySessionUpdates(batch: CleanBatch, allFresh: CleanEvent[], no
   }
   // Latest event (shown on the live cards): not errors / quiet stage updates
   const shown = [...fresh].reverse().find((e) => e.type !== 'checkout_error');
-  if (shown) set.lastEvent = { type: shown.type, path: shown.path, productName: shown.productName, productImage: shown.productImage, at: new Date(now.getTime() - shown.ageMs) };
+  if (shown) {
+    set.lastEvent = {
+      type: shown.type, path: shown.path, productName: shown.productName, productImage: shown.productImage,
+      variantTitle: shown.variantTitle, quantity: shown.quantity, stage: shown.stage, value: shown.value ?? shown.cart?.value,
+      at: new Date(now.getTime() - shown.ageMs),
+    };
+  }
   const lastCart = [...fresh].reverse().find((e) => e.cart);
   if (lastCart?.cart) set.cart = { ...lastCart.cart, updatedAt: now };
   const lastCheckout = [...fresh].reverse().find((e) => e.checkoutId);
