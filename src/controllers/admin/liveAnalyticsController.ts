@@ -15,6 +15,7 @@ import { AnalyticsSession } from '../../models/analyticsSession.model';
 import Order from '../../models/order.model';
 import { liveStatus, SESSION_TIMEOUT_MS } from '../../services/analytics/config';
 import { visitorCard, visitorSummary, activityItem, liveDefinitions } from '../../services/analytics/live/cards';
+import { withVisitorIdentity, visitorIdsMatching } from '../../services/analytics/live/identity';
 import { subscribe, markViewerPresent, LiveMessage } from '../../services/analytics/live/bus';
 
 const RECENT_CARDS_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -57,7 +58,7 @@ export const getLiveVisitors = catchAsync(async (req: Request, res: Response) =>
       serverTime: new Date(now).toISOString(),
       definitions: liveDefinitions(),
       onlineNow: open.filter((s: any) => liveStatus(s, now) === 'active').length,
-      visitors: recent.map((s: any) => visitorCard(s, now)),
+      visitors: (await withVisitorIdentity(recent as any[])).map((s: any) => visitorCard(s, now)),
       presence,
     },
   });
@@ -75,7 +76,8 @@ export const getLiveVisitor = catchAsync(async (req: Request, res: Response) => 
     res.status(404).json({ success: false, message: 'Visit not found' });
     return;
   }
-  res.status(200).json({ success: true, data: { serverTime: new Date().toISOString(), definitions: liveDefinitions(), visitor: visitorCard(session) } });
+  const [named] = await withVisitorIdentity([session as any]);
+  res.status(200).json({ success: true, data: { serverTime: new Date().toISOString(), definitions: liveDefinitions(), visitor: visitorCard(named) } });
 });
 
 /** "All activity": newest first; ?before=<cursor>&limit=&types=a,b&q=&sessionId= */
@@ -96,11 +98,14 @@ export const getLiveActivity = catchAsync(async (req: Request, res: Response) =>
   if (q) {
     const re = new RegExp(escapeRegex(q), 'i');
     const idPrefix = q.replace(/^#/, '').replace(/[^A-Za-z0-9]/g, '');
+    // Known visitors: their visits without a name of their own (same visitor ID) match too
+    const namedVisitorIds = await visitorIdsMatching(re);
     const sessions = await AnalyticsSession.find({
       startedAt: { $gte: new Date(Date.now() - SEARCH_SESSIONS_WINDOW_MS) },
       $or: [
         { 'identity.name': re },
         { 'identity.email': re },
+        ...(namedVisitorIds.length ? [{ visitorId: { $in: namedVisitorIds } }] : []),
         ...(idPrefix.length >= 3 ? [{ visitorId: new RegExp(`^${escapeRegex(idPrefix)}`, 'i') }, { sessionId: new RegExp(`^${escapeRegex(idPrefix)}`, 'i') }] : []),
         { 'geo.city': re },
         { 'geo.country': re },
@@ -129,7 +134,7 @@ export const getLiveActivity = catchAsync(async (req: Request, res: Response) =>
     sessionIds.length ? AnalyticsSession.find({ sessionId: { $in: sessionIds } }).select(SUMMARY_FIELDS).lean() : [],
     orderIds.length ? Order.find({ _id: { $in: orderIds } }).select('orderNumber').lean() : [],
   ]);
-  const summaries = new Map((sessions as any[]).map((s) => [s.sessionId, visitorSummary(s)]));
+  const summaries = new Map((await withVisitorIdentity(sessions as any[])).map((s) => [s.sessionId, visitorSummary(s)]));
   const orderNumbers = new Map((orders as any[]).map((o) => [String(o._id), o.orderNumber ? String(o.orderNumber) : undefined]));
 
   const items = page.map((e) => activityItem(e, summaries.get(e.sessionId) || null, { orderNumber: e.orderId ? orderNumbers.get(String(e.orderId)) : undefined }));

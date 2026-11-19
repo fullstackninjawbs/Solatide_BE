@@ -9,6 +9,7 @@
 import { AnalyticsSession } from '../../../models/analyticsSession.model';
 import { publish, anyViewers } from './bus';
 import { visitorCard, activityItem } from './cards';
+import { withVisitorIdentity } from './identity';
 
 const SESSION_FIELDS =
   'sessionId visitorId startedAt lastActivityAt leftAt isNewVisitor landingPage source device geo counts lastEvent cart checkout identity orderIds';
@@ -16,7 +17,8 @@ const SESSION_FIELDS =
 export async function publishSessionUpdate(sessionId: string, events: any[] = [], extra: { orderNumber?: string } = {}): Promise<void> {
   try {
     if (!(await anyViewers())) return;
-    const session: any = sessionId ? await AnalyticsSession.findOne({ sessionId }).select(SESSION_FIELDS).lean() : null;
+    const found: any = sessionId ? await AnalyticsSession.findOne({ sessionId }).select(SESSION_FIELDS).lean() : null;
+    const session: any = found ? (await withVisitorIdentity([found]))[0] : null;
     const card = session ? visitorCard(session) : null;
     const summary = card
       ? (({ sessionId: sid, visitorId, name, anonymousId, identified, location, device, source, isNewVisitor }) =>

@@ -191,8 +191,10 @@ export async function ingestBatch(batch: CleanBatch, req: { ip?: string; userAge
   // Session belongs to another visitor (tampered / copied storage): ignore
   const existing: any = await AnalyticsSession.findOne({ sessionId }).select('visitorId geo').lean();
   if (existing && existing.visitorId !== visitorId) return { stored: 0, duplicates: 0, sessionCreated: false };
-  // "Left" for a visit we never saw (expired / cleared storage): nothing to mark, never create one
-  if (batch.left && !existing && !batch.events.length) return { stored: 0, duplicates: 0, sessionCreated: false };
+  // A heartbeat or "left" with no recorded action, for a visit we never saw (expired / cleared
+  // storage, or a tab that never viewed a page): nothing to refresh, and never create a visit —
+  // a visit starts with a real recorded action, otherwise it shows as an empty "Visiting" card.
+  if (!existing && !batch.events.length) return { stored: 0, duplicates: 0, sessionCreated: false };
 
   // Visitor (null = first time we see this browser)
   const visitorBefore: any = await AnalyticsVisitor.findOneAndUpdate(
