@@ -211,7 +211,6 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   const durationMs = Math.max(to.getTime() - from.getTime(), 60000);
   const prevFrom = new Date(from.getTime() - durationMs);
   const prevTo = new Date(from.getTime());
-  const liveWindow = new Date(now.getTime() - 5 * 60 * 1000);
 
   // 1. Fire ALL top-level queries concurrently
   const [
@@ -222,23 +221,19 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     prevSessionsList,
     orders,
     prevOrders,
-    cartSessions5m,
-    checkoutSessions5m,
-    purchaseSessions5m,
-    pendingOrdersCount5m,
     cartSessionsFull,
     checkoutSessionsFull,
     purchaseSessionsFull,
     pendingOrdersValueAgg,
     awaitingPaymentAgg,
-    purchasedCount,
     rawEvents,
     countryResultInitial
   ] = await Promise.all([
-    // Visitors right now = genuinely active (same definition as the live activity cards): activity or
-    // a heartbeat within the active window and the tab not closed/hidden since
-    AnalyticsSession.find({ lastActivityAt: { $gte: new Date(now.getTime() - ACTIVE_WINDOW_MS) } }).select('lastActivityAt leftAt').lean()
-      .then((rows: any[]) => [{ count: rows.filter((s) => liveStatus(s, now.getTime()) === 'active').length }]),
+    // Visits active right now (same definition as the live activity cards): activity or a heartbeat
+    // within the active window and the tab not closed/hidden since
+    AnalyticsSession.find({ lastActivityAt: { $gte: new Date(now.getTime() - ACTIVE_WINDOW_MS) } })
+      .select('lastActivityAt leftAt cart.itemCount checkout.checkoutId orderIds').lean()
+      .then((rows: any[]) => rows.filter((s) => liveStatus(s, now.getTime()) === 'active')),
     Order.aggregate([
       { $match: buildRevenueMatch({ createdAt: { $gte: from, $lte: to } }) },
       { $group: { _id: null, total: { $sum: netRevenueExpr } } },
@@ -251,11 +246,6 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     AnalyticsEvent.distinct('sessionId', { timestamp: { $gte: prevFrom, $lte: prevTo } }),
     Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: from, $lte: to } })),
     Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: prevFrom, $lte: prevTo } })),
-    AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: liveWindow } }),
-    AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: liveWindow } }),
-    AnalyticsEvent.distinct('sessionId', { ...PURCHASE_EVENT, timestamp: { $gte: liveWindow } }),
-    // Still checking out = unpaid and not a submitted bank transfer order
-    Order.countDocuments(unpaidMatch({ $gte: liveWindow }, false)),
     AnalyticsEvent.distinct('sessionId', { eventType: 'add_to_cart', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { eventType: 'begin_checkout', timestamp: { $gte: from, $lte: to } }),
     AnalyticsEvent.distinct('sessionId', { ...PURCHASE_EVENT, timestamp: { $gte: from, $lte: to } }),
@@ -267,7 +257,6 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
       { $match: unpaidMatch({ $gte: from, $lte: to }, true) },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$grandTotal', '$totalAmount'] } }, count: { $sum: 1 } } }
     ]),
-    Order.countDocuments(buildRevenueMatch({ createdAt: { $gte: liveWindow } })),
     AnalyticsEvent.find({}).sort({ timestamp: -1 }).limit(40).lean(),
     AnalyticsEvent.aggregate([
       { $match: { timestamp: { $gte: from, $lte: to }, country: { $exists: true, $nin: [null, ''] } } },
@@ -280,7 +269,8 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
   ]);
 
   // 2. Extract values
-  const visitorsRightNow = liveResult[0]?.count ?? 0;
+  const activeNow = liveResult as any[];
+  const visitorsRightNow = activeNow.length;
   const totalSales = currentSalesAgg[0]?.total ?? 0;
   const prevTotalSales = prevSalesAgg[0]?.total ?? 0;
   const totalSalesChangePct = prevTotalSales > 0 ? Math.round(((totalSales - prevTotalSales) / prevTotalSales) * 100) : totalSales > 0 ? 100 : 0;
@@ -291,10 +281,12 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
 
   const ordersChangePct = prevOrders > 0 ? Math.round(((orders - prevOrders) / prevOrders) * 100) : orders > 0 ? 100 : 0;
 
-  const checkoutSet5m = new Set(checkoutSessions5m as string[]);
-  const purchaseSet5m = new Set(purchaseSessions5m as string[]);
-  const activeCartsCount = (cartSessions5m as string[]).filter(s => !checkoutSet5m.has(s) && !purchaseSet5m.has(s)).length;
-  const checkingOutCount = Math.max((checkoutSessions5m as string[]).filter(s => !purchaseSet5m.has(s)).length, pendingOrdersCount5m);
+  // Customer behaviour right now: the same visitors as "Visitors right now", each counted once at their
+  // furthest step this visit (placed an order > in checkout > items in the cart).
+  const placedOrder = (s: any) => Array.isArray(s.orderIds) && s.orderIds.length > 0;
+  const purchasedCount = activeNow.filter(placedOrder).length;
+  const checkingOutCount = activeNow.filter((s) => !placedOrder(s) && !!s.checkout?.checkoutId).length;
+  const activeCartsCount = activeNow.filter((s) => !placedOrder(s) && !s.checkout?.checkoutId && (s.cart?.itemCount || 0) > 0).length;
 
   const funnelActiveCarts = new Set([...(cartSessionsFull as string[]), ...(checkoutSessionsFull as string[]), ...(purchaseSessionsFull as string[])]).size;
   const funnelCheckingOut = new Set([...(checkoutSessionsFull as string[]), ...(purchaseSessionsFull as string[])]).size;
@@ -368,6 +360,7 @@ export const getOverview = catchAsync(async (req: Request, res: Response) => {
     data: {
       visitorsRightNow,
       liveVisitors: visitorsRightNow, // backward compatibility
+      activeWindowSeconds: Math.round(ACTIVE_WINDOW_MS / 1000),
       totalSales,
       totalSalesChangePct,
       sessions,
