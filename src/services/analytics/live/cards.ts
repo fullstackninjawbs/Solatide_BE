@@ -36,12 +36,48 @@ export interface VisitorCard extends VisitorSummary {
   landingPage?: string;
   lastEvent: Record<string, unknown> | null;
   counts: Record<string, number>;
-  cart: { itemCount: number; value: number } | null;
+  cart: { itemCount: number; value: number; items: CartLine[]; updatedAt?: string } | null;
   checkoutStage?: string;
   orderCount: number;
 }
 
-const iso = (d: unknown): string | undefined => (d ? new Date(d as any).toISOString() : undefined);
+export const iso = (d: unknown): string | undefined => (d ? new Date(d as any).toISOString() : undefined);
+
+/** One cart line as the admin sees it (what the storefront reported; never prices recalculated). */
+export interface CartLine {
+  name?: string;
+  variantTitle?: string;
+  image?: string;
+  path?: string;
+  quantity: number;
+  unitPrice?: number;
+  lineTotal?: number;
+}
+
+const MAX_CART_LINES = 30;
+
+export function cartLines(items: any[] | undefined): CartLine[] {
+  if (!Array.isArray(items)) return [];
+  return items.slice(0, MAX_CART_LINES).map((i) => {
+    const quantity = typeof i?.quantity === 'number' && i.quantity > 0 ? i.quantity : 1;
+    const unitPrice = typeof i?.unitPrice === 'number' ? i.unitPrice : undefined;
+    return {
+      name: i?.name || undefined,
+      variantTitle: i?.variantTitle || undefined,
+      image: i?.image || undefined,
+      path: i?.path || undefined,
+      quantity,
+      unitPrice,
+      lineTotal: unitPrice !== undefined ? Math.round(unitPrice * quantity * 100) / 100 : undefined,
+    };
+  });
+}
+
+/** The cart a visit has now (null = never had one). */
+export function cartOf(cart: any): VisitorCard['cart'] {
+  if (!cart) return null;
+  return { itemCount: cart.itemCount || 0, value: cart.value || 0, items: cartLines(cart.items), updatedAt: iso(cart.updatedAt) };
+}
 
 export function visitorSummary(s: any): VisitorSummary {
   const name = s?.identity?.name || s?.identity?.email || undefined;
@@ -86,7 +122,7 @@ export function visitorCard(s: any, now = Date.now()): VisitorCard {
       addToCart: s.counts?.addToCart || 0,
       cartUpdates: s.counts?.cartUpdates || 0,
     },
-    cart: s.cart ? { itemCount: s.cart.itemCount || 0, value: s.cart.value || 0 } : null,
+    cart: cartOf(s.cart),
     checkoutStage: s.checkout?.stage || undefined,
     orderCount: Array.isArray(s.orderIds) ? s.orderIds.length : 0,
   };

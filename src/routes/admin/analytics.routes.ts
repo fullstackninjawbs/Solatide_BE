@@ -19,6 +19,7 @@ router.get('/attribution', analyticsController.getAttributionStats);
 // Live customer activity (dashboard)
 router.get('/live/visitors', liveController.getLiveVisitors);
 router.get('/live/visitors/:sessionId', liveController.getLiveVisitor);
+router.get('/live/visitors/:sessionId/profile', liveController.getVisitorProfile);
 router.get('/live/activity', liveController.getLiveActivity);
 router.get('/live/stream', liveController.streamLive);
 
