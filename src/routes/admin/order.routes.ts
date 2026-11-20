@@ -10,6 +10,7 @@ import {
   resendPaymentDetails,
   updateOrder,
   createShipment,
+  refreshShipment,
   refundOrder,
   getOrderRefunds,
   createAdminOrder,
@@ -93,6 +94,8 @@ router.get('/:id/refunds', getOrderRefunds);
 
 // Shipping labels & tracking
 router.post('/:id/shipment', shipping, createShipment);
+// Read-only: sync tracking / label from Starshipit (never buys a label)
+router.post('/:id/shipment/refresh', shipping, refreshShipment);
 router.get('/:id/tracking', shipping, getOrderTracking);
 router.post('/:id/tracking', shipping, updateManualTracking);
 router.post('/:id/revalidate-address', shipping, revalidateOrderAddress);

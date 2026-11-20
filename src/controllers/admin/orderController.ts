@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import Order from '../../models/order.model';
 import Product from '../../models/product.model';
 import StoreSettings from '../../models/StoreSettings';
-import { starshipitService } from '../../services/shipping/starshipit.service';
+import { starshipitService, labelWarning } from '../../services/shipping/starshipit.service';
 import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail, sendShipmentConfirmationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
 import { syncCarrierScans } from '../../services/shipping/starshipitTracking';
@@ -14,7 +14,6 @@ import Refund from '../../models/Refund';
 import Customer from '../../models/Customer';
 import AddressValidationService from '../../services/addressValidation.service';
 import axios from 'axios';
-import { starshipitRequest } from '../../services/shipping/starshipitHttp';
 import { PAYMENT_STATUSES, PaymentStatus } from '../../domain/orderTransitions';
 import { validateRefundRequest } from '../../domain/money';
 import { generateOrderAccessToken } from '../../domain/orderAccess';
@@ -28,8 +27,6 @@ import { decrementLineForOrder, LowStockCrossing, releaseReservedStock } from '.
 import { releaseDiscountUse } from '../../services/discounts/discountService';
 import { sendOrderLowStockAlert } from '../../services/lowStockAlert';
 import { parseQuantity, CheckoutValidationError, MAX_LINE_QUANTITY } from '../../services/orders/checkoutItems';
-
-const STARSHIPIT_TIMEOUT_MS = 15000;
 
 /**
  * GET /api/admin/orders
@@ -486,216 +483,260 @@ export const updateOrder = catchAsync(async (req: Request, res: Response, next: 
  *
  * Create an EasyPost shipment and purchase the lowest rate label.
  */
+/**
+ * Shipping labels (Starshipit). Buying a label costs money on the carrier account every time
+ * (POST /orders/shipment is not idempotent), so:
+ *  - createShipment is the ONLY place a label is bought, through starshipitService (which reads the
+ *    Starshipit order first and never buys when it already has a label, and never retries a purchase)
+ *  - an order that already has tracking is never sent for another label
+ *  - one purchase per order at a time (shipmentLockUntil, atomic — double clicks, two admins, bulk + single)
+ *  - after a purchase Starshipit didn't confirm, no new purchase for LABEL_UNCONFIRMED_HOLD_MS
+ *  - after a confirmed purchase whose tracking hasn't synced yet (labelPurchasedAt), no new purchase at all
+ *  - refreshShipment ("Check Starshipit now") only reads; it can never buy a label
+ */
+const LABEL_UNCONFIRMED_HOLD_MS = 15 * 60 * 1000;
+// Longer than the slowest possible Starshipit run (reads with retries + 30 s purchase); released as soon as the request ends
+const SHIPMENT_LOCK_MS = 5 * 60 * 1000;
+const LABEL_PENDING_STATUS = 'Order Created in Starshipit (Label Pending)';
+
+type StarshipitShipDetails = { trackingNumber?: string; trackingCarrier?: string; labelUrl?: string; trackingUrl?: string; shipmentStatus?: string };
+
+/** Saves Starshipit's tracking / label on the order and ships it when there is a tracking number (email at most once). */
+async function applyStarshipitDetails(order: any, d: StarshipitShipDetails, pendingStatus: string, opts: { markProcessing?: boolean } = {}) {
+  const wasShippedBefore = order.status === 'shipped';
+  const trackingNumber = order.trackingNumber || d.trackingNumber || '';
+  const trackingCarrier = order.trackingCarrier || d.trackingCarrier || '';
+  const labelUrl = d.labelUrl || order.labelUrl || '';
+  // Carrier tracking link (Starshipit's own URL preferred; no generic Google-search link)
+  const trackingUrl = buildTrackingUrl(trackingCarrier, trackingNumber, order.trackingUrl || d.trackingUrl || '');
+
+  if (trackingNumber) order.trackingNumber = trackingNumber;
+  if (trackingCarrier) order.trackingCarrier = trackingCarrier;
+  if (labelUrl) order.labelUrl = labelUrl;
+  if (trackingUrl) order.trackingUrl = trackingUrl;
+  order.shipmentStatus = d.shipmentStatus || (trackingNumber ? 'Label Generated' : pendingStatus);
+
+  if (trackingNumber) {
+    order.status = 'shipped';
+    if (!wasShippedBefore || !order.shippedAt) order.shippedAt = new Date();
+    order.trackingSource = 'starshipit';
+    order.labelUnconfirmedAt = undefined;
+    order.labelPurchasedAt = undefined;
+    applyTrackingStage(order, 'label_created');
+  } else {
+    if (opts.markProcessing && !wasShippedBefore) order.status = 'processing';
+    // Delivery stage: international orders are only created in Starshipit (the label is printed in
+    // the Starshipit dashboard, then the webhook syncs it)
+    applyTrackingStage(order, 'label_pending');
+  }
+  await order.save();
+
+  // At most once per order (Starshipit's "Printed" webhook can race this request)
+  if (order.trackingNumber && !wasShippedBefore) await sendShipmentEmailOnce(order);
+}
+
 export const createShipment = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-  const order = await Order.findById(req.params.id);
-  if (!order) {
+  const found = await Order.findById(req.params.id);
+  if (!found) {
     return next(new AppError('No order found with that ID', 404));
   }
 
-  if (order.source === 'shopify_import' || order.tags?.includes('shopify-import')) {
+  if (found.source === 'shopify_import' || found.tags?.includes('shopify-import')) {
     return next(new AppError('Cannot create shipping labels for historical imported Shopify orders.', 400));
   }
 
   // Tracking was entered manually (label made outside Starshipit): don't create a second label
-  if (order.trackingSource === 'manual' && order.trackingNumber) {
+  if (found.trackingSource === 'manual' && found.trackingNumber) {
     return next(new AppError('This order already has tracking entered manually. Use Edit tracking to change it.', 400));
   }
 
-  // ─── If order is already in Starshipit, skip import and try to pull latest details / generate label ───
-  if (order.starshipitOrderId) {
-    const starshipitOrderId = order.starshipitOrderId;
-    try {
-      // Try to generate the label (idempotent — Starshipit ignores if already generated)
-      let trackingNumber = order.trackingNumber || '';
-      let trackingCarrier = order.trackingCarrier || '';
-      let labelUrl = order.labelUrl || '';
-      let trackingUrl = order.trackingUrl || '';
-      let shipmentStatus = order.shipmentStatus || 'Order Created in Starshipit';
-      // Orders already shipped (incl. before shipmentEmailSentAt existed) have had their email
-      const wasShippedBefore = order.status === 'shipped';
-      let warning: string | undefined;
-
-      try {
-        const axios = require('axios');
-        const headers = {
-          'StarShipIT-Api-Key': process.env.STARSHIPIT_API_KEY || '',
-          'Ocp-Apim-Subscription-Key': process.env.STARSHIPIT_SUBSCRIPTION_KEY || '',
-          'Content-Type': 'application/json'
-        };
-        const labelResponse = await starshipitRequest(
-          'post',
-          'https://api.starshipit.com/api/orders/shipment',
-          { order_id: parseInt(starshipitOrderId) },
-          { headers, timeout: STARSHIPIT_TIMEOUT_MS },
-          { repeatable: true }
-        );
-        if (labelResponse.data && labelResponse.data.success !== false) {
-          const shippedOrder = labelResponse.data?.order || labelResponse.data?.orders?.[0];
-          if (shippedOrder) {
-            trackingNumber = trackingNumber || shippedOrder.tracking_number || '';
-            trackingCarrier = trackingCarrier || shippedOrder.carrier || '';
-            labelUrl = shippedOrder.label_url || shippedOrder.pdf_url || shippedOrder.tracking_url || labelUrl;
-            shipmentStatus = trackingNumber ? 'Label Generated' : shipmentStatus;
-          }
-        }
-      } catch (labelErr: any) {
-        warning = `Label generation pending in Starshipit — check dashboard`;
-        console.warn(`Label generation attempt failed (already imported) for order ${order.orderNumber ?? order._id}: ${labelErr.response?.status ?? ''} ${labelErr.message}`);
-      }
-
-      // Always do a fresh getShipmentDetails to sync any new tracking data
-      try {
-        const details = await starshipitService.getShipmentDetails(starshipitOrderId);
-        trackingNumber = trackingNumber || details.trackingNumber || '';
-        trackingCarrier = trackingCarrier || details.trackingCarrier || '';
-        labelUrl = labelUrl || details.labelUrl || '';
-        trackingUrl = trackingUrl || details.trackingUrl || '';
-        if (details.shipmentStatus && details.shipmentStatus !== '') shipmentStatus = details.shipmentStatus;
-      } catch (detailsErr: any) {
-        console.warn('getShipmentDetails failed for existing order:', detailsErr.message);
-      }
-
-      // Carrier tracking link (Starshipit's own URL preferred; no generic Google-search link)
-      trackingUrl = buildTrackingUrl(trackingCarrier, trackingNumber, trackingUrl);
-
-      if (trackingNumber) order.trackingNumber = trackingNumber;
-      if (trackingCarrier) order.trackingCarrier = trackingCarrier;
-      if (labelUrl) order.labelUrl = labelUrl;
-      if (trackingUrl) order.trackingUrl = trackingUrl;
-      order.shipmentStatus = trackingNumber ? 'Label Generated' : (shipmentStatus || 'Order Created in Starshipit (Label Pending)');
-      if (trackingNumber) { order.status = 'shipped'; order.shippedAt = new Date(); }
-      if (trackingNumber) { order.trackingSource = 'starshipit'; applyTrackingStage(order, 'label_created'); }
-      else applyTrackingStage(order, 'label_pending');
-
-      await order.save();
-
-      // Only when this refresh ships the order, and at most once (the webhook may be racing it)
-      if (order.trackingNumber && !wasShippedBefore) await sendShipmentEmailOnce(order);
-
-      return res.status(200).json({
-        success: true,
-        message: warning
-          ? `Order already in Starshipit (ID: ${starshipitOrderId}). Note: ${warning}`
-          : `Shipment details refreshed from Starshipit (ID: ${starshipitOrderId})`,
-        data: { order }
-      });
-    } catch (err: any) {
-      return next(new AppError(err.message || 'Failed to refresh shipment from Starshipit', 500));
-    }
+  // Cancelled / refunded / deleted orders are never shipped (a label would be wasted money)
+  if (found.isDeleted || found.status === 'cancelled' || ['cancelled', 'failed', 'refunded'].includes(String(found.paymentStatus))) {
+    return next(new AppError('This order is cancelled, refunded or deleted, so no shipping label can be created.', 400));
   }
 
-  if (!order.shippingAddressObj) {
-    return next(new AppError('Order missing shipping address', 400));
+  // Already has a label: never buy another one (bulk runs, repeat clicks)
+  if (found.trackingNumber) {
+    return res.status(200).json({
+      success: true,
+      message: `This order already has a label (tracking ${found.trackingNumber}). No new label was created.`,
+      data: { order: found },
+    });
   }
 
-  const isManual = order.source === 'admin_manual';
-
-  if (['payid', 'bank_transfer', 'international_bank_transfer'].includes(String(order.paymentMethod)) && !['paid', 'partially_refunded'].includes(order.paymentStatus)) {
+  const isManual = found.source === 'admin_manual';
+  if (['payid', 'bank_transfer', 'international_bank_transfer'].includes(String(found.paymentMethod)) && !['paid', 'partially_refunded'].includes(found.paymentStatus)) {
     return next(new AppError('Cannot create shipment: mark the order as paid first', 400));
   }
   // tagadaPaymentStatus: legacy field on orders from the retired TagadaPay checkout — still honoured
   // so an unpaid legacy card order never becomes shippable.
-  if (!isManual && (order.paymentStatus === 'pending' || order.tagadaPaymentStatus === 'pending')) {
+  if (!isManual && (found.paymentStatus === 'pending' || found.tagadaPaymentStatus === 'pending')) {
     return next(new AppError('Cannot create shipment: Payment is still pending', 400));
-  }
-
-  if (order.addressValidation?.needsReview) {
-    return next(new AppError('Cannot create shipment: Shipping address needs review and must be verified first', 400));
-  }
-
-  // Get Store Settings for 'From' address
-  const settings = await StoreSettings.findOne();
-  if (!settings || !settings.shippingOrigin) {
-    return next(new AppError('Store shipping origin address not configured in settings', 400));
   }
 
   if (!process.env.STARSHIPIT_API_KEY || !process.env.STARSHIPIT_SUBSCRIPTION_KEY) {
     return next(new AppError('Starshipit API keys are not configured', 500));
   }
 
-  // Weight of the contents: per line from the variant weights (products[], or legacy lineItems on old TagadaPay orders);
-  // missing/invalid weights use a fallback and are reported to the admin
-  const weight = await computeShipmentWeight(order);
-  const weightKg = weight.itemsGrams / 1000;
-  // One parcel: the package selected on the order's products (largest wins), else the Default
-  const packageChoice = await chooseShipmentPackage(weight.lines);
-  const shipmentWarnings = [...weight.warnings, ...packageChoice.warnings];
+  // A label was already bought (Starshipit confirmed it) but its tracking hasn't synced: look, never buy again
+  if (found.starshipitOrderId && found.labelPurchasedAt) {
+    const d = await starshipitService.readDetails(found.starshipitOrderId).catch(() => null);
+    if (d?.trackingNumber && !d.archived) {
+      await applyStarshipitDetails(found, d, LABEL_PENDING_STATUS);
+      return res.status(200).json({ success: true, message: 'Label found in Starshipit — tracking added. No new label was created.', data: { order: found } });
+    }
+    return next(new AppError('A label was already bought for this order in Starshipit, but its tracking number has not synced yet. No new label was created. Use "Check Starshipit now" in a minute, or open the order in Starshipit (Reprint label is free; never use Redo shipping).', 409));
+  }
+
+  // A recent purchase that Starshipit never confirmed may still turn up: look (read-only), don't buy
+  if (found.starshipitOrderId && found.labelUnconfirmedAt && Date.now() - new Date(found.labelUnconfirmedAt).getTime() < LABEL_UNCONFIRMED_HOLD_MS) {
+    const d = await starshipitService.readDetails(found.starshipitOrderId).catch(() => null);
+    if (d?.trackingNumber && !d.archived) {
+      await applyStarshipitDetails(found, d, LABEL_PENDING_STATUS);
+      return res.status(200).json({ success: true, message: 'The earlier label request did go through in Starshipit — tracking added. No new label was created.', data: { order: found } });
+    }
+    const mins = Math.max(1, Math.ceil((LABEL_UNCONFIRMED_HOLD_MS - (Date.now() - new Date(found.labelUnconfirmedAt).getTime())) / 60000));
+    return next(new AppError(`A label request for this order was not confirmed by Starshipit yet. To avoid a double charge, a new label can't be created for another ${mins} min. Use "Check Starshipit now", or check the order in Starshipit (Printed = done; use Reprint label, not Redo shipping).`, 409));
+  }
+
+  // Only needed when the order still has to be sent to Starshipit
+  let settings: any = null;
+  let weight: any = null;
+  let packageChoice: any = null;
+  let shipmentWarnings: string[] = [];
+  if (!found.starshipitOrderId) {
+    if (!found.shippingAddressObj) {
+      return next(new AppError('Order missing shipping address', 400));
+    }
+    if (found.addressValidation?.needsReview) {
+      return next(new AppError('Cannot create shipment: Shipping address needs review and must be verified first', 400));
+    }
+    // Get Store Settings for 'From' address
+    settings = await StoreSettings.findOne();
+    if (!settings || !settings.shippingOrigin) {
+      return next(new AppError('Store shipping origin address not configured in settings', 400));
+    }
+    // Weight of the contents: per line from the variant weights (products[], or legacy lineItems on old TagadaPay orders);
+    // missing/invalid weights use a fallback and are reported to the admin
+    weight = await computeShipmentWeight(found);
+    // One parcel: the package selected on the order's products (largest wins), else the Default
+    packageChoice = await chooseShipmentPackage(weight.lines);
+    shipmentWarnings = [...weight.warnings, ...packageChoice.warnings];
+  }
+
+  // One label purchase per order at a time (atomic): a second click / admin / bulk run waits
+  // The same conditions as the checks above are part of the lock, so a request that finished in the
+  // meantime (tracking saved, or a hold set) can never be followed by a second purchase.
+  const now = new Date();
+  const order: any = await Order.findOneAndUpdate(
+    {
+      _id: found._id,
+      trackingNumber: { $in: [null, ''] },
+      labelPurchasedAt: null,
+      $and: [
+        { $or: [{ shipmentLockUntil: null }, { shipmentLockUntil: { $lte: now } }] },
+        { $or: [{ labelUnconfirmedAt: null }, { labelUnconfirmedAt: { $lte: new Date(now.getTime() - LABEL_UNCONFIRMED_HOLD_MS) } }] },
+      ],
+    },
+    { $set: { shipmentLockUntil: new Date(now.getTime() + SHIPMENT_LOCK_MS) } },
+    { new: true }
+  );
+  if (!order) {
+    const latest: any = await Order.findById(found._id);
+    if (latest?.trackingNumber) {
+      return res.status(200).json({ success: true, message: `This order already has a label (tracking ${latest.trackingNumber}). No new label was created.`, data: { order: latest } });
+    }
+    if (latest?.labelPurchasedAt || latest?.labelUnconfirmedAt) {
+      return next(new AppError('A label request for this order has just been made and is not confirmed yet. No new label was created. Use "Check Starshipit now" in a minute.', 409));
+    }
+    return next(new AppError('A label is already being created for this order. Please wait a moment, then refresh.', 409));
+  }
 
   try {
-    // 1. Create Shipment via Service (parcel weight = contents + empty default package)
+    // Already in Starshipit: buy the label only if Starshipit doesn't have one yet
+    if (order.starshipitOrderId) {
+      const outcome = await starshipitService.purchaseLabel(order.starshipitOrderId);
+      const details = 'details' in outcome && outcome.details ? outcome.details : {};
+      if (outcome.kind === 'unconfirmed') order.labelUnconfirmedAt = new Date();
+      if (outcome.kind === 'purchased' && !(details as any).trackingNumber) order.labelPurchasedAt = new Date();
+      await applyStarshipitDetails(order, details, LABEL_PENDING_STATUS);
+      const warning = labelWarning(outcome);
+      return res.status(200).json({
+        success: true,
+        message: outcome.kind === 'existing'
+          ? 'Starshipit already had a label for this order — tracking synced. No new label was created.'
+          : order.trackingNumber ? 'Shipping label created' : `Order is in Starshipit (ID: ${order.starshipitOrderId}).`,
+        ...(warning ? { warning } : {}),
+        data: { order },
+      });
+    }
+
+    // 1. Send to Starshipit (or reuse the order an earlier attempt created), then buy the label at most once
     const shippingResult = await starshipitService.createShipment({
       order,
       origin: settings.shippingOrigin,
-      weightKg,
+      weightKg: weight.itemsGrams / 1000,
       weight,
       packageChoice,
     });
 
-    let { trackingNumber, trackingCarrier, labelUrl, warning } = shippingResult as any;
-    const parcel = (shippingResult as any).parcel;
-    let shipmentStatus = trackingNumber ? 'Label Generated' : (warning ? 'Order Created in Starshipit (Label Pending)' : 'Order Created in Starshipit');
-    let trackingUrl = '';
-
-    if (!trackingNumber || !labelUrl) {
-      try {
-        let details = await starshipitService.getShipmentDetails(shippingResult.orderId);
-        // Retry once if we still lack both
-        if (!details.trackingNumber && !details.labelUrl) {
-          details = await starshipitService.getShipmentDetails(shippingResult.orderId);
-        }
-        trackingNumber = trackingNumber || details.trackingNumber;
-        trackingCarrier = trackingCarrier || details.trackingCarrier;
-        labelUrl = labelUrl || details.labelUrl;
-        trackingUrl = trackingUrl || details.trackingUrl || '';
-        if (details.shipmentStatus) shipmentStatus = details.shipmentStatus;
-      } catch (detailsError: any) {
-        console.warn('Failed to fetch shipment details, saving orderId only:', detailsError.message);
-      }
-    }
-
-    // Carrier tracking link (Starshipit's own URL preferred; no generic Google-search link)
-    trackingUrl = buildTrackingUrl(trackingCarrier, trackingNumber, trackingUrl);
-
     // 2. Update Order
     order.starshipitOrderId = shippingResult.orderId;
-    if (trackingNumber) order.trackingNumber = trackingNumber;
-    if (trackingCarrier) order.trackingCarrier = trackingCarrier;
-    if (labelUrl) order.labelUrl = labelUrl;
-    if (trackingUrl) order.trackingUrl = trackingUrl;
-    order.shipmentStatus = shipmentStatus;
-    if (parcel) {
-      order.shipmentWeight = { ...parcel, warnings: shipmentWarnings, calculatedAt: new Date() };
+    if (shippingResult.parcel) {
+      order.shipmentWeight = { ...shippingResult.parcel, warnings: shipmentWarnings, calculatedAt: new Date() };
     }
-
-    if (trackingNumber) {
-      order.status = 'shipped';
-      order.shippedAt = new Date();
-    } else {
-      order.status = 'processing';
-    }
-
-    // Delivery stage: AU labels come back straight away; international orders are only created in
-    // Starshipit (the label is printed in the Starshipit dashboard, then the webhook syncs it)
-    if (trackingNumber) { order.trackingSource = 'starshipit'; applyTrackingStage(order, 'label_created'); }
-    else applyTrackingStage(order, 'label_pending');
-
-    await order.save();
-
-    // At most once per order (Starshipit's "Printed" webhook can race this request)
-    if (order.trackingNumber) await sendShipmentEmailOnce(order);
+    if (shippingResult.outcome === 'unconfirmed') order.labelUnconfirmedAt = new Date();
+    if (shippingResult.outcome === 'purchased' && !shippingResult.trackingNumber) order.labelPurchasedAt = new Date();
+    const warning = shippingResult.warning;
+    await applyStarshipitDetails(order, shippingResult, warning ? LABEL_PENDING_STATUS : 'Order Created in Starshipit', { markProcessing: true });
 
     // Shown to the admin as a warning toast (weight fallbacks and/or a Starshipit warning)
     const warnings = [...shipmentWarnings, ...(warning ? [warning] : [])];
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: warning ? `Order imported to Starshipit (ID: ${shippingResult.orderId}). Note: ${warning}` : 'Shipment created successfully',
+      message: shippingResult.outcome === 'existing'
+        ? 'Starshipit already had a label for this order — tracking synced. No new label was created.'
+        : warning ? `Order imported to Starshipit (ID: ${shippingResult.orderId}). Note: ${warning}` : 'Shipment created successfully',
       ...(warnings.length ? { warning: warnings.join(' · ') } : {}),
       data: { order },
     });
   } catch (error: any) {
     console.error(`Starshipit Error for order ${order.orderNumber ?? order._id}: ${error?.message}`);
     return next(new AppError(error.message || 'Failed to create shipment with Starshipit', 500));
+  } finally {
+    await Order.updateOne({ _id: order._id }, { $unset: { shipmentLockUntil: 1 } }).catch(() => undefined);
   }
+});
+
+/** "Check Starshipit now": reads the order's tracking / label from Starshipit. Never buys a label. */
+export const refreshShipment = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order: any = await Order.findById(req.params.id);
+  if (!order) return next(new AppError('No order found with that ID', 404));
+  if (!order.starshipitOrderId) return next(new AppError('This order is not in Starshipit yet.', 400));
+  if (order.trackingSource === 'manual' && order.trackingNumber) {
+    return next(new AppError('This order has tracking entered manually. Use Edit tracking to change it.', 400));
+  }
+
+  let d: Awaited<ReturnType<typeof starshipitService.readDetails>>;
+  try {
+    d = await starshipitService.readDetails(order.starshipitOrderId);
+  } catch {
+    return next(new AppError('Could not reach Starshipit. Nothing was changed — please try again in a minute.', 502));
+  }
+  if (!d) return next(new AppError('This order was not found in Starshipit.', 404));
+  if (d.archived && !order.trackingNumber) {
+    return res.status(200).json({ success: true, message: 'This order is archived in Starshipit, so nothing was synced. Create the label in Starshipit, or add the tracking manually.', data: { order } });
+  }
+
+  const hadTracking = Boolean(order.trackingNumber);
+  await applyStarshipitDetails(order, d, order.shipmentStatus || LABEL_PENDING_STATUS);
+  res.status(200).json({
+    success: true,
+    message: order.trackingNumber
+      ? (hadTracking ? 'Up to date with Starshipit.' : 'Label found in Starshipit — tracking added.')
+      : 'Checked Starshipit: no label yet. Print it in Starshipit — the tracking syncs back here automatically.',
+    data: { order },
+  });
 });
 
 /** Why tracking can't be added to this order yet (null = it can). Editing existing tracking is always allowed. */

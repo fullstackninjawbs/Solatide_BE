@@ -208,6 +208,12 @@ export interface IOrder extends mongoose.Document {
   /** @deprecated EasyPost is being replaced by Starshipit */
   easyPostShipmentId?: string;
   starshipitOrderId?: string;
+  /** Label purchase in progress (admin/orderController createShipment): blocks a second, parallel purchase. */
+  shipmentLockUntil?: Date;
+  /** Last label purchase got no clear answer from Starshipit (may have been bought): no new purchase for a while. */
+  labelUnconfirmedAt?: Date;
+  /** Starshipit confirmed a label purchase but no tracking number came back yet: never buy another until it syncs. */
+  labelPurchasedAt?: Date;
   /** Scheduled tracking refresh: consecutive "order not found in Starshipit" answers (stops at 3). */
   starshipitTrackingMisses?: number;
   /** Scheduled tracking refresh: when this order was last checked (oldest first, so every open order gets its turn). */
@@ -472,6 +478,9 @@ const orderSchema = new mongoose.Schema<IOrder>(
     shippedAt: { type: Date },
     easyPostShipmentId: { type: String },
     starshipitOrderId: { type: String },
+    shipmentLockUntil: { type: Date },
+    labelUnconfirmedAt: { type: Date },
+    labelPurchasedAt: { type: Date },
     starshipitTrackingMisses: { type: Number },
     starshipitCheckedAt: { type: Date },
     trackingSource: { type: String, enum: ['starshipit', 'manual'] },

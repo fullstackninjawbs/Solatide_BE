@@ -8,10 +8,12 @@ import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
  *
  * Retries (up to 3 attempts, 1 s / 3 s backoff, honouring Retry-After):
  *  - always on 429 / 503 (request was not processed)
- *  - on 502 / 504 and network errors only for requests that are safe to repeat
- *    (GET, and POST /orders/shipment which re-prints the same order's label).
+ *  - on 502 / 504 and network errors only for requests that are safe to repeat (GET).
  *    POST /orders (create) is NOT repeated on those, so a slow-but-successful create
  *    can never produce a duplicate Starshipit order.
+ *  - Charging calls (`charges: true`, POST /orders/shipment = buys a carrier label) are only
+ *    repeated on 429 (Starshipit refused it outright). Every new POST /orders/shipment buys a
+ *    NEW label, so a timeout / 5xx is never retried: the caller checks Starshipit instead.
  */
 const MIN_INTERVAL_MS = 500;
 const MAX_ATTEMPTS = 3;
@@ -39,8 +41,9 @@ function retryDelay(err: any, attempt: number): number {
   return BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)];
 }
 
-function shouldRetry(err: any, repeatable: boolean): boolean {
+export function shouldRetry(err: any, repeatable: boolean, charges = false): boolean {
   const status = err?.response?.status;
+  if (charges) return status === 429;
   if (status === 429 || status === 503) return true;
   if (!repeatable) return false;
   if (status === 502 || status === 504) return true;
@@ -52,13 +55,13 @@ export async function starshipitRequest<T = any>(
   url: string,
   data: unknown,
   config: AxiosRequestConfig,
-  opts: { repeatable: boolean }
+  opts: { repeatable: boolean; charges?: boolean }
 ): Promise<AxiosResponse<T>> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await throttle(() => (method === 'get' ? axios.get<T>(url, config) : axios.post<T>(url, data, config)));
     } catch (err: any) {
-      if (attempt >= MAX_ATTEMPTS || !shouldRetry(err, opts.repeatable)) throw err;
+      if (attempt >= MAX_ATTEMPTS || !shouldRetry(err, opts.repeatable, opts.charges)) throw err;
       const delay = retryDelay(err, attempt);
       console.warn(`[Starshipit] ${method.toUpperCase()} ${url.replace(/^https?:\/\/[^/]+/, '')} failed (${err?.response?.status ?? err?.code}); retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delay} ms`);
       await new Promise((r) => setTimeout(r, delay));
