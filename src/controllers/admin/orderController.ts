@@ -578,9 +578,11 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     return next(new AppError('Starshipit API keys are not configured', 500));
   }
 
+  const hints = { orderNumber: found.orderNumber, since: (found as any).createdAt };
+
   // A label was already bought (Starshipit confirmed it) but its tracking hasn't synced: look, never buy again
   if (found.starshipitOrderId && found.labelPurchasedAt) {
-    const d = await starshipitService.readDetails(found.starshipitOrderId).catch(() => null);
+    const d = await starshipitService.readDetails(found.starshipitOrderId, hints).catch(() => null);
     if (d?.trackingNumber && !d.archived) {
       await applyStarshipitDetails(found, d, LABEL_PENDING_STATUS);
       return res.status(200).json({ success: true, message: 'Label found in Starshipit — tracking added. No new label was created.', data: { order: found } });
@@ -590,7 +592,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
 
   // A recent purchase that Starshipit never confirmed may still turn up: look (read-only), don't buy
   if (found.starshipitOrderId && found.labelUnconfirmedAt && Date.now() - new Date(found.labelUnconfirmedAt).getTime() < LABEL_UNCONFIRMED_HOLD_MS) {
-    const d = await starshipitService.readDetails(found.starshipitOrderId).catch(() => null);
+    const d = await starshipitService.readDetails(found.starshipitOrderId, hints).catch(() => null);
     if (d?.trackingNumber && !d.archived) {
       await applyStarshipitDetails(found, d, LABEL_PENDING_STATUS);
       return res.status(200).json({ success: true, message: 'The earlier label request did go through in Starshipit — tracking added. No new label was created.', data: { order: found } });
@@ -655,7 +657,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
   try {
     // Already in Starshipit: buy the label only if Starshipit doesn't have one yet
     if (order.starshipitOrderId) {
-      const outcome = await starshipitService.purchaseLabel(order.starshipitOrderId);
+      const outcome = await starshipitService.purchaseLabel(order.starshipitOrderId, hints);
       const details = 'details' in outcome && outcome.details ? outcome.details : {};
       if (outcome.kind === 'unconfirmed') order.labelUnconfirmedAt = new Date();
       if (outcome.kind === 'purchased' && !(details as any).trackingNumber) order.labelPurchasedAt = new Date();
@@ -719,11 +721,21 @@ export const refreshShipment = catchAsync(async (req: Request, res: Response, ne
 
   let d: Awaited<ReturnType<typeof starshipitService.readDetails>>;
   try {
-    d = await starshipitService.readDetails(order.starshipitOrderId);
+    d = await starshipitService.readDetails(order.starshipitOrderId, { orderNumber: order.orderNumber, since: order.createdAt });
   } catch {
     return next(new AppError('Could not reach Starshipit. Nothing was changed — please try again in a minute.', 502));
   }
-  if (!d) return next(new AppError('This order was not found in Starshipit.', 404));
+  if (!d) {
+    // Not open and not in the shipped list: printed in Starshipit but never manifested — typically a
+    // plain label, which has no tracking number. Nothing to sync; the admin finishes it by hand.
+    return res.status(200).json({
+      success: true,
+      message: order.trackingNumber
+        ? 'Up to date. Starshipit no longer lists this order as open or shipped.'
+        : 'Starshipit shows no tracking number for this order yet. If it was printed there without one (for example a plain label), add the tracking manually or mark the order as fulfilled.',
+      data: { order },
+    });
+  }
   if (d.archived && !order.trackingNumber) {
     return res.status(200).json({ success: true, message: 'This order is archived in Starshipit, so nothing was synced. Create the label in Starshipit, or add the tracking manually.', data: { order } });
   }

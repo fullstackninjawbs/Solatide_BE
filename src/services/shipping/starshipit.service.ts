@@ -83,7 +83,17 @@ export const STARSHIPIT_ORDER_NOT_FOUND = 'STARSHIPIT_ORDER_NOT_FOUND';
  *  - the purchase is sent once (never retried on timeout / 5xx; only on 429 = refused outright)
  *  - when the answer is unclear (timeout, network error, 5xx) Starshipit is read again instead of retrying
  *  - if Starshipit can't be read before buying, nothing is bought
+ *
+ * Reading an order: GET /orders?order_id= only returns OPEN (unshipped) orders — once a label is
+ * printed/shipped Starshipit answers "Unable to get order details". Shipped (manifested) orders
+ * are read from GET /orders/shipped (filtered by since_last_updated, not sorted). Orders printed
+ * but never manifested (e.g. a plain label, no tracking) are in neither list.
  */
+const SHIPPED_PAGE_SIZE = 100;
+const SHIPPED_MAX_PAGES = 5;
+
+/** Where to look for an order that is no longer open (lookup hints). */
+export type LocateHints = { orderNumber?: string; since?: Date | string };
 const LABEL_PURCHASE_TIMEOUT_MS = 30000;
 const RECHECK_DELAY_MS = 1500;
 
@@ -353,7 +363,7 @@ export class StarshipitService {
     }
 
     // 2. The label: bought at most once, never when Starshipit already has one
-    const outcome = await this.purchaseLabel(starshipitOrderId);
+    const outcome = await this.purchaseLabel(starshipitOrderId, { orderNumber, since: (order as any).createdAt });
     const details = 'details' in outcome && outcome.details ? outcome.details : null;
     return {
       orderId: starshipitOrderId,
@@ -399,10 +409,42 @@ export class StarshipitService {
     }
   }
 
+  /**
+   * A shipped (manifested) Starshipit order, from GET /orders/shipped updated since `since`
+   * (default: last 30 days). Matched by Starshipit id; by order number only when no id matches.
+   * Null when not in the list. Throws when Starshipit can't be read.
+   */
+  public async findShippedOrder(starshipitOrderId: string, hints: LocateHints = {}): Promise<any | null> {
+    const sinceDate = hints.since ? new Date(hints.since) : new Date(Date.now() - 30 * 86400000);
+    const since = new Date(sinceDate.getTime() - 86400000).toISOString(); // a day earlier: clock/time-zone slack
+    let byNumber: any = null;
+    for (let page = 1; page <= SHIPPED_MAX_PAGES; page++) {
+      const response = await starshipitRequest('get', `${this.baseUrl}/orders/shipped`, undefined,
+        { ...this.requestConfig, params: { since_last_updated: since, limit: SHIPPED_PAGE_SIZE, page } }, { repeatable: true });
+      const list: any[] = Array.isArray(response.data?.orders) ? response.data.orders : [];
+      const byId = list.find((o) => o && String(o.order_id) === String(starshipitOrderId));
+      if (byId) return { ...byId, status: byId.status || 'Shipped' };
+      if (!byNumber && hints.orderNumber) {
+        const m = list.find((o) => o && String(o.order_number) === String(hints.orderNumber) && !starshipitOrderIsArchived(o));
+        if (m) byNumber = { ...m, status: m.status || 'Shipped' };
+      }
+      const totalPages = Number(response.data?.total_pages) || 1;
+      if (!list.length || page >= totalPages) break;
+    }
+    return byNumber;
+  }
+
+  /** The order wherever Starshipit still returns it: open orders first, then shipped. Null = in neither. */
+  public async locateOrder(starshipitOrderId: string, hints: LocateHints = {}): Promise<any | null> {
+    const open = await this.findOrder(starshipitOrderId);
+    if (open) return open;
+    return this.findShippedOrder(starshipitOrderId, hints);
+  }
+
   /** Read-only: the Starshipit order's current tracking / label / status (never buys anything).
    *  Archived orders come back with archived=true and no tracking (a voided label must never be synced). */
-  public async readDetails(starshipitOrderId: string): Promise<(StarshipitDetails & { archived?: boolean }) | null> {
-    const o = await this.findOrder(starshipitOrderId);
+  public async readDetails(starshipitOrderId: string, hints: LocateHints = {}): Promise<(StarshipitDetails & { archived?: boolean }) | null> {
+    const o = await this.locateOrder(starshipitOrderId, hints);
     if (!o) return null;
     if (starshipitOrderIsArchived(o)) {
       return { trackingNumber: '', trackingCarrier: '', labelUrl: '', trackingUrl: '', shipmentStatus: String(o.status || 'Archived'), archived: true };
@@ -410,22 +452,23 @@ export class StarshipitService {
     return detailsFromStarshipitOrder(o);
   }
 
-  private async recheck(starshipitOrderId: string): Promise<any | null> {
+  private async recheck(starshipitOrderId: string, hints: LocateHints): Promise<any | null> {
     await new Promise((r) => setTimeout(r, RECHECK_DELAY_MS));
-    return this.findOrder(starshipitOrderId).catch(() => null);
+    return this.locateOrder(starshipitOrderId, hints).catch(() => null);
   }
 
   /** Buys the label for an order already in Starshipit — at most once, never when one exists. */
-  public async purchaseLabel(starshipitOrderId: string): Promise<LabelOutcome> {
-    // Before buying: does Starshipit already have a label for it?
+  public async purchaseLabel(starshipitOrderId: string, hints: LocateHints = {}): Promise<LabelOutcome> {
+    // Before buying: does Starshipit already have a label for it? (open orders, then shipped)
     let current: any;
     try {
-      current = await this.findOrder(starshipitOrderId);
+      current = await this.locateOrder(starshipitOrderId, hints);
     } catch (err: any) {
       console.warn(`Starshipit pre-check failed for order_id ${starshipitOrderId}: ${err?.response?.status ?? ''} ${err?.message}`);
       return { kind: 'precheck_failed', error: 'Could not check the label status in Starshipit' };
     }
-    if (!current) return { kind: 'precheck_failed', error: 'This order was not found in Starshipit' };
+    // In neither list: printed but not manifested (e.g. a plain label), or gone — never buy blind
+    if (!current) return { kind: 'precheck_failed', error: 'Starshipit does not show this order as open (it may already be printed there)' };
     if (starshipitOrderIsArchived(current)) {
       return { kind: 'failed', error: 'This order is archived in Starshipit, so no label was bought. Create the label in Starshipit, or add the tracking manually' };
     }
@@ -445,7 +488,7 @@ export class StarshipitService {
         return { kind: 'failed', error: parseStarshipitError(err.response?.data, err.message || 'Label generation failed in Starshipit') };
       }
       // No clear answer — the label may have been bought. Look, don't retry.
-      const after = await this.recheck(starshipitOrderId);
+      const after = await this.recheck(starshipitOrderId, hints);
       if (after && starshipitOrderHasLabel(after)) return { kind: 'purchased', details: detailsFromStarshipitOrder(after) };
       return { kind: 'unconfirmed', error: 'Starshipit did not confirm whether the label was created' };
     }
@@ -453,7 +496,7 @@ export class StarshipitService {
     console.log(`Starshipit POST /orders/shipment HTTP ${response.status} success=${response.data?.success}`);
     if (response.data && response.data.success === false) {
       // Starshipit says no label — confirm before reporting (soft failures have created records before)
-      const after = await this.recheck(starshipitOrderId);
+      const after = await this.recheck(starshipitOrderId, hints);
       if (after && starshipitOrderHasLabel(after)) return { kind: 'purchased', details: detailsFromStarshipitOrder(after) };
       return { kind: 'failed', error: parseStarshipitError(response.data, 'Label generation failed in Starshipit') };
     }
@@ -461,7 +504,7 @@ export class StarshipitService {
     let details = detailsFromLabelResponse(response.data);
     if (!details.trackingNumber || !details.labelUrl) {
       // Bought; fill in what the reply didn't include (read-only)
-      details = mergeDetails(details, (await this.recheck(starshipitOrderId).then((o) => (o ? detailsFromStarshipitOrder(o) : null))));
+      details = mergeDetails(details, (await this.recheck(starshipitOrderId, hints).then((o) => (o ? detailsFromStarshipitOrder(o) : null))));
     }
     return { kind: 'purchased', details };
   }

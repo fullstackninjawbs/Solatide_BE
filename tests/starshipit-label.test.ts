@@ -23,12 +23,12 @@ const httpError = (status?: number, code?: string, data?: any) =>
 
 /** Fake Starshipit: `orders` = what GET /orders returns by order_id; handlers override behaviour. */
 function mock(opts: {
-  get?: (params: any) => any;
+  get?: (params: any, url: string) => any;
   post?: (url: string, body: any) => any;
 }) {
   restores.push(stub(axios as any, 'get', async (url: string, config: any) => {
     calls.push({ method: 'get', url, params: config?.params });
-    return opts.get ? opts.get(config?.params) : { status: 200, data: {} };
+    return opts.get ? opts.get(config?.params || {}, url) : { status: 200, data: {} };
   }));
   restores.push(stub(axios as any, 'post', async (url: string, body: any) => {
     calls.push({ method: 'post', url, body });
@@ -237,4 +237,58 @@ test('archived match by order number is not reused → a fresh Starshipit order 
   assert.equal(created, true);
   assert.equal(r.orderId, '111');
   assert.equal(purchases(), 1);
+});
+
+// ── real Starshipit behaviour: GET /orders?order_id only returns OPEN orders ──
+const notOpen = { status: 200, data: { success: false, errors: [{ message: 'Invalid parameter(s)', details: 'Unable to get order details' }] } };
+const shippedList = (orders: any[]) => ({ status: 200, data: { success: true, total_pages: 1, orders } });
+
+test('printed/shipped order: found in the shipped list → existing, nothing bought', async () => {
+  mock({
+    get: (_p, url) => (url.endsWith('/orders/shipped')
+      ? shippedList([{ order_id: 5, order_number: 'X' }, { order_id: 111, order_number: 'SLT1', tracking_number: 'TRK-S', carrier_name: 'MyPost Business' }])
+      : notOpen),
+    post: () => ({ status: 200, data: { success: true } }),
+  });
+  const out = await starshipitService.purchaseLabel('111', { orderNumber: 'SLT1', since: new Date() });
+  assert.equal(out.kind, 'existing');
+  assert.equal(purchases(), 0);
+  assert.equal((out as any).details.trackingNumber, 'TRK-S');
+  const d = await starshipitService.readDetails('111', { orderNumber: 'SLT1' });
+  assert.equal(d?.trackingNumber, 'TRK-S');
+  assert.equal(d?.trackingCarrier, 'MyPost Business');
+  assert.ok(calls.some((c) => c.url.endsWith('/orders/shipped') && c.params?.since_last_updated), 'shipped list filtered by date');
+});
+
+test('printed but never manifested (plain label): in neither list → nothing bought, nothing synced', async () => {
+  mock({ get: (_p, url) => (url.endsWith('/orders/shipped') ? shippedList([{ order_id: 5, order_number: 'X', tracking_number: 'T5' }]) : notOpen), post: () => ({ status: 200, data: { success: true } }) });
+  const out = await starshipitService.purchaseLabel('111', { orderNumber: 'SLT1' });
+  assert.equal(out.kind, 'precheck_failed');
+  assert.equal(purchases(), 0);
+  assert.equal(await starshipitService.readDetails('111', { orderNumber: 'SLT1' }), null);
+});
+
+test('label reply without tracking, order then only in the shipped list → tracking filled from it', async () => {
+  let bought = false;
+  mock({
+    get: (_p, url) => (url.endsWith('/orders/shipped')
+      ? shippedList(bought ? [{ order_id: 111, order_number: 'SLT1', tracking_number: 'TRK-AFTER' }] : [])
+      : (bought ? notOpen : { status: 200, data: { order: unshipped } })),
+    post: () => { bought = true; return { status: 200, data: { success: true } }; },
+  });
+  const out = await starshipitService.purchaseLabel('111', { orderNumber: 'SLT1' });
+  assert.equal(out.kind, 'purchased');
+  assert.equal(purchases(), 1);
+  assert.equal((out as any).details.trackingNumber, 'TRK-AFTER');
+});
+
+test('shipped list pages are followed (up to the cap) and stop at total_pages', async () => {
+  mock({
+    get: (p, url) => (url.endsWith('/orders/shipped')
+      ? { status: 200, data: { success: true, total_pages: 3, orders: p.page === 3 ? [{ order_id: 111, tracking_number: 'TRK-P3' }] : [{ order_id: p.page }] } }
+      : notOpen),
+  });
+  const d = await starshipitService.readDetails('111');
+  assert.equal(d?.trackingNumber, 'TRK-P3');
+  assert.equal(calls.filter((c) => c.url.endsWith('/orders/shipped')).length, 3);
 });

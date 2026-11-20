@@ -49,7 +49,10 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
     try {
       let changed = false, newlyShipped = false;
       if (!order.trackingNumber) {
-        const d = await starshipitService.getShipmentDetails(String(order.starshipitOrderId));
+        // Open orders by id, then the shipped list (Starshipit's order-by-id lookup only returns open orders).
+        // Archived (label voided) = treated as not found, so a voided tracking number is never synced.
+        const d = await starshipitService.readDetails(String(order.starshipitOrderId), { orderNumber: order.orderNumber, since: order.createdAt });
+        if (!d || d.archived) throw Object.assign(new Error('Order not found in Starshipit'), { code: STARSHIPIT_ORDER_NOT_FOUND });
         const r = await applyStarshipitTrackingUpdate(order, {
           tracking_number: d.trackingNumber,
           tracking_status: d.shipmentStatus,
