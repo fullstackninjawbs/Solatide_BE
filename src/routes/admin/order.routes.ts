@@ -26,7 +26,8 @@ import {
   bulkRestoreOrders,
   updateManualTracking,
   getOrderTracking,
-  syncOrdersTracking
+  syncOrdersTracking,
+  resolveLabelDuplicate
 } from '../../controllers/admin/orderController';
 
 const router = express.Router();
@@ -96,6 +97,8 @@ router.get('/:id/refunds', getOrderRefunds);
 router.post('/:id/shipment', shipping, createShipment);
 // Read-only: sync tracking / label from Starshipit (never buys a label)
 router.post('/:id/shipment/refresh', shipping, refreshShipment);
+// Possible duplicate label checked by the team: hide the warning (alert only — changes nothing else)
+router.post('/:id/label-duplicate/resolve', shipping, resolveLabelDuplicate);
 router.get('/:id/tracking', shipping, getOrderTracking);
 router.post('/:id/tracking', shipping, updateManualTracking);
 router.post('/:id/revalidate-address', shipping, revalidateOrderAddress);

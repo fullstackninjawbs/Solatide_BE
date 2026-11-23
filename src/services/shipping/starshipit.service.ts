@@ -3,6 +3,7 @@ import { parseCarrierTime } from './deliveryStatus';
 import { IOrder } from '../../models/order.model';
 import ShippingPackage from '../../models/shippingPackage.model';
 import { ShipmentWeight, PackageChoice, packageTareGrams } from './shipmentWeight';
+import { isLabelExistsElsewhereError } from './labelDuplicates';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -115,7 +116,7 @@ export type StarshipitDetails = {
 export type LabelOutcome =
   | { kind: 'existing'; details: StarshipitDetails }
   | { kind: 'purchased'; details: StarshipitDetails }
-  | { kind: 'failed'; error: string; details?: StarshipitDetails }
+  | { kind: 'failed'; error: string; details?: StarshipitDetails; existsElsewhere?: boolean }
   | { kind: 'unconfirmed'; error: string }
   | { kind: 'precheck_failed'; error: string };
 
@@ -174,12 +175,15 @@ const mergeDetails = (a: StarshipitDetails, b: StarshipitDetails | null | undefi
 /** No usable answer from Starshipit (timeout, network error, 5xx): the request may or may not have been processed. */
 const isUnclearFailure = (err: any) => !err?.response || err.response.status >= 500;
 
+/** Shown when MyPost refused the label because one already exists (error 51015) — nothing was bought by this request. */
+export const LABEL_EXISTS_ELSEWHERE_MESSAGE = 'A label already exists in Starshipit for this order (Australia Post refused a new one: "generated via a different service"). No new label was bought. Do NOT create or print another one — click "Check Starshipit now" to pull in the tracking, and check Starshipit / MyPost Business for a duplicate label to refund.';
+
 /** Message for the admin after a label attempt (undefined = all good). */
 export function labelWarning(outcome: LabelOutcome): string | undefined {
   switch (outcome.kind) {
     case 'existing': return undefined;
     case 'purchased': return outcome.details.trackingNumber ? undefined : 'Label created in Starshipit; the tracking number has not come through yet — use "Check Starshipit now" in a minute.';
-    case 'failed': return outcome.error;
+    case 'failed': return outcome.existsElsewhere ? LABEL_EXISTS_ELSEWHERE_MESSAGE : outcome.error;
     case 'unconfirmed': return 'Starshipit did not confirm whether the label was created. To avoid a double charge it was NOT retried. Use "Check Starshipit now" in a minute, or open the order in Starshipit: if it is under Printed, use Reprint label (no charge) — do not use Redo shipping.';
     case 'precheck_failed': return `${outcome.error}, so no label was bought (to avoid a double charge). Use "Check Starshipit now" in a minute and try again if needed.`;
   }
@@ -217,6 +221,8 @@ export class StarshipitService {
     warning?: string;
     parcel?: { totalGrams: number; itemsGrams: number; packageGrams: number; packageName?: string; packageReason?: string };
     outcome: LabelOutcome['kind'];
+    /** MyPost refused the label because one already exists (51015) — nothing bought by this request. */
+    existsElsewhere?: boolean;
   }> {
     const itemsCount = order.lineItems?.length || 1;
     const weightPerItem = weightKg / itemsCount;
@@ -375,6 +381,7 @@ export class StarshipitService {
       warning: labelWarning(outcome),
       parcel,
       outcome: outcome.kind,
+      existsElsewhere: outcome.kind === 'failed' && Boolean(outcome.existsElsewhere),
     };
   }
 
@@ -434,6 +441,25 @@ export class StarshipitService {
     return byNumber;
   }
 
+  /**
+   * Read-only: Starshipit's shipped (manifested) orders updated since `since` (up to
+   * SHIPPED_MAX_PAGES pages). Used by the daily duplicate-label check. Throws when Starshipit can't be read.
+   */
+  public async listShippedSince(since: Date): Promise<{ orders: any[]; truncated: boolean }> {
+    const sinceIso = since.toISOString();
+    const orders: any[] = [];
+    for (let page = 1; page <= SHIPPED_MAX_PAGES; page++) {
+      const response = await starshipitRequest('get', `${this.baseUrl}/orders/shipped`, undefined,
+        { ...this.requestConfig, params: { since_last_updated: sinceIso, limit: SHIPPED_PAGE_SIZE, page } }, { repeatable: true });
+      const list: any[] = Array.isArray(response.data?.orders) ? response.data.orders : [];
+      orders.push(...list.filter(Boolean));
+      const totalPages = Number(response.data?.total_pages) || 1;
+      if (!list.length || page >= totalPages) return { orders, truncated: false };
+      if (page === SHIPPED_MAX_PAGES) return { orders, truncated: true };
+    }
+    return { orders, truncated: false };
+  }
+
   /** The order wherever Starshipit still returns it: open orders first, then shipped. Null = in neither. */
   public async locateOrder(starshipitOrderId: string, hints: LocateHints = {}): Promise<any | null> {
     const open = await this.findOrder(starshipitOrderId);
@@ -485,7 +511,8 @@ export class StarshipitService {
     } catch (err: any) {
       console.warn(`Starshipit POST /orders/shipment failed for order_id ${starshipitOrderId}: ${err?.response?.status ?? err?.code ?? ''} ${err?.message}`);
       if (!isUnclearFailure(err)) {
-        return { kind: 'failed', error: parseStarshipitError(err.response?.data, err.message || 'Label generation failed in Starshipit') };
+        const error = parseStarshipitError(err.response?.data, err.message || 'Label generation failed in Starshipit');
+        return { kind: 'failed', error, ...(isLabelExistsElsewhereError(error) ? { existsElsewhere: true } : {}) };
       }
       // No clear answer — the label may have been bought. Look, don't retry.
       const after = await this.recheck(starshipitOrderId, hints);
@@ -498,7 +525,8 @@ export class StarshipitService {
       // Starshipit says no label — confirm before reporting (soft failures have created records before)
       const after = await this.recheck(starshipitOrderId, hints);
       if (after && starshipitOrderHasLabel(after)) return { kind: 'purchased', details: detailsFromStarshipitOrder(after) };
-      return { kind: 'failed', error: parseStarshipitError(response.data, 'Label generation failed in Starshipit') };
+      const error = parseStarshipitError(response.data, 'Label generation failed in Starshipit');
+      return { kind: 'failed', error, ...(isLabelExistsElsewhereError(error) ? { existsElsewhere: true } : {}) };
     }
 
     let details = detailsFromLabelResponse(response.data);

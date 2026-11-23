@@ -214,6 +214,21 @@ export interface IOrder extends mongoose.Document {
   labelUnconfirmedAt?: Date;
   /** Starshipit confirmed a label purchase but no tracking number came back yet: never buy another until it syncs. */
   labelPurchasedAt?: Date;
+  /**
+   * Possible duplicate shipping label (services/shipping/labelDuplicates.ts): Starshipit reported a
+   * second tracking number / a second Starshipit order for this order, or MyPost refused a label
+   * because one already existed. Warning only — never changes the order's shipping or tracking.
+   */
+  labelDuplicate?: {
+    detectedAt?: Date;
+    lastDetectedAt?: Date;
+    reasons?: string[];
+    trackingNumbers?: string[];
+    starshipitOrderIds?: string[];
+    alertedAt?: Date;
+    resolvedAt?: Date;
+    resolvedBy?: string;
+  };
   /** Scheduled tracking refresh: consecutive "order not found in Starshipit" answers (stops at 3). */
   starshipitTrackingMisses?: number;
   /** Scheduled tracking refresh: when this order was last checked (oldest first, so every open order gets its turn). */
@@ -481,6 +496,19 @@ const orderSchema = new mongoose.Schema<IOrder>(
     shipmentLockUntil: { type: Date },
     labelUnconfirmedAt: { type: Date },
     labelPurchasedAt: { type: Date },
+    labelDuplicate: {
+      type: new mongoose.Schema({
+        detectedAt: Date,
+        lastDetectedAt: Date,
+        reasons: [String],
+        trackingNumbers: [String],
+        starshipitOrderIds: [String],
+        alertedAt: Date,
+        resolvedAt: Date,
+        resolvedBy: String,
+      }, { _id: false }),
+      default: undefined,
+    },
     starshipitTrackingMisses: { type: Number },
     starshipitCheckedAt: { type: Date },
     trackingSource: { type: String, enum: ['starshipit', 'manual'] },

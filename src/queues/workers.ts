@@ -22,6 +22,8 @@ export function shouldRunWorkersInApi(): boolean {
 const SCHEDULES: Array<{ id: keyof typeof MAINTENANCE_JOBS; env: string; extraCheck?: () => string | null; defaultPattern?: string }> = [
   // On by default: keeps the Orders list delivery status current ("off" disables)
   { id: 'starshipit-tracking', env: 'STARSHIPIT_TRACKING_CRON', defaultPattern: '*/30 * * * *' },
+  // On by default: daily read-only check of Starshipit's shipped list for duplicate labels ("off" disables)
+  { id: 'label-duplicate-check', env: 'LABEL_DUPLICATE_CHECK_CRON', defaultPattern: '0 8 * * *' },
   { id: 'db-backup', env: 'BACKUP_CRON', extraCheck: () => (process.env.BACKUP_MONGO_URI ? null : 'BACKUP_MONGO_URI is not set') },
   { id: 'abandoned-reminders', env: 'ABANDONED_REMINDER_CRON' },
   // On by default: unpaid bank transfer / PayID orders must not hold stock forever ("off" disables)

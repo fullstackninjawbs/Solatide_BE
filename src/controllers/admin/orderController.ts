@@ -6,6 +6,7 @@ import { starshipitService, labelWarning } from '../../services/shipping/starshi
 import { sendOrderConfirmationEmail, sendAdminNewOrderNotificationEmail, sendShipmentConfirmationEmail } from '../../services/emailService';
 import { buildTrackingUrl, sendShipmentEmailOnce } from '../../services/shipping/shipmentNotify';
 import { syncCarrierScans } from '../../services/shipping/starshipitTracking';
+import { recordLabelDuplicate } from '../../services/shipping/labelDuplicates';
 import { computeShipmentWeight, chooseShipmentPackage } from '../../services/shipping/shipmentWeight';
 import { applyTrackingStage, deliverySummary, deliveryFilterQuery, stageFromStatus, MANUAL_STAGES, STAGE_LABELS, DELIVERY_FILTERS, type DeliveryStage, type DeliveryFilter } from '../../services/shipping/deliveryStatus';
 import AppError from '../../utils/appError';
@@ -535,6 +536,20 @@ async function applyStarshipitDetails(order: any, d: StarshipitShipDetails, pend
   if (order.trackingNumber && !wasShippedBefore) await sendShipmentEmailOnce(order);
 }
 
+/**
+ * MyPost refused our label because one already exists (error 51015): nothing was bought by us, but a
+ * label was made some other way (Starshipit automation / dashboard) — flag it so the team checks
+ * for a duplicate. Warning only; never throws. The flag is copied onto `order` for the response.
+ */
+async function flagLabelExistsElsewhere(order: any) {
+  const flagged = await recordLabelDuplicate(order._id, {
+    reason: 'label_exists_elsewhere',
+    starshipitOrderIds: [order.starshipitOrderId],
+    trackingNumbers: [order.trackingNumber],
+  });
+  if (flagged) order.labelDuplicate = flagged.labelDuplicate;
+}
+
 export const createShipment = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const found = await Order.findById(req.params.id);
   if (!found) {
@@ -662,6 +677,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
       if (outcome.kind === 'unconfirmed') order.labelUnconfirmedAt = new Date();
       if (outcome.kind === 'purchased' && !(details as any).trackingNumber) order.labelPurchasedAt = new Date();
       await applyStarshipitDetails(order, details, LABEL_PENDING_STATUS);
+      if (outcome.kind === 'failed' && outcome.existsElsewhere) await flagLabelExistsElsewhere(order);
       const warning = labelWarning(outcome);
       return res.status(200).json({
         success: true,
@@ -691,6 +707,7 @@ export const createShipment = catchAsync(async (req: Request, res: Response, nex
     if (shippingResult.outcome === 'purchased' && !shippingResult.trackingNumber) order.labelPurchasedAt = new Date();
     const warning = shippingResult.warning;
     await applyStarshipitDetails(order, shippingResult, warning ? LABEL_PENDING_STATUS : 'Order Created in Starshipit', { markProcessing: true });
+    if (shippingResult.existsElsewhere) await flagLabelExistsElsewhere(order);
 
     // Shown to the admin as a warning toast (weight fallbacks and/or a Starshipit warning)
     const warnings = [...shipmentWarnings, ...(warning ? [warning] : [])];
@@ -741,7 +758,18 @@ export const refreshShipment = catchAsync(async (req: Request, res: Response, ne
   }
 
   const hadTracking = Boolean(order.trackingNumber);
+  const savedTracking = order.trackingNumber;
   await applyStarshipitDetails(order, d, order.shipmentStatus || LABEL_PENDING_STATUS);
+  // Starshipit now shows a different tracking number than the one we saved: a second label was made.
+  // (The saved number is kept, as before — this only flags it.)
+  if (savedTracking && d.trackingNumber && d.trackingNumber !== savedTracking && order.trackingSource !== 'manual') {
+    const flagged = await recordLabelDuplicate(order._id, {
+      reason: 'second_tracking',
+      trackingNumbers: [savedTracking, d.trackingNumber],
+      starshipitOrderIds: [order.starshipitOrderId],
+    });
+    if (flagged) order.labelDuplicate = flagged.labelDuplicate;
+  }
   res.status(200).json({
     success: true,
     message: order.trackingNumber
@@ -749,6 +777,23 @@ export const refreshShipment = catchAsync(async (req: Request, res: Response, ne
       : 'Checked Starshipit: no label yet. Print it in Starshipit — the tracking syncs back here automatically.',
     data: { order },
   });
+});
+
+/**
+ * POST /api/admin/order/:id/label-duplicate/resolve
+ * The team checked the possible duplicate label (kept the one on the parcel, refunded the rest):
+ * hides the warning. The same evidence never re-opens it; a new tracking number / Starshipit order does.
+ */
+export const resolveLabelDuplicate = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const order: any = await Order.findById(req.params.id).select('labelDuplicate orderNumber');
+  if (!order) return next(new AppError('No order found with that ID', 404));
+  if (!order.labelDuplicate?.detectedAt) return next(new AppError('This order has no duplicate label warning.', 400));
+  if (!order.labelDuplicate.resolvedAt) {
+    const by = adminLabelOf((req as any).user).slice(0, 120);
+    await Order.updateOne({ _id: order._id }, { $set: { 'labelDuplicate.resolvedAt': new Date(), 'labelDuplicate.resolvedBy': by } });
+  }
+  const updated = await Order.findById(order._id).select('labelDuplicate').lean();
+  res.status(200).json({ success: true, message: 'Duplicate label warning marked as resolved.', data: { labelDuplicate: (updated as any)?.labelDuplicate } });
 });
 
 /** Why tracking can't be added to this order yet (null = it can). Editing existing tracking is always allowed. */

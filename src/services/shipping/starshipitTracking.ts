@@ -1,6 +1,7 @@
 import { buildTrackingUrl, isGenericTrackingUrl, sendShipmentEmailOnce } from './shipmentNotify';
 import { applyTrackingStage, stageFromStatus, STAGE_RANK } from './deliveryStatus';
 import { starshipitService } from './starshipit.service';
+import { recordLabelDuplicate, type DuplicateEvidence } from './labelDuplicates';
 
 /** Tracking fields as reported by Starshipit (webhook payload or GET /orders details). */
 export interface StarshipitTrackingUpdate {
@@ -42,6 +43,18 @@ export async function applyStarshipitTrackingUpdate(order: any, update: Starship
       }
     }
     return { changed: false, newlyShipped: false };
+  }
+
+  // Possible duplicate label (alert only, recorded after saving): Starshipit reports a different
+  // tracking number than the one already saved = a second label was made for this order.
+  // (The update itself is applied exactly as before.)
+  const duplicateEvidence: DuplicateEvidence[] = [];
+  if (update.tracking_number && order.trackingNumber && order.trackingNumber !== update.tracking_number) {
+    duplicateEvidence.push({
+      reason: 'second_tracking',
+      trackingNumbers: [order.trackingNumber, update.tracking_number],
+      starshipitOrderIds: [order.starshipitOrderId],
+    });
   }
 
   if (update.tracking_number && order.trackingNumber !== update.tracking_number) {
@@ -92,6 +105,8 @@ export async function applyStarshipitTrackingUpdate(order: any, update: Starship
   if (isNewlyShipped && !wasShipped) {
     await sendShipmentEmailOnce(order);
   }
+  // Never throws (a failed alert must not affect tracking updates)
+  for (const ev of duplicateEvidence) await recordLabelDuplicate(order._id, ev);
   return { changed: hasChanges, newlyShipped: isNewlyShipped };
 }
 

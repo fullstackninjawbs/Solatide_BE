@@ -3,6 +3,7 @@
  * Jobs run when their schedule env variable is set (some have a default) — see .env.example:
  *
  *   STARSHIPIT_TRACKING_CRON     default every 30 min ("off" disables)  refresh tracking for open shipments
+ *   LABEL_DUPLICATE_CHECK_CRON   default daily 8am ("off" disables)     flag orders with more than one Starshipit label
  *   BACKUP_CRON                  e.g. "0 3 * * *"                 mongodump (read-only URI) to disk
  *   ABANDONED_REMINDER_CRON      e.g. "* /15 * * * *" (no space)  one reminder per unpaid checkout
  *
@@ -14,6 +15,7 @@ import path from 'path';
 import Order from '../../models/order.model';
 import { starshipitService, STARSHIPIT_ORDER_NOT_FOUND } from '../shipping/starshipit.service';
 import { applyStarshipitTrackingUpdate, syncCarrierScans } from '../shipping/starshipitTracking';
+import { findShippedListDuplicates, recordLabelDuplicate, markAlerted } from '../shipping/labelDuplicates';
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e } from '../../utils/escapeHtml';
 
@@ -85,6 +87,42 @@ export async function refreshStarshipitTracking(): Promise<{ checked: number; up
     }
   }
   return { checked: orders.length, updated, shipped, errors };
+}
+
+// Daily duplicate-label check: how far back Starshipit's shipped list is read (covers a missed run).
+const DUPLICATE_CHECK_DAYS = 3;
+
+/**
+ * Daily: reads Starshipit's shipped list (read-only) and flags our orders that have more than one
+ * label there — a second tracking number or a second Starshipit order for the same order number.
+ * Flagged orders get a warning on the order page and the team gets ONE summary email. Evidence that
+ * was already recorded (or resolved) is not alerted again. Never buys, voids or changes anything.
+ */
+export async function checkStarshipitDuplicateLabels(): Promise<{ scanned: number; flagged: number; truncated: boolean }> {
+  if (!process.env.STARSHIPIT_API_KEY || !process.env.STARSHIPIT_SUBSCRIPTION_KEY) {
+    return { scanned: 0, flagged: 0, truncated: false };
+  }
+  const since = new Date(Date.now() - DUPLICATE_CHECK_DAYS * 24 * 3600 * 1000);
+  const { orders: shipped, truncated } = await starshipitService.listShippedSince(since);
+  if (truncated) console.warn('[Scheduled] label-duplicate-check: Starshipit shipped list was longer than the pages read; older entries were skipped');
+
+  const numbers = Array.from(new Set(shipped.map((s) => String(s?.order_number ?? '').trim()).filter(Boolean)));
+  if (!numbers.length) return { scanned: 0, flagged: 0, truncated };
+  const ours = await Order.find({ orderNumber: { $in: numbers } })
+    .select('_id orderNumber starshipitOrderId trackingNumber trackingSource')
+    .lean();
+  const byNumber = new Map(ours.map((o: any) => [String(o.orderNumber), o]));
+
+  const found = findShippedListDuplicates(shipped, byNumber);
+  const flagged: Array<NonNullable<Awaited<ReturnType<typeof recordLabelDuplicate>>>> = [];
+  for (const [num, evidence] of found) {
+    const order: any = byNumber.get(num);
+    let latest: Awaited<ReturnType<typeof recordLabelDuplicate>> = null;
+    for (const ev of evidence) latest = (await recordLabelDuplicate(order._id, ev, { notify: false })) || latest;
+    if (latest) flagged.push(latest);
+  }
+  await markAlerted(flagged, 'daily');
+  return { scanned: numbers.length, flagged: flagged.length, truncated };
 }
 
 /**

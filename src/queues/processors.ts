@@ -3,6 +3,7 @@ import { onOrderPaid } from '../services/orders/onOrderPaid';
 import { runDeploy, EXIT_BUSY } from '../utils/rebuildStorefront';
 import {
   refreshStarshipitTracking,
+  checkStarshipitDuplicateLabels,
   runDatabaseBackup,
   sendAbandonedCheckoutReminders,
   cancelUnpaidBankOrders,
@@ -48,6 +49,7 @@ export function makeRebuildProcessor(queue: Queue) {
 
 export const MAINTENANCE_JOBS: Record<string, () => Promise<unknown>> = {
   'starshipit-tracking': refreshStarshipitTracking,
+  'label-duplicate-check': checkStarshipitDuplicateLabels,
   'db-backup': runDatabaseBackup,
   'abandoned-reminders': sendAbandonedCheckoutReminders,
   'cancel-unpaid-orders': cancelUnpaidBankOrders,
