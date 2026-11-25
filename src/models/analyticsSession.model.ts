@@ -31,7 +31,14 @@ const cartSchema = new mongoose.Schema(
 );
 
 const identitySchema = new mongoose.Schema(
-  { email: String, name: String, customerId: String },
+  {
+    email: String,
+    name: String,
+    customerId: String,
+    // Set when the identity came from opening an order's payment link (not typed on this visit)
+    linkedBy: String,
+    linkedOrderId: mongoose.Schema.Types.ObjectId,
+  },
   { _id: false }
 );
 

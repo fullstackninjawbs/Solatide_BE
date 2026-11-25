@@ -10,6 +10,7 @@
  * None of these jobs deletes anything.
  */
 import { spawn } from 'child_process';
+import { emailLink } from '../emailLinks';
 import fs from 'fs';
 import path from 'path';
 import Order from '../../models/order.model';
@@ -190,7 +191,7 @@ export async function sendAbandonedCheckoutReminders(): Promise<{ candidates: nu
         <h2 style="color:#1a3a6b">Your checkout is waiting</h2>
         <p>You started a checkout at Solatide Biosciences but didn't complete payment.</p>
         ${items ? `<ul style="padding-left:18px">${items}</ul>` : ''}
-        <p><a href="${store}/collections/all" style="display:inline-block;background:#1F54A1;color:#fff;padding:11px 22px;border-radius:40px;text-decoration:none">Return to the store</a></p>
+        <p><a href="${emailLink(`${store}/collections/all`, 'abandoned_checkout')}" style="display:inline-block;background:#1F54A1;color:#fff;padding:11px 22px;border-radius:40px;text-decoration:none">Return to the store</a></p>
         <p style="font-size:12px;color:#64748b">All products are for in-vitro laboratory research use only. You're receiving this one-time reminder because you started a checkout with this email address.</p>
       </div>`,
     });

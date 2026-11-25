@@ -115,3 +115,51 @@ async function linkPlacedOrder(order: any, ids: { sessionId?: string; visitorId?
     await AnalyticsVisitor.updateOne({ visitorId: ids.visitorId }, { $set: identity });
   }
 }
+
+/**
+ * A visit opened an order's own payment link (/checkout/payment/:id with its secret access token),
+ * e.g. from the payment-details email in another browser, or "Open in Chrome" from the Google app.
+ * Each browser has its own visitor ID, so that visit was an anonymous new visitor. The valid token
+ * proves which order it is, so the order's customer name/email is put on that visit and its visitor
+ * profile: an order link, not a guess (visitors are still never merged).
+ *
+ * - The order is NOT added to the visit's orders (it was placed in the other visit; counting it
+ *   again would double-count orders).
+ * - A visit or visitor that already has its own identity is left as it is.
+ * - The visit may not be stored yet when the payment page loads (events are sent ~1 s later), so a
+ *   missing visit is retried a few seconds later. Best effort; never throws.
+ */
+const LINK_RETRY_MS = [3000, 10000];
+
+export async function linkVisitByOrderAccess(order: any, raw: { sessionId?: unknown; visitorId?: unknown }, attempt = 0): Promise<void> {
+  try {
+    const sessionId = validId(raw.sessionId);
+    const visitorId = validId(raw.visitorId);
+    if (!order || (!sessionId && !visitorId)) return;
+    // The browser that placed the order is already linked by the checkout
+    if (sessionId && sessionId === order.visitor?.sessionId) return;
+
+    const email = String(order.customer?.email || order.customerEmail || '').trim().toLowerCase() || undefined;
+    const name = [order.customer?.firstName, order.customer?.lastName].filter(Boolean).join(' ') || order.customerName || undefined;
+    if (!email && !name) return;
+    const identity: Record<string, unknown> = { 'identity.linkedBy': 'order_link', 'identity.linkedOrderId': order._id };
+    if (email) identity['identity.email'] = email;
+    if (name) identity['identity.name'] = name;
+    const noIdentity = { 'identity.name': { $in: [null, ''] }, 'identity.email': { $in: [null, ''] } };
+
+    let sessionFound = !sessionId;
+    if (sessionId) {
+      const res = await AnalyticsSession.updateOne({ sessionId, ...noIdentity }, { $set: identity });
+      sessionFound = res.matchedCount > 0 || !!(await AnalyticsSession.exists({ sessionId }));
+      if (res.modifiedCount > 0) void publishSessionUpdate(sessionId);
+    }
+    if (visitorId) {
+      await AnalyticsVisitor.updateOne({ visitorId, ...noIdentity }, { $set: identity });
+    }
+    if (!sessionFound && attempt < LINK_RETRY_MS.length) {
+      setTimeout(() => { void linkVisitByOrderAccess(order, raw, attempt + 1); }, LINK_RETRY_MS[attempt]).unref?.();
+    }
+  } catch (err: any) {
+    console.error(`[Analytics] linking a visit to order ${order?._id} by its payment link failed: ${err?.message}`);
+  }
+}

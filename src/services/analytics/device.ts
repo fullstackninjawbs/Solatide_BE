@@ -1,6 +1,6 @@
 /**
  * Device, OS and browser from the User-Agent (no third-party parser). In-app browsers (Instagram,
- * Facebook, TikTok) are named because they tell where the visitor came from.
+ * Facebook, TikTok, Google app) are named because they tell where the visitor came from.
  *
  * iPadOS reports a desktop Mac User-Agent; the storefront sends `touch: true` for touch screens so
  * an iPad is not shown as a desktop.
@@ -19,6 +19,10 @@ const BROWSERS: Array<[RegExp, string]> = [
   [/Instagram/i, 'Instagram app'],
   [/FBAN|FBAV|FB_IAB|FBIOS/i, 'Facebook app'],
   [/BytedanceWebview|musical_ly|TikTok/i, 'TikTok app'],
+  // Google app's built-in browser (iPhone users tapping a Google result): "GSA/<version>". Its
+  // user agent also says "Safari", so it must be matched first. It keeps its own storage, so a
+  // customer who later opens our email link in Safari/Chrome shows up as a second visitor.
+  [/\bGSA\//, 'Google app'],
   [/SamsungBrowser/i, 'Samsung Internet'],
   [/Edg(e|A|iOS)?\//i, 'Edge'],
   [/OPR\/|Opera/i, 'Opera'],

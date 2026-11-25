@@ -8,6 +8,7 @@
 import { deliverMail } from '../../queues/producers';
 import { escapeHtml as e, safeUrl } from '../../utils/escapeHtml';
 import { formatDueDateTime, instructionsFor, isBankMethod, methodLabel, ORDER_NUMBER_ONLY_WARNING, paymentDueNotice, type BankTransferSettings } from './bankTransfer';
+import { emailLink } from '../emailLinks';
 
 const LOGO = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 const hdr = (v: unknown): string => String(v ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200);
@@ -107,7 +108,7 @@ export async function sendAwaitingPaymentEmail(order: any, s: BankTransferSettin
   const body = `
     <h2 style="margin:0 0 8px;font-size:22px;font-weight:600;color:#111;">Order received — payment required</h2>
     <p style="margin:0 0 20px;color:#555;font-size:15px;line-height:1.55;">Hi ${e(order.customer?.firstName || '')}, thanks for your order. Please complete your payment using the details below. Your order will be processed once payment has been received and matched to your order.</p>
-    ${paymentDetailsBody(order, s, paymentPageUrl(order, accessToken), notice ? dueBox(e(notice)) : '')}`;
+    ${paymentDetailsBody(order, s, emailLink(paymentPageUrl(order, accessToken), 'payment_details'), notice ? dueBox(e(notice)) : '')}`;
   await deliverMail({
     from: from(), to,
     subject: hdr(`Order #${order.orderNumber} received — payment required`),
@@ -123,7 +124,7 @@ export async function sendPaymentReminderEmail(order: any, s: BankTransferSettin
   const body = `
     <h2 style="margin:0 0 8px;font-size:22px;font-weight:600;color:#111;">Final reminder — payment required</h2>
     <p style="margin:0 0 20px;color:#555;font-size:15px;line-height:1.55;">Hi ${e(order.customer?.firstName || '')}, we haven't received the payment for your order yet. This is your last reminder: if payment is not received by <strong style="color:#111;">${e(due)}</strong>, your order will be cancelled automatically. If you've already paid, thank you — there's nothing more you need to do.</p>
-    ${paymentDetailsBody(order, s, paymentPageUrl(order, accessToken), dueBox(`Pay by ${e(due)} or your order will be cancelled.`))}`;
+    ${paymentDetailsBody(order, s, emailLink(paymentPageUrl(order, accessToken), 'payment_reminder'), dueBox(`Pay by ${e(due)} or your order will be cancelled.`))}`;
   await deliverMail({
     from: from(), to,
     subject: hdr(`Final reminder: payment for order #${order.orderNumber} is due by ${due}`),
