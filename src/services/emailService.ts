@@ -47,7 +47,8 @@ export const sendVerificationEmail = async (
 ) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
   const verificationUrl = `${clientUrl}/review/verify/${encodeURIComponent(verificationToken)}`;
-  const companyLogo = 'https://i.imgur.com/uC00Jid.png';
+  // Same logo (Solatide's own Cloudinary) as every other email; was a third-party imgur link
+  const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 
   const safeRating = Math.min(5, Math.max(0, Math.round(Number(rating) || 0)));
   const starsHtml = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
