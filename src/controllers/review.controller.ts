@@ -512,6 +512,14 @@ export const importReviews = catchAsync(async (req: Request, res: Response, next
     }
   }
 
+  // Imported reviews are approved straight away: refresh product ratings (API cache + prerendered
+  // pages with their schema.org aggregateRating), like approving a review does
+  if (importedCount > 0) {
+    await cacheDel('products:detail*');
+    await cacheDel('products:list*');
+    triggerStorefrontRebuild('review import');
+  }
+
   res.status(200).json({
     success: true,
     message: `Import complete. Imported ${importedCount} reviews, skipped ${skippedCount}.`,

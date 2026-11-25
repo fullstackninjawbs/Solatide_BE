@@ -9,6 +9,7 @@ import Product from '../models/product.model';
 import OrderRequest from '../models/OrderRequest';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
+import { isBannedCustomerEmail, BANNED_CUSTOMER_MESSAGE } from '../services/checkout/bannedCustomer';
 import { resolveCheckoutLines, CheckoutValidationError } from '../services/orders/checkoutItems';
 import {
   validateOrderRequestInput, OrderRequestInputError, newRequestNumber, orderRequestShippingFor,
@@ -36,6 +37,10 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
   } catch (err) {
     if (err instanceof OrderRequestInputError) return next(new AppError(err.message, 400));
     throw err;
+  }
+  // Customers an admin banned can't send order requests
+  if (await isBannedCustomerEmail(input.customer.email)) {
+    return next(new AppError(BANNED_CUSTOMER_MESSAGE, 403));
   }
 
   // One request per submit attempt (double click / retried request → the same request)

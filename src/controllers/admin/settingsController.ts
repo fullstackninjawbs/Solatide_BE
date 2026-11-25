@@ -158,3 +158,47 @@ export const updateCheckoutMode = catchAsync(async (req: Request, res: Response,
   console.log(`[Settings] Checkout mode: ${before.mode} → ${mode} (by ${user?.email || 'admin'})`);
   res.status(200).json({ success: true, message: `Checkout mode set to ${option.label}. Customers use it from their next Check out.`, data: await checkoutModeResponse() });
 });
+
+// ── Storefront updates (rebuild of the prebuilt website) ────────────────────────
+/** A build marked "building" for longer than this is shown as interrupted (e.g. server restart). */
+const REBUILD_STALE_MS = 45 * 60 * 1000;
+
+/** GET /api/admin/settings/storefront-rebuild — last request / build / result. */
+export const getStorefrontRebuildStatus = catchAsync(async (_req: Request, res: Response) => {
+  const { getRebuildStatus } = await import('../../services/storefront/rebuildStatus');
+  const { storefrontRebuildEnabled } = await import('../../utils/rebuildStorefront');
+  const s: any = (await getRebuildStatus()) || {};
+  const building = !!s.building && !!s.lastStartedAt && Date.now() - new Date(s.lastStartedAt).getTime() < REBUILD_STALE_MS;
+  // Waiting = asked for after the last build started (debounced ~10 s, or queued behind a running build)
+  const waiting = !!s.lastRequestedAt && (!s.lastStartedAt || new Date(s.lastRequestedAt) > new Date(s.lastStartedAt));
+  res.status(200).json({
+    success: true,
+    data: {
+      enabled: storefrontRebuildEnabled(),
+      building,
+      waiting,
+      lastRequestedAt: s.lastRequestedAt || null,
+      lastRequestedBy: s.lastRequestedBy || null,
+      lastStartedAt: s.lastStartedAt || null,
+      lastFinishedAt: s.lastFinishedAt || null,
+      lastResult: s.lastResult || null,
+      lastSuccessAt: s.lastSuccessAt || null,
+      lastFailureAt: s.lastFailureAt || null,
+      consecutiveFailures: s.consecutiveFailures || 0,
+    },
+  });
+});
+
+/** POST /api/admin/settings/storefront-rebuild — "Rebuild now" (debounced like every other request). */
+export const requestStorefrontRebuild = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+  const { triggerStorefrontRebuild, storefrontRebuildEnabled } = await import('../../utils/rebuildStorefront');
+  if (!storefrontRebuildEnabled()) {
+    return next(new AppError('Automatic website updates are switched off on this server (STOREFRONT_AUTO_REBUILD=false).', 409));
+  }
+  const { adminLabelOf } = await import('../../services/orders/confirmationEmail');
+  const { recordRebuildRequested } = await import('../../services/storefront/rebuildStatus');
+  const by = `manual: ${adminLabelOf((req as any).user)}`;
+  await recordRebuildRequested(by); // so the status shows "queued" as soon as this returns
+  triggerStorefrontRebuild(by);
+  res.status(202).json({ success: true, message: 'Website update requested. It starts in about 10 seconds and usually takes a few minutes.' });
+});

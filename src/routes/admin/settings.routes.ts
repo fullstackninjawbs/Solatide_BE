@@ -18,4 +18,8 @@ router.put('/checkout-mode', restrictTo(...ACCESS.settingsPayment), settingsCont
 router.get('/bank-transfer', restrictTo(...ACCESS.settingsRead), settingsController.getBankTransferSettings);
 router.put('/bank-transfer', restrictTo(...ACCESS.settingsPayment), settingsController.updateBankTransferSettings);
 
+// ── Storefront updates (prebuilt website rebuild status + "Rebuild now") ─────
+router.get('/storefront-rebuild', restrictTo(...ACCESS.settingsRead), settingsController.getStorefrontRebuildStatus);
+router.post('/storefront-rebuild', restrictTo(...ACCESS.settingsStoreWrite), settingsController.requestStorefrontRebuild);
+
 export default router;

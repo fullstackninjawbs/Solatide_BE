@@ -4,13 +4,17 @@ import catchAsync from '../../utils/catchAsync';
 import AppError from '../../utils/appError';
 import { sanitizeRichHtml } from '../../utils/sanitizeHtml';
 
+
 /** Normalise FAQ questions; answers are rendered as HTML on the storefront. */
-const sanitizeQuestions = (questions: unknown) => {
+export const sanitizeQuestions = (questions: unknown) => {
   if (!Array.isArray(questions)) return [];
-  return questions.map((q: any) => ({
+  return questions.map((q: any, idx: number) => ({
     ...(q && q._id ? { _id: q._id } : {}),
     question: typeof q?.question === 'string' ? q.question.trim().slice(0, 1000) : '',
     answer: sanitizeRichHtml(q?.answer),
+    // Keep the admin's visibility toggle and order (dropping them reset every question to visible on save)
+    isVisible: q?.isVisible !== false,
+    sortOrder: Number.isFinite(Number(q?.sortOrder)) ? Number(q.sortOrder) : idx,
   }));
 };
 

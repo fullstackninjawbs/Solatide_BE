@@ -14,6 +14,7 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { recordRebuildRequested, recordRebuildStarted, recordRebuildFinished } from '../services/storefront/rebuildStatus';
 
 const DEBOUNCE_MS = 10_000;
 const STALE_LOCK_MS = 30 * 60 * 1000;
@@ -102,7 +103,9 @@ export function runDeploy(): Promise<number> {
   const out = fs.openSync(logFile, 'a');
   fs.writeSync(out, `\n===== ${new Date().toISOString()} deploy-store.sh (pid ${process.pid}) =====\n`);
 
-  return new Promise((resolve) => {
+  // Status for Admin → Settings → Store, and an email to the admins when a build fails
+  const done = (code: number) => recordRebuildFinished(code, EXIT_BUSY).then(() => code, () => code);
+  return recordRebuildStarted().then(() => new Promise<number>((resolve) => {
     const child = spawn('bash', ['scripts/deploy-store.sh'], { cwd: dir, stdio: ['ignore', out, out] });
     child.on('error', (err) => {
       console.error(`[Storefront] Failed to start deploy-store.sh: ${err.message}`);
@@ -113,7 +116,7 @@ export function runDeploy(): Promise<number> {
       fs.closeSync(out);
       resolve(code ?? -1);
     });
-  });
+  })).then(done);
 }
 
 async function buildLoop(): Promise<void> {
@@ -162,9 +165,13 @@ async function buildLoop(): Promise<void> {
 /**
  * Debounced, single-flight rebuild request. Safe to call from any PM2 worker.
  */
-export const triggerStorefrontRebuild = () => {
+/** False when rebuilds are switched off here (tests, or STOREFRONT_AUTO_REBUILD=false e.g. local dev). */
+export const storefrontRebuildEnabled = () => process.env.NODE_ENV !== 'test' && process.env.STOREFRONT_AUTO_REBUILD !== 'false';
+
+export const triggerStorefrontRebuild = (requestedBy?: string) => {
   // Never deploy from tests; STOREFRONT_AUTO_REBUILD=false disables it explicitly (e.g. local dev).
-  if (process.env.NODE_ENV === 'test' || process.env.STOREFRONT_AUTO_REBUILD === 'false') return;
+  if (!storefrontRebuildEnabled()) return;
+  void recordRebuildRequested(requestedBy);
   // Preferred: a debounced job on the 'storefront-rebuild' queue (one build at a time across all
   // PM2 workers, retried when busy, visible in admin queue stats). Fallback: the lock-file flow.
   // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -14,6 +14,7 @@ import Order from '../models/order.model';
 import Product from '../models/product.model';
 import AppError from '../utils/appError';
 import catchAsync from '../utils/catchAsync';
+import { isBannedCustomerEmail, BANNED_CUSTOMER_MESSAGE } from '../services/checkout/bannedCustomer';
 import { withOrderNumberRetry } from '../services/orders/orderNumber';
 import { resolveCheckoutLines, CheckoutValidationError } from '../services/orders/checkoutItems';
 import { decrementStockAtomic, returnStock, type LowStockCrossing, type StockReservation } from '../services/orders/inventory';
@@ -116,6 +117,10 @@ export const placeBankOrder = catchAsync(async (req: Request, res: Response, nex
     throw err;
   }
   const { customer, address, method } = input;
+  // Customers an admin banned can't place orders
+  if (await isBannedCustomerEmail(customer.email)) {
+    return next(new AppError(BANNED_CUSTOMER_MESSAGE, 403));
+  }
   if (!methodsForCountry(address.country, s).includes(method)) {
     return next(new AppError(address.country === 'AU'
       ? 'Please choose PayID or Bank Transfer for Australian orders.'

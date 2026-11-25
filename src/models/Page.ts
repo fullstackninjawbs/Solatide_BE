@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { registerSlugRedirectHooks } from '../utils/slugRedirectHooks';
+import { registerStorefrontRebuildHooks } from '../utils/storefrontRebuildHooks';
 
 export interface IPage extends Document {
   title: string;
@@ -73,5 +74,9 @@ const PageSchema = new Schema<IPage>(
 
 // Automatic 301 when a CMS page URL changes (see services/redirects)
 registerSlugRedirectHooks(PageSchema, 'page');
+
+// Pages are prerendered: any change, from any code path, rebuilds the storefront (debounced). The
+// admin page controller also asks for one; both collapse into a single build.
+registerStorefrontRebuildHooks(PageSchema);
 
 export default mongoose.model<IPage>('Page', PageSchema);

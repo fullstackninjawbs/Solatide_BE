@@ -248,17 +248,35 @@ export async function returnStock(reservations: StockReservation[]): Promise<num
   let released = 0;
   for (const r of reservations) {
     const q = Math.max(1, Math.floor(Number(r.quantity) || 0));
+    // Rebuild the storefront only when this brings a sold-out item back in stock (the prerendered
+    // "Sold out" / schema.org availability changes); otherwise only the product's API cache is
+    // cleared (STOCK_WRITE). Previously every returned unit started a full rebuild.
+    let backInStock = false;
     if (r.variant) {
-      const res = await Product.updateOne({ _id: r.product, 'variants._id': r.variant }, { $inc: { 'variants.$.stockQty': q } }, STOCK_WRITE);
-      if (res.modifiedCount) { await recomputeAggregate(r.product); released++; }
+      const updated: any = await Product.findOneAndUpdate(
+        { _id: r.product, 'variants._id': r.variant },
+        { $inc: { 'variants.$.stockQty': q } },
+        { ...STOCK_WRITE, new: true, projection: { variants: 1 } }
+      ).lean();
+      if (updated) {
+        await recomputeAggregate(r.product);
+        released++;
+        const v = (updated.variants ?? []).find((x: any) => sameId(x._id, r.variant));
+        const after = Number(v?.stockQty ?? 0);
+        backInStock = after > 0 && after - q <= 0;
+      }
     } else {
-      const res = await Product.updateOne({ _id: r.product }, [
+      const updated: any = await Product.findOneAndUpdate({ _id: r.product }, [
         { $set: { stockQuantity: { $add: [{ $ifNull: ['$stockQuantity', 0] }, q] } } },
         { $set: { inStock: { $gt: ['$stockQuantity', 0] } } },
-      ], STOCK_WRITE);
-      if (res.modifiedCount) released++;
+      ], { ...STOCK_WRITE, new: true, projection: { stockQuantity: 1 } }).lean();
+      if (updated) {
+        released++;
+        const after = Number(updated.stockQuantity ?? 0);
+        backInStock = after > 0 && after - q <= 0;
+      }
     }
-    notifyStockAvailabilityChanged(r.product);
+    if (backInStock) notifyStockAvailabilityChanged(r.product);
   }
   return released;
 }

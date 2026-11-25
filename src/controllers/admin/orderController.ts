@@ -435,6 +435,31 @@ export const updateOrder = catchAsync(async (req: Request, res: Response, next: 
   if (billingAddressObj !== undefined) updateFields.billingAddressObj = billingAddressObj;
   if (adminNotes !== undefined) updateFields.adminNotes = adminNotes;
 
+  // Customer contact details (order page "Edit contact"). Only these four fields; the email is what
+  // shipping emails, payment reminders and the customer profile use, so it is validated and lowercased.
+  const { customer } = req.body ?? {};
+  if (customer && typeof customer === 'object') {
+    const str = (v: unknown, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : undefined);
+    const firstName = str(customer.firstName);
+    const lastName = str(customer.lastName);
+    const phone = str(customer.phone, 50);
+    const email = str(customer.email, 254)?.toLowerCase();
+    if (email !== undefined) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return next(new AppError('Please enter a valid email address.', 400));
+      }
+      updateFields['customer.email'] = email;
+      updateFields.customerEmail = email;
+    }
+    if (firstName !== undefined) updateFields['customer.firstName'] = firstName;
+    if (lastName !== undefined) updateFields['customer.lastName'] = lastName;
+    if (phone !== undefined) updateFields['customer.phone'] = phone;
+    if (firstName !== undefined || lastName !== undefined) {
+      const name = [firstName, lastName].filter(Boolean).join(' ');
+      if (name) updateFields.customerName = name;
+    }
+  }
+
   const order = await Order.findByIdAndUpdate(
     req.params.id,
     { $set: updateFields },
@@ -1305,13 +1330,20 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
 
   // 7. Atomic stock decrement (manual orders reserve stock at creation, paid or not)
   const lowStock: LowStockCrossing[] = [];
+  const reservations: Array<{ product: unknown; variant: unknown | null; quantity: number }> = [];
   for (const line of stockLines) {
     try {
       const r = await decrementLineForOrder(order._id, line);
       if (r.ok && r.lowStock) lowStock.push(r.lowStock);
+      // Record what was actually taken, so cancelling / deleting an unpaid manual order gives it back
+      if (r.ok && r.applied) reservations.push({ product: line.product, variant: line.variant ?? null, quantity: line.quantity });
     } catch (err: any) {
       console.error(`[Admin Order] Stock decrement failed for order ${order._id}: ${err?.message}`);
     }
+  }
+  if (reservations.length) {
+    await Order.updateOne({ _id: order._id }, { $set: { stockReservations: reservations } }).catch((err: any) =>
+      console.error(`[Admin Order] Could not record stock reservations for ${order._id}: ${err?.message}`));
   }
   // Admin low-stock alert when this order took items to/below their threshold (never blocks)
   if (lowStock.length) {
@@ -1552,9 +1584,20 @@ export const exportOrdersCsv = catchAsync(async (req: Request, res: Response, ne
  * DELETE /api/admin/orders/:id/soft-delete
  * Soft delete an order so it moves to the "Deleted Orders" tab.
  */
-/** Deleting an unpaid bank transfer / PayID order cancels it and gives its reserved stock back. */
+/**
+ * Deleting an unpaid bank transfer / PayID order, or an unpaid manual (admin-created) order, cancels
+ * it and gives its reserved stock back. (Manual orders created before stock reservations were
+ * recorded have none, so nothing is returned for those: same as before.)
+ */
 async function cancelAndReleaseIfUnpaidBank(ids: unknown[]): Promise<void> {
-  const unpaid = await Order.find({ _id: { $in: ids }, paymentStatus: 'pending', paymentMethod: { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] } }).select('_id').lean();
+  const unpaid = await Order.find({
+    _id: { $in: ids },
+    paymentStatus: 'pending',
+    $or: [
+      { paymentMethod: { $in: ['payid', 'bank_transfer', 'international_bank_transfer'] } },
+      { source: 'admin_manual' },
+    ],
+  }).select('_id').lean();
   for (const o of unpaid) {
     try {
       const t = await transitionPaymentStatus(o._id, 'cancelled' as PaymentStatus);

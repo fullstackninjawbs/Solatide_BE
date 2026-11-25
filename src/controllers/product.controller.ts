@@ -464,6 +464,43 @@ export const createProduct = catchAsync(async (req: Request, res: Response, next
   });
 });
 
+const toInt = (v: unknown): number | null => {
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Turn the stock numbers an admin page sent into "current stock + the admin's change".
+ *  - stockBaseline.variants: { [variantId]: value the page loaded for that variant's stock field }
+ *  - stockBaseline.stockQuantity: value the page loaded for the product's stock (used for the
+ *    first variant when no per-variant baseline is given, and for products without variants)
+ * Variants without a baseline (e.g. newly added) keep the value sent. Stock never goes below 0.
+ * Exported for tests.
+ */
+export async function applyStockBaseline(productId: string, productData: any, baseline: any): Promise<void> {
+  const existing: any = await Product.findById(productId).select('variants._id variants.stockQty stockQuantity').lean();
+  if (!existing) return;
+  const exVariants: any[] = Array.isArray(existing.variants) ? existing.variants : [];
+  const baseRoot = toInt(baseline.stockQuantity);
+  const baseVariants = baseline.variants && typeof baseline.variants === 'object' ? baseline.variants : null;
+
+  if (Array.isArray(productData.variants) && productData.variants.length > 0 && exVariants.length > 0) {
+    productData.variants.forEach((v: any, idx: number) => {
+      if (!v?._id) return;
+      const ex = exVariants.find((x) => String(x._id) === String(v._id));
+      if (!ex) return;
+      const base = baseVariants ? toInt(baseVariants[String(v._id)]) : idx === 0 ? baseRoot : null;
+      const sent = toInt(v.stockQty);
+      if (base === null || sent === null) return;
+      v.stockQty = Math.max(0, (Number(ex.stockQty) || 0) + (sent - base));
+    });
+    productData.stockQuantity = productData.variants.reduce((sum: number, v: any) => sum + (toInt(v?.stockQty) || 0), 0);
+  } else if (exVariants.length === 0 && productData.stockQuantity !== undefined && baseRoot !== null) {
+    const sent = toInt(productData.stockQuantity);
+    if (sent !== null) productData.stockQuantity = Math.max(0, (Number(existing.stockQuantity) || 0) + (sent - baseRoot));
+  }
+}
+
 export const updateProduct = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
   const { collections, tags, tag, ...productData } = req.body;
   sanitizeProductHtmlFields(productData);
@@ -530,7 +567,17 @@ export const updateProduct = catchAsync(async (req: Request, res: Response, next
   if (productData.variants && productData.variants.length === 1 && productData.stockQuantity !== undefined) {
      productData.variants[0].stockQty = parseInt(productData.stockQuantity as string, 10) || 0;
   }
-  
+
+  // Stock baseline: the stock values the admin page loaded. Orders (and cancellations) change stock
+  // while a product page is open, so writing the page's numbers back would undo them. With a
+  // baseline only the admin's own change is applied to the CURRENT stock: untouched = kept as is,
+  // 10 -> 60 on the page = +50 on whatever the stock is now. Without a baseline: unchanged behaviour.
+  const stockBaseline = productData.stockBaseline;
+  delete productData.stockBaseline;
+  if (stockBaseline && typeof stockBaseline === 'object') {
+    await applyStockBaseline(req.params.id, productData, stockBaseline);
+  }
+
   productData.inStock = calculateInStock(productData);
 
   const updatedProduct = await Product.findByIdAndUpdate(req.params.id, productData, {

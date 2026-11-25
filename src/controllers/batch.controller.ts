@@ -4,7 +4,7 @@ import Product from '../models/product.model';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/appError';
 import { uploadImageBuffer } from '../utils/cloudinary';
-import { cacheDel, cacheGet, cacheSet, TTL } from '../utils/cache';
+import { cacheDel, cacheDelIndexed, cacheGet, cacheSet, TTL } from '../utils/cache';
 import { escapeRegex } from '../utils/collectionUtils';
 import { fetchCloudinaryCoa } from '../utils/coaProxy';
 
@@ -213,13 +213,16 @@ export const createBatch = catchAsync(async (req: Request, res: Response, next: 
 
   const newBatch = await Batch.create(batchData);
 
-  // Always set as current batch for the variant (or product default)
+  // A new batch becomes the current batch (COA shown on the product page) unless the admin unticked
+  // "Make this the current batch" or created it as inactive (e.g. recorded ahead for incoming stock)
+  const makeCurrent = setAsCurrent !== false && setAsCurrent !== 'false' && newBatch.status !== 'inactive';
   const pIds = newBatch.products && newBatch.products.length > 0 ? newBatch.products : (newBatch.productId ? [newBatch.productId] : []);
   for (const pId of pIds) {
-    await setCurrentBatchOnVariant(pId, newBatch._id, newBatch.variantId);
+    if (makeCurrent) await setCurrentBatchOnVariant(pId, newBatch._id, newBatch.variantId);
     
     // Invalidate product cache
-    const product = await Product.findById(pId).select('slug');
+    await cacheDelIndexed(`products:detail-index:${pId}`);
+    const product = await Product.findById(pId).select('slug id');
     if (product) {
       await cacheDel(`products:detail:${product.slug}`);
       await cacheDel(`products:detail:${product.id}`);
@@ -259,14 +262,18 @@ export const updateBatch = catchAsync(async (req: Request, res: Response, next: 
     return next(new AppError('No batch record found with that ID', 404));
   }
 
-  // Always set as current batch for the variant
+  // Editing a batch (or removing its COA) never changes which batch is current, unless the admin
+  // explicitly asked for it ("Make this the current batch") and the batch is active. Previously
+  // every save made the edited batch current, so an old/archived batch's COA went live.
+  const makeCurrent = (setAsCurrent === true || setAsCurrent === 'true') && batch.status !== 'inactive';
   const pIds = batch.products && batch.products.length > 0 ? batch.products : (batch.productId ? [batch.productId] : []);
   if (pIds.length > 0) {
     for (const pId of pIds) {
-      await setCurrentBatchOnVariant(pId, batch._id, batch.variantId);
-      
-      // Invalidate product cache
-      const product = await Product.findById(pId).select('slug');
+      if (makeCurrent) await setCurrentBatchOnVariant(pId, batch._id, batch.variantId);
+
+      // Invalidate product cache (always: the product page shows the current batch's COA/results)
+      await cacheDelIndexed(`products:detail-index:${pId}`);
+    const product = await Product.findById(pId).select('slug id');
       if (product) {
         await cacheDel(`products:detail:${product.slug}`);
         await cacheDel(`products:detail:${product.id}`);
