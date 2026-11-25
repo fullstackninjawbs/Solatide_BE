@@ -104,6 +104,10 @@ const sessionSchema = new mongoose.Schema(
      * then on, until activity newer than this arrives (see services/analytics/config.ts liveStatus).
      */
     leftAt: Date,
+    /** Browser send times (ms, the visitor's own clock) of the last "left" and the last activity
+     *  applied: they keep out-of-order requests from flipping the live status (see collect.ts) */
+    leftClientAt: Number,
+    activityClientAt: Number,
     cart: { type: cartSchema, default: undefined },
     checkout: { checkoutId: String, stage: String, startedAt: Date },
     identity: { type: identitySchema, default: undefined },

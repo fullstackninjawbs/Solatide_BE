@@ -80,6 +80,12 @@ export interface CleanBatch {
   ping: boolean;
   /** The tab was hidden or closed (sent with ping) */
   left: boolean;
+  /**
+   * When the browser sent this batch (its own clock, ms). Requests sent while a tab closes can be
+   * handled out of order by different server workers; comparing the browser's send times keeps an
+   * older "still active" batch from reviving a visitor who already left.
+   */
+  sentAt?: number;
   context: {
     landingPage?: string;
     referrer?: string;
@@ -166,7 +172,9 @@ export function validateCollectBatch(body: any): CleanBatch {
       paymentMethod: str(e.paymentMethod, 40),
     });
   }
-  return { visitorId, sessionId, ping: body.ping === true, left: body.left === true, context, events };
+  const sentAt = typeof body.sentAt === 'number' && Number.isFinite(body.sentAt) && body.sentAt > 0 && body.sentAt < 1e14
+    ? Math.floor(body.sentAt) : undefined;
+  return { visitorId, sessionId, ping: body.ping === true, left: body.left === true, context, events, ...(sentAt ? { sentAt } : {}) };
 }
 
 const SITE_HOSTS = [
@@ -297,6 +305,22 @@ async function applySessionUpdates(batch: CleanBatch, allFresh: CleanEvent[], no
   // arrive with it (sent as the page closes) still count as activity, and leftAt is set after them.
   const set: Record<string, unknown> = batch.left ? { leftAt: now } : { lastActivityAt: now };
   if (batch.left && allFresh.length) set.lastActivityAt = new Date(now.getTime() - 1);
+  // Out-of-order guard (see CleanBatch.sentAt). Requests sent within milliseconds of each other (the
+  // last batch + the "left" beacon as a tab closes; or "left" + "back" when a tab is hidden and shown
+  // again) can be handled in any order by different workers. Each is applied only if no newer signal
+  // (by the browser's send time) was applied already, each in its own conditional update, so it is
+  // atomic whichever request is handled first:
+  //   activity sent at t  → applied only if the last "left" was sent before t   (leftClientAt < t)
+  //   "left"   sent at t  → applied only if no activity was sent after t        (activityClientAt <= t)
+  // Batches without sentAt (an older storefront still open in a browser) work as before.
+  let guardedActivity: Date | null = null;
+  let guardedLeft: Date | null = null;
+  if (batch.sentAt) {
+    guardedActivity = (set.lastActivityAt as Date | undefined) ?? null;
+    guardedLeft = (set.leftAt as Date | undefined) ?? null;
+    delete set.lastActivityAt;
+    delete set.leftAt;
+  }
   // Checkout messages that arrive after their order was submitted (the browser's last batch can
   // reach the server just after the order request) must not put the old cart back or become the
   // "latest action": the order already emptied the cart.
@@ -333,7 +357,27 @@ async function applySessionUpdates(batch: CleanBatch, allFresh: CleanEvent[], no
     const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ');
     if (name) set['identity.name'] = name;
   }
-  await AnalyticsSession.updateOne({ sessionId: batch.sessionId }, { $set: set, ...(Object.keys(inc).length ? { $inc: inc } : {}) });
+  if (Object.keys(set).length || Object.keys(inc).length) {
+    await AnalyticsSession.updateOne(
+      { sessionId: batch.sessionId },
+      { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(inc).length ? { $inc: inc } : {}) }
+    );
+  }
+  if (batch.sentAt) {
+    // Activity first: events sent together with a "left" (the page closing) count, then "left" wins
+    if (guardedActivity) {
+      await AnalyticsSession.updateOne(
+        { sessionId: batch.sessionId, $or: [{ leftClientAt: { $exists: false } }, { leftClientAt: { $lt: batch.sentAt } }] },
+        { $set: { lastActivityAt: guardedActivity }, $max: { activityClientAt: batch.sentAt } }
+      );
+    }
+    if (guardedLeft) {
+      await AnalyticsSession.updateOne(
+        { sessionId: batch.sessionId, $or: [{ activityClientAt: { $exists: false } }, { activityClientAt: { $lte: batch.sentAt } }] },
+        { $set: { leftAt: guardedLeft }, $max: { leftClientAt: batch.sentAt } }
+      );
+    }
+  }
   if (contact && (contact.email || contact.firstName)) {
     const vset: Record<string, unknown> = {};
     if (contact.email) vset['identity.email'] = contact.email;

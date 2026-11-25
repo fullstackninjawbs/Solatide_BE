@@ -25,15 +25,17 @@ export const CHECKOUT_ABANDON_MS = CHECKOUT_ABANDON_MINUTES * 60 * 1000;
 /**
  * "Active now" (live visitor cards, "Visitors right now"): the visitor did something or their open,
  * visible tab sent a heartbeat within ACTIVE_WINDOW_SECONDS, and they have not left (closed or
- * hidden the tab) since. The storefront sends a heartbeat every 30 s while the visitor is using the
- * page (Client/src/utils/analytics.js PING_EVERY_MS), so 75 s tolerates one lost heartbeat.
+ * hidden the tab) since. The storefront sends a heartbeat every 15 s while the visitor is using the
+ * page (Client/src/utils/analytics.js PING_EVERY_MS), so 40 s tolerates one lost heartbeat. It is
+ * also how long a closed tab can still show as active when the browser could not deliver its
+ * "left" signal (e.g. the last private/incognito window closed, or a phone killed the browser).
  * Not the same as a session: a session only ends after SESSION_TIMEOUT_MINUTES of inactivity.
  */
 const seconds = (v: string | undefined, fallback: number, min: number, max: number) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= min && n <= max ? Math.floor(n) : fallback;
 };
-export const ACTIVE_WINDOW_SECONDS = seconds(process.env.ANALYTICS_ACTIVE_SECONDS, 75, 30, 600);
+export const ACTIVE_WINDOW_SECONDS = seconds(process.env.ANALYTICS_ACTIVE_SECONDS, 40, 30, 600);
 export const ACTIVE_WINDOW_MS = ACTIVE_WINDOW_SECONDS * 1000;
 
 /** Live status of a session at `now`: active, inactive (session still open) or ended. */
