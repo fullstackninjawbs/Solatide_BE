@@ -8,6 +8,7 @@ import { closeQueues } from './queues/queues';
 import { closeProducerConnection } from './queues/connection';
 import { closeLiveStreams } from './controllers/admin/liveAnalyticsController';
 import { closeLiveBus } from './services/analytics/live/bus';
+import { APP_VERSION, APP_COMMIT } from './config/version';
 
 // Product/batch/collection/FAQ changes refresh the prerendered storefront — only in the API process.
 enableStorefrontAutoRebuild();
@@ -29,7 +30,7 @@ connectDB().then(() => {
 
 // Start the server
 const onListening = () => {
-  console.log(`[Server] Running in ${config.env} mode on ${config.host ?? 'all interfaces'}, port ${config.port}`);
+  console.log(`[Server] Solatide API v${APP_VERSION} (${APP_COMMIT}) running in ${config.env} mode on ${config.host ?? 'all interfaces'}, port ${config.port}`);
 };
 const server = config.host ? app.listen(config.port, config.host, onListening) : app.listen(config.port, onListening);
 

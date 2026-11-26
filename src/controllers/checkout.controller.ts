@@ -27,7 +27,7 @@ import { getCheckoutModeState, getEffectiveCheckoutMode } from '../services/chec
 import { applyDiscountCode, reserveDiscountUse, undoReservedUse, type AppliedDiscount } from '../services/discounts/discountService';
 import { orderRequestShippingConfig } from '../services/checkout/orderRequest';
 import { toPublicOrder } from './order.controller';
-import { recordOrderEvent } from '../services/analytics/serverEvents';
+import { recordOrderEvent, linkVisitByOrderAccess } from '../services/analytics/serverEvents';
 import { lookupIp } from '../services/analytics/geo';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -302,6 +302,11 @@ export const getBankOrder = catchAsync(async (req: Request, res: Response, next:
   if (!/^[0-9a-fA-F]{24}$/.test(id) || !token) return next(new AppError('Order not found', 404));
   const doc: any = await Order.findById(id).select('+publicAccessToken').lean();
   if (!doc || doc.isDeleted || !accessTokenMatches(doc.publicAccessToken, token)) return next(new AppError('Order not found', 404));
+  // Opened in another browser (e.g. the payment email link): the valid token tells whose order it
+  // is, so that visit shows the customer's name in the live view. Background, never blocks.
+  if (req.query.vid || req.query.sid) {
+    void linkVisitByOrderAccess(doc, { sessionId: req.query.sid, visitorId: req.query.vid });
+  }
   const data = await bankOrderResponse(id);
   res.set('Cache-Control', 'no-store');
   res.json({ success: true, data });

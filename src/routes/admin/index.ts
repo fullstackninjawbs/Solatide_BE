@@ -19,6 +19,7 @@ import userRoutes from './user.routes';
 import redirectRoutes from './redirect.routes';
 import shippingRoutes from './shipping.routes';
 import { getQueueStats, retryFailedJobs } from '../../queues/stats';
+import { versionInfo } from '../../config/version';
 
 const router = express.Router();
 
@@ -30,6 +31,9 @@ const router = express.Router();
  */
 router.use(protect);
 router.use(restrictTo(...STAFF_ROLES));
+
+// Running backend version + commit (staff only; not shown in the admin UI at the moment)
+router.get('/version', (_req, res) => { res.json({ success: true, data: versionInfo() }); });
 
 router.use('/auth', authRoutes);
 router.use('/dashboard', restrictTo(...ACCESS.dashboard), dashboardRoutes);

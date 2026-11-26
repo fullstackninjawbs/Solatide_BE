@@ -8,7 +8,7 @@ const NOW = Date.parse('2026-11-17T01:00:00Z');
 const ago = (ms: number) => new Date(NOW - ms);
 
 test('liveStatus: active only while recently active and not left', () => {
-  assert.equal(ACTIVE_WINDOW_MS, 75_000, 'default active window');
+  assert.equal(ACTIVE_WINDOW_MS, 40_000, 'default active window (15 s heartbeat, one may be lost)');
   assert.equal(liveStatus({ lastActivityAt: ago(10_000) }, NOW), 'active');
   assert.equal(liveStatus({ lastActivityAt: ago(ACTIVE_WINDOW_MS) }, NOW), 'active', 'boundary is inclusive');
   assert.equal(liveStatus({ lastActivityAt: ago(ACTIVE_WINDOW_MS + 1) }, NOW), 'inactive', 'missed heartbeats → inactive');

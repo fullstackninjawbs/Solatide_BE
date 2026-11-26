@@ -15,3 +15,7 @@ webhook_payload.json
 
 # PM2 / app runtime logs (never commit: contain customer data)
 logs/
+
+# Local AI assistant notes (not committed)
+CLAUDE.md
+CLAUDE.local.md

@@ -4,6 +4,7 @@ import { deliverMail } from '../queues/producers';
 import { escapeHtml as e, safeUrl } from '../utils/escapeHtml';
 import { Order } from '../models/order.model';
 import { generateOrderAccessToken } from '../domain/orderAccess';
+import { emailLink } from './emailLinks';
 
 // Strip CR/LF so user-controlled values cannot inject mail headers via subject.
 const hdr = (v: unknown): string => String(v ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200);
@@ -46,7 +47,8 @@ export const sendVerificationEmail = async (
 ) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
   const verificationUrl = `${clientUrl}/review/verify/${encodeURIComponent(verificationToken)}`;
-  const companyLogo = 'https://i.imgur.com/uC00Jid.png';
+  // Same logo (Solatide's own Cloudinary) as every other email; was a third-party imgur link
+  const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 
   const safeRating = Math.min(5, Math.max(0, Math.round(Number(rating) || 0)));
   const starsHtml = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
@@ -130,7 +132,7 @@ export const sendVerificationEmail = async (
 
 export const sendOrderConfirmationEmail = async (order: any) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const orderUrl = await buildCustomerOrderUrl(order, clientUrl);
+  const orderUrl = emailLink(await buildCustomerOrderUrl(order, clientUrl), 'order_confirmation');
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
   const currency = order.currency || 'AUD';
 
@@ -202,7 +204,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
             <h2>${order.source === 'admin_manual' ? 'Your order has been placed!' : 'Thank you for your order!'}</h2>
             <p>${order.source === 'admin_manual' ? 'We have successfully placed an order on your behalf. We will notify you when it has been sent.' : "We're getting your order ready to be shipped. We will notify you when it has been sent."}</p>
             <a href="${e(orderUrl)}" class="button">View your order</a>
-            <span style="color: #00bfef; margin-left: 15px; font-size: 14px;"><a href="${e(clientUrl)}/collections/all" style="color: #00bfef; text-decoration: none;">or Visit our store</a></span>
+            <span style="color: #00bfef; margin-left: 15px; font-size: 14px;"><a href="${e(emailLink(`${clientUrl}/collections/all`, 'order_confirmation'))}" style="color: #00bfef; text-decoration: none;">or Visit our store</a></span>
           </div>
           
           <h3 class="summary-title">Order summary</h3>
@@ -293,7 +295,7 @@ export const sendOrderConfirmationEmail = async (order: any) => {
 
 export const sendShipmentConfirmationEmail = async (order: any) => {
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const orderUrl = await buildCustomerOrderUrl(order, clientUrl);
+  const orderUrl = emailLink(await buildCustomerOrderUrl(order, clientUrl), 'shipping');
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
 
   const customerName = order.customer?.firstName
@@ -469,7 +471,7 @@ export const sendResetPasswordEmail = async (email: string, resetToken: string, 
 export const sendNewsletterWelcomeEmail = async (email: string) => {
   const companyLogo = 'https://res.cloudinary.com/dmzdud9i/image/upload/v1783360609/assets/yrapi73fs2iodwl7inmg.png';
   const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'http://localhost:5173';
-  const shopUrl = `${clientUrl}/shop`;
+  const shopUrl = emailLink(`${clientUrl}/shop`, 'newsletter_welcome');
 
   const html = `
     <!DOCTYPE html>
