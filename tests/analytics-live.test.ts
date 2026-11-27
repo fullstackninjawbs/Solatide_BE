@@ -64,7 +64,7 @@ test('cards: card agrees with the session record and its live status', () => {
   assert.equal(card.isNewVisitor, true);
   assert.equal(card.lastEvent?.type, 'add_to_cart');
   assert.equal(card.lastEvent?.productName, 'Retatrutide 10mg');
-  assert.deepEqual(card.cart, { itemCount: 1, value: 229 });
+  assert.deepEqual(card.cart, { itemCount: 1, value: 229, items: [], updatedAt: undefined });
   assert.equal(card.checkoutStage, 'shipping');
   assert.equal(card.source?.channel, 'organic_search');
   assert.equal(card.orderCount, 0);

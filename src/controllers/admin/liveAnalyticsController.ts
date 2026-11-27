@@ -1,6 +1,7 @@
 /**
  * Admin live customer activity (dashboard):
- *   GET /api/admin/analytics/live/visitors   recent visitor cards + who is active now
+ *   GET /api/admin/analytics/live/visitors   recent visitor cards (one per visitor) + who is active now
+ *   GET /api/admin/analytics/live/visitors/:sessionId/profile   visitor panel tabs (see live/profile.ts)
  *   GET /api/admin/analytics/live/activity   "All activity" feed: newest first, filters, search, paging
  *   GET /api/admin/analytics/live/stream     Server-Sent Events: every new action as it is recorded
  *
@@ -17,6 +18,7 @@ import { liveStatus, SESSION_TIMEOUT_MS } from '../../services/analytics/config'
 import { visitorCard, visitorSummary, activityItem, liveDefinitions } from '../../services/analytics/live/cards';
 import { withVisitorIdentity, visitorIdsMatching } from '../../services/analytics/live/identity';
 import { subscribe, markViewerPresent, LiveMessage } from '../../services/analytics/live/bus';
+import { buildVisitorProfile } from '../../services/analytics/live/profile';
 
 const RECENT_CARDS_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SEARCH_SESSIONS_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
@@ -30,14 +32,19 @@ const clampInt = (v: unknown, min: number, max: number, fallback: number) => {
 };
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Recent visitor cards (most recently active first) and the presence list for "online now". */
+/**
+ * Recent visitor cards (most recently active first, ONE per visitor: their latest visit, with how
+ * many visits they made in the window) and the presence list for "online now" (per visit).
+ */
 export const getLiveVisitors = catchAsync(async (req: Request, res: Response) => {
   const now = Date.now();
   const limit = clampInt(req.query.limit, 1, 12, 6);
-  const [recent, open] = await Promise.all([
-    AnalyticsSession.find({ lastActivityAt: { $gte: new Date(now - RECENT_CARDS_WINDOW_MS) } })
+  const windowStart = new Date(now - RECENT_CARDS_WINDOW_MS);
+  const [candidates, open] = await Promise.all([
+    // Extra rows so a visitor with several visits doesn't push others off the cards
+    AnalyticsSession.find({ lastActivityAt: { $gte: windowStart } })
       .sort({ lastActivityAt: -1 })
-      .limit(limit)
+      .limit(limit * 4)
       .select(SESSION_FIELDS)
       .lean(),
     // Every open visit, for the live "online now" count (the page re-checks statuses as time passes)
@@ -47,6 +54,22 @@ export const getLiveVisitors = catchAsync(async (req: Request, res: Response) =>
       .select('sessionId lastActivityAt leftAt')
       .lean(),
   ]);
+  const seen = new Set<string>();
+  const recent = (candidates as any[]).filter((s) => {
+    const key = s.visitorId || s.sessionId;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, limit);
+  const visitCounts = new Map<string, number>();
+  const ids = recent.map((s) => s.visitorId).filter(Boolean);
+  if (ids.length) {
+    const rows: any[] = await AnalyticsSession.aggregate([
+      { $match: { visitorId: { $in: ids }, lastActivityAt: { $gte: windowStart } } },
+      { $group: { _id: '$visitorId', n: { $sum: 1 } } },
+    ]);
+    for (const r of rows) visitCounts.set(r._id, r.n);
+  }
   const presence = open.map((s: any) => ({
     sessionId: s.sessionId,
     lastActivityAt: s.lastActivityAt ? new Date(s.lastActivityAt).toISOString() : undefined,
@@ -58,7 +81,8 @@ export const getLiveVisitors = catchAsync(async (req: Request, res: Response) =>
       serverTime: new Date(now).toISOString(),
       definitions: liveDefinitions(),
       onlineNow: open.filter((s: any) => liveStatus(s, now) === 'active').length,
-      visitors: (await withVisitorIdentity(recent as any[])).map((s: any) => visitorCard(s, now)),
+      visitors: (await withVisitorIdentity(recent)).map((s: any) => ({ ...visitorCard(s, now), recentVisitCount: visitCounts.get(s.visitorId) || 1 })),
+      recentWindowHours: RECENT_CARDS_WINDOW_MS / 3_600_000,
       presence,
     },
   });
@@ -78,6 +102,21 @@ export const getLiveVisitor = catchAsync(async (req: Request, res: Response) => 
   }
   const [named] = await withVisitorIdentity([session as any]);
   res.status(200).json({ success: true, data: { serverTime: new Date().toISOString(), definitions: liveDefinitions(), visitor: visitorCard(named) } });
+});
+
+/** Visitor panel: the visit, the visitor, their other visits (?page=) and their orders. */
+export const getVisitorProfile = catchAsync(async (req: Request, res: Response) => {
+  const sessionId = String(req.params.sessionId || '');
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(sessionId)) {
+    res.status(400).json({ success: false, message: 'Invalid session' });
+    return;
+  }
+  const profile = await buildVisitorProfile(sessionId, clampInt(req.query.page, 1, 1000, 1));
+  if (!profile) {
+    res.status(404).json({ success: false, message: 'Visit not found' });
+    return;
+  }
+  res.status(200).json({ success: true, data: { definitions: liveDefinitions(), ...profile } });
 });
 
 /** "All activity": newest first; ?before=<cursor>&limit=&types=a,b&q=&sessionId= */
