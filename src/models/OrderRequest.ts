@@ -26,7 +26,8 @@ export interface IOrderRequest extends Document {
   /** Set when the admin created the order from this request (Admin → Create order) */
   orderId?: any;
   handledAt?: Date | null;
-  visitor?: { sessionId?: string; country?: string };
+  /** The storefront visitor who sent it (analytics IDs), so the order created from it joins that visit */
+  visitor?: { sessionId?: string; visitorId?: string; checkoutId?: string; country?: string };
 }
 
 const OrderRequestSchema = new Schema<IOrderRequest>(
@@ -67,7 +68,12 @@ const OrderRequestSchema = new Schema<IOrderRequest>(
     emailedCustomerAt: { type: Date, default: null },
     orderId: { type: Schema.Types.ObjectId, ref: 'Order', default: null },
     handledAt: { type: Date, default: null },
-    visitor: { sessionId: { type: String, maxlength: 128 }, country: { type: String, maxlength: 100 } },
+    visitor: {
+      sessionId: { type: String, maxlength: 128 },
+      visitorId: { type: String, maxlength: 64 },
+      checkoutId: { type: String, maxlength: 64 },
+      country: { type: String, maxlength: 100 },
+    },
   },
   { timestamps: true }
 );

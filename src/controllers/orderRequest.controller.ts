@@ -18,9 +18,13 @@ import {
 import { getEffectiveCheckoutMode } from '../services/checkout/checkoutMode';
 import { applyDiscountCode } from '../services/discounts/discountService';
 import { cartLinesOf } from './checkout.controller';
+import { recordOrderRequestEvent } from '../services/analytics/serverEvents';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const CLIENT_ID_RE = /^[A-Za-z0-9_-]{8,100}$/;
+// Analytics IDs sent by the storefront (same format the tracker uses); anything else is dropped
+const ANALYTICS_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+const analyticsId = (v: unknown) => (typeof v === 'string' && ANALYTICS_ID_RE.test(v) ? v : undefined);
 // Not shown: Shopify's "Default Title" placeholder, or a variant title that just repeats the product name
 const variantTitleOf = (t?: string, productName?: string) =>
   (t && !/^default title$/i.test(t.trim()) && t.trim().toLowerCase() !== String(productName || '').trim().toLowerCase() ? t : undefined);
@@ -90,7 +94,14 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
         total,
         currency: 'AUD',
         notes: input.notes || undefined,
-        visitor: req.body?.visitor && typeof req.body.visitor === 'object' ? { sessionId: str(req.body.visitor.sessionId, 128), country: str(req.body.visitor.country, 100) } : undefined,
+        visitor: req.body?.visitor && typeof req.body.visitor === 'object'
+          ? {
+            sessionId: str(req.body.visitor.sessionId, 128),
+            visitorId: analyticsId(req.body.visitor.visitorId),
+            checkoutId: analyticsId(req.body.visitor.checkoutId),
+            country: str(req.body.visitor.country, 100),
+          }
+          : undefined,
       });
     } catch (err: any) {
       if (err?.code !== 11000) throw err;
@@ -104,6 +115,9 @@ export const submitOrderRequest = catchAsync(async (req: Request, res: Response,
   if (!doc) return next(new AppError('Could not save your order request. Please try again.', 500));
 
   console.log(`[OrderRequest] ${doc.requestNumber} received (${lines.length} line(s), $${subtotal} AUD)`);
+
+  // Analytics: "Order request sent" on the customer's visit, checkout closed as submitted (never abandoned)
+  void recordOrderRequestEvent(doc);
 
   // Emails are queued (retried) when queues are available; never fail the request because of them
   sendAdminOrderRequestEmail(doc)

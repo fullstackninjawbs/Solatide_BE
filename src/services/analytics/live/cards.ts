@@ -113,7 +113,7 @@ export function visitorCard(s: any, now = Date.now()): VisitorCard {
       ? {
           type: ev.type, path: ev.path, productName: ev.productName, productImage: ev.productImage,
           variantTitle: ev.variantTitle, quantity: ev.quantity, stage: ev.stage, value: ev.value,
-          orderId: ev.orderId ? String(ev.orderId) : undefined, at: iso(ev.at),
+          orderId: ev.orderId ? String(ev.orderId) : undefined, requestNumber: ev.requestNumber || undefined, at: iso(ev.at),
         }
       : null,
     counts: {
@@ -145,6 +145,7 @@ export function activityItem(e: any, visitor: VisitorSummary | null, extra: { or
     value: typeof e.cartValue === 'number' ? e.cartValue : undefined,
     orderId: e.orderId ? String(e.orderId) : undefined,
     orderNumber: extra.orderNumber,
+    requestNumber: e.requestNumber || undefined,
     sessionId: e.sessionId,
     visitor,
   };

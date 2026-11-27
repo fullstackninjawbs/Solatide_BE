@@ -28,6 +28,7 @@ import { decrementLineForOrder, LowStockCrossing, releaseReservedStock } from '.
 import { releaseDiscountUse } from '../../services/discounts/discountService';
 import { sendOrderLowStockAlert } from '../../services/lowStockAlert';
 import { parseQuantity, CheckoutValidationError, MAX_LINE_QUANTITY } from '../../services/orders/checkoutItems';
+import { visitorFromRequest, linkOrderToRequestVisit } from '../../services/analytics/serverEvents';
 
 /**
  * GET /api/admin/orders
@@ -1279,6 +1280,13 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     name: adminUser.name || adminUser.email
   } : undefined;
 
+  // Created from a storefront order request: the order carries that visitor's analytics IDs, so its
+  // payment confirmation is recorded in the visit that sent the request (Live View / visitor panel)
+  const isRequestId = typeof orderRequestId === 'string' && /^[0-9a-fA-F]{24}$/.test(orderRequestId);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const sourceRequest: any = isRequestId ? await require('../../models/OrderRequest').default.findById(orderRequestId).select('visitor').lean().catch(() => null) : null;
+  const requestVisitor = sourceRequest ? visitorFromRequest(sourceRequest) : undefined;
+
   // 6. Create Order document (order number retried on E11000)
   const isPaid = paymentStatus === 'paid';
   const now = new Date();
@@ -1313,6 +1321,7 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
     paymentStatus: isPaid ? 'paid' : 'pending',
     paidAt: isPaid ? now : null,
     publicAccessToken: generateOrderAccessToken(),
+    ...(requestVisitor ? { visitor: requestVisitor } : {}),
     // Manual orders: the confirmation email (when the admin asked for it) is sent below, before the
     // response, so its timeline entry is there when the order opens; onOrderPaid never sends it.
     suppressConfirmationEmail: true,
@@ -1390,6 +1399,8 @@ export const createAdminOrder = catchAsync(async (req: Request, res: Response, n
       { _id: orderRequestId, status: 'new' },
       { $set: { status: 'handled', orderId: order._id, handledAt: new Date() } }
     ).catch((err: any) => console.error(`[Admin Order] Could not link order request ${orderRequestId}: ${err?.message}`));
+    // Analytics: the order is listed under the visit that sent the request (best effort, never throws)
+    if (sourceRequest) void linkOrderToRequestVisit(order, sourceRequest);
   }
 
   const fresh = await Order.findById(order._id).lean();

@@ -4,6 +4,7 @@
  *   order_placed     the order was submitted (a bank transfer is then still unpaid)
  *   purchase         payment confirmed (onOrderPaid), timestamp = paidAt
  *   order_cancelled / order_refunded   (paymentTransition)
+ *   order_request    an order request was sent (Order Request checkout; see recordOrderRequestEvent)
  *
  * Each event's id is derived from the order ("order_placed:<orderId>"), so a retry or a second
  * webhook never records it twice. Failures are logged and never break the order flow.
@@ -114,6 +115,135 @@ async function linkPlacedOrder(order: any, ids: { sessionId?: string; visitorId?
   if (ids.visitorId && Object.keys(identity).length) {
     await AnalyticsVisitor.updateOne({ visitorId: ids.visitorId }, { $set: identity });
   }
+}
+
+/**
+ * Order Request checkout: the customer sent an order request (no order exists yet; the admin creates
+ * it later from Admin → Order requests). Recorded once per request ("order_request:<requestId>"):
+ *   - the checkout attempt is closed as submitted, so it is never counted as abandoned;
+ *   - the visit gets the customer's name/email (typed in this checkout), "Order request sent" as its
+ *     latest action, the request reference, and an emptied cart (the cart became the request);
+ *   - the visitor profile gets the name/email.
+ * Best effort: failures are logged and never affect the request.
+ */
+export async function recordOrderRequestEvent(request: any, opts: { at?: Date } = {}): Promise<boolean> {
+  try {
+    const sessionId = validId(request?.visitor?.sessionId);
+    if (!request?._id || !sessionId) return false; // no visit to link (tracking blocked, old storefront)
+    const visitorId = validId(request.visitor?.visitorId);
+    const checkoutId = validId(request.visitor?.checkoutId);
+    const at = opts.at ?? new Date();
+    const value = Number(request.total ?? request.subtotal ?? 0) || 0;
+    const requestNumber = request.requestNumber ? String(request.requestNumber) : undefined;
+
+    const session: any = await AnalyticsSession.findOne({ sessionId }).select('geo visitorId').lean();
+    // A visit belongs to one visitor: never link a request to a visit owned by someone else
+    if (session && visitorId && session.visitorId && session.visitorId !== visitorId) return false;
+    const known = (c: unknown) => typeof c === 'string' && c.trim() !== '' && c !== 'Unknown';
+    const loc = known(session?.geo?.country) ? { country: session.geo.country, region: session.geo.region, city: session.geo.city } : null;
+
+    const created = await AnalyticsEvent.create({
+      eventId: `order_request:${request._id}`,
+      sessionId,
+      visitorId: visitorId || session?.visitorId,
+      checkoutId,
+      eventType: 'order_request',
+      requestNumber,
+      cartValue: value,
+      page: '/checkout',
+      path: '/checkout',
+      clientReported: false,
+      timestamp: at,
+      ...(loc ? { country: loc.country, region: loc.region || undefined, city: loc.city || undefined } : {}),
+    });
+
+    const email = String(request.customer?.email || '').trim().toLowerCase() || undefined;
+    const name = [request.customer?.firstName, request.customer?.lastName].filter(Boolean).join(' ').trim() || undefined;
+    const identity: Record<string, unknown> = {};
+    if (email) identity['identity.email'] = email;
+    if (name) identity['identity.name'] = name;
+
+    if (checkoutId) try {
+      const owner = { checkoutId, ...(visitorId ? { visitorId } : {}) };
+      // Upsert: a request sent within a second of opening checkout can arrive before the browser's
+      // first checkout event. Creating the attempt here as submitted means those late events are
+      // ignored (collect.ts skips submitted attempts) instead of reopening it as "in progress".
+      await CheckoutSession.updateOne(owner, {
+        ...(visitorId ? { $setOnInsert: { sessionId, startedAt: at } } : {}),
+        $set: {
+          status: 'order_submitted', orderRequestId: request._id, orderSubmittedAt: at, lastActivityAt: at,
+          paymentMethod: 'order_request',
+          ...(requestNumber ? { requestNumber } : {}),
+          ...(email ? { 'contact.email': email } : {}),
+          ...(request.customer?.firstName ? { 'contact.firstName': request.customer.firstName } : {}),
+          ...(request.customer?.lastName ? { 'contact.lastName': request.customer.lastName } : {}),
+          ...(request.shippingAddress?.country ? { 'contact.country': request.shippingAddress.country } : {}),
+        },
+      }, { upsert: !!visitorId });
+      // The server accepted contact details + address, so the attempt reached at least Shipping
+      await CheckoutSession.updateOne(
+        { ...owner, $or: [{ stage: { $in: ['started', 'information'] } }, { stage: { $exists: false } }] },
+        { $set: { stage: 'shipping', 'stageAt.shipping': at } }
+      );
+    } catch (err: any) {
+      // e.g. the attempt id belongs to another visitor (duplicate key on upsert): leave it alone
+      console.error(`[Analytics] order_request: checkout attempt ${checkoutId} not updated: ${err?.message}`);
+    }
+    await AnalyticsSession.updateOne(
+      { sessionId },
+      {
+        ...(requestNumber ? { $addToSet: { requestNumbers: requestNumber } } : {}),
+        $set: {
+          ...identity,
+          lastActivityAt: at,
+          lastEvent: { type: 'order_request', path: '/checkout', value, requestNumber, at },
+          // The order request form ends at Shipping (no payment step: details are emailed later)
+          ...(checkoutId ? { 'checkout.checkoutId': checkoutId, 'checkout.stage': 'shipping' } : {}),
+          cart: { items: [], itemCount: 0, value: 0, updatedAt: at },
+        },
+      }
+    );
+    const owner = visitorId || session?.visitorId;
+    if (owner && Object.keys(identity).length) await AnalyticsVisitor.updateOne({ visitorId: owner }, { $set: identity });
+
+    void publishSessionUpdate(sessionId, [created.toObject()]);
+    return true;
+  } catch (err: any) {
+    if (err?.code === 11000) return false; // already recorded
+    console.error(`[Analytics] order_request event for request ${request?._id} failed: ${err?.message}`);
+    return false;
+  }
+}
+
+/**
+ * The admin created an order from an order request: the order joins the visit that sent the request
+ * (shown under that visit's orders, and its payment confirmation is recorded in that visit, because
+ * the order carries the request's visitor IDs). No second "order placed" is recorded: the customer
+ * submitted once (the order_request event). Best effort; never throws.
+ */
+export async function linkOrderToRequestVisit(order: any, request: any): Promise<void> {
+  try {
+    const sessionId = validId(request?.visitor?.sessionId);
+    const checkoutId = validId(request?.visitor?.checkoutId);
+    if (!order?._id || !sessionId) return;
+    await AnalyticsSession.updateOne({ sessionId }, { $addToSet: { orderIds: order._id } });
+    if (checkoutId) await CheckoutSession.updateOne({ checkoutId, orderRequestId: request._id }, { $set: { orderId: order._id } });
+    void publishSessionUpdate(sessionId);
+  } catch (err: any) {
+    console.error(`[Analytics] linking order ${order?._id} to its request's visit failed: ${err?.message}`);
+  }
+}
+
+/** The visitor IDs an order created from a request should carry (only well-formed IDs). */
+export function visitorFromRequest(request: any): { sessionId?: string; visitorId?: string; checkoutId?: string; country?: string } | undefined {
+  const sessionId = validId(request?.visitor?.sessionId);
+  if (!sessionId) return undefined;
+  return {
+    sessionId,
+    visitorId: validId(request.visitor?.visitorId),
+    checkoutId: validId(request.visitor?.checkoutId),
+    country: typeof request.visitor?.country === 'string' ? request.visitor.country.slice(0, 100) : undefined,
+  };
 }
 
 /**

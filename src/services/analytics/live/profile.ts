@@ -10,6 +10,7 @@
  */
 import { AnalyticsSession, AnalyticsVisitor, CheckoutSession } from '../../../models/analyticsSession.model';
 import Order from '../../../models/order.model';
+import Customer from '../../../models/Customer';
 import { CHECKOUT_ABANDON_MS } from '../config';
 import { visitorCard, visitorSummary, anonymousId, iso } from './cards';
 import { withVisitorIdentity } from './identity';
@@ -18,14 +19,15 @@ export const OTHER_VISITS_PAGE_SIZE = 10;
 const MAX_ORDERS = 50;
 
 const SESSION_FIELDS =
-  'sessionId visitorId startedAt lastActivityAt leftAt isNewVisitor landingPage source device geo counts lastEvent cart checkout identity orderIds';
-const ROW_FIELDS = 'sessionId visitorId startedAt lastActivityAt landingPage source device geo counts cart checkout orderIds';
+  'sessionId visitorId startedAt lastActivityAt leftAt isNewVisitor landingPage source device geo counts lastEvent cart checkout identity orderIds requestNumbers';
+const ROW_FIELDS = 'sessionId visitorId startedAt lastActivityAt landingPage source device geo counts cart checkout orderIds requestNumbers';
 
-export type VisitOutcome = 'ordered' | 'checkout' | 'cart' | 'browsed';
+export type VisitOutcome = 'ordered' | 'requested' | 'checkout' | 'cart' | 'browsed';
 
-/** How far a visit got: placed an order > started checkout > added to cart > only browsed. */
+/** How far a visit got: placed an order > sent an order request > started checkout > added to cart > only browsed. */
 export function visitOutcome(s: any): VisitOutcome {
   if (Array.isArray(s?.orderIds) && s.orderIds.length) return 'ordered';
+  if (Array.isArray(s?.requestNumbers) && s.requestNumbers.length) return 'requested';
   if (s?.checkout?.checkoutId || s?.checkout?.stage) return 'checkout';
   if ((s?.counts?.addToCart || 0) > 0 || (s?.cart?.itemCount || 0) > 0) return 'cart';
   return 'browsed';
@@ -54,6 +56,7 @@ export function visitRow(s: any, orderNumbers: Map<string, string | undefined>, 
     cart: s.cart?.itemCount ? { itemCount: s.cart.itemCount, value: s.cart.value || 0 } : null,
     checkoutStage: s.checkout?.stage || undefined,
     orders: (Array.isArray(s.orderIds) ? s.orderIds : []).map((id: any) => ({ id: String(id), orderNumber: orderNumbers.get(String(id)) })),
+    requestNumbers: Array.isArray(s.requestNumbers) ? s.requestNumbers.map(String) : [],
     outcome: visitOutcome(s),
     isLatest: !!latestSessionId && s.sessionId === latestSessionId,
   };
@@ -74,6 +77,7 @@ export function checkoutView(c: any, now = Date.now()) {
     errorCount: c.errorCount || 0,
     lastError: c.lastError || undefined,
     orderId: c.orderId ? String(c.orderId) : undefined,
+    requestNumber: c.requestNumber || undefined,
   };
 }
 
@@ -135,10 +139,24 @@ export async function buildVisitorProfile(sessionId: string, page = 1, now = Dat
 
   const ownIdentity = found.identity && (found.identity.name || found.identity.email) ? found.identity : null;
   const knownIdentity = ownIdentity || session.identity || visitor?.identity || null;
+  // Customer record link: only for an identity the visitor gave in a checkout, order or order link
+  // (never guessed), matched by that exact email
+  const knownEmail = typeof knownIdentity?.email === 'string' ? knownIdentity.email.trim().toLowerCase() : '';
+  const customer: any = knownEmail ? await Customer.findOne({ email: knownEmail }).select('_id').lean().catch(() => null) : null;
+
+  // How this visit arrived: referrer site, UTM tags and ad click type, exactly as recorded
+  const src: any = found.source || {};
+  const utm = Object.fromEntries(Object.entries(src.utm || {}).filter(([, v]) => typeof v === 'string' && v.trim() !== ''));
 
   return {
     serverTime: new Date(now).toISOString(),
     session: { ...visitorCard(session, now), checkout: checkoutView(checkout, now) },
+    visit: {
+      sessionId: found.sessionId,
+      referrerDomain: src.referrerDomain || undefined,
+      utm: Object.keys(utm).length ? utm : undefined,
+      clickId: src.clickId || undefined,
+    },
     visitor: {
       visitorId,
       anonymousId: anonymousId(visitorId),
@@ -146,7 +164,12 @@ export async function buildVisitorProfile(sessionId: string, page = 1, now = Dat
       lastSeenAt: lastSeenCandidates.length ? new Date(Math.max(...lastSeenCandidates)).toISOString() : iso(session.lastActivityAt),
       visitCount: otherTotal + 1,
       identity: knownIdentity && (knownIdentity.name || knownIdentity.email)
-        ? { name: knownIdentity.name || undefined, email: knownIdentity.email || undefined, from: ownIdentity ? 'this_visit' : 'earlier_visit' }
+        ? {
+          name: knownIdentity.name || undefined,
+          email: knownIdentity.email || undefined,
+          from: ownIdentity ? 'this_visit' : 'earlier_visit',
+          customerId: customer?._id ? String(customer._id) : undefined,
+        }
         : null,
       firstVisit: firstVisit
         ? { sessionId: firstVisit.sessionId, startedAt: iso(firstVisit.startedAt), landingPage: firstVisit.landingPage || undefined, source: visitorSummary(firstVisit).source }

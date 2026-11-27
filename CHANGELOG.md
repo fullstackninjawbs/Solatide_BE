@@ -46,25 +46,36 @@ commit is still shown.
 
 ## [Unreleased]
 
-Finished on separate branches, not merged/deployed yet. They become the next MINOR version when
-merged into `main`.
+Nothing yet.
+
+---
+
+## [1.6.0] — 2026-11-27
+
+Branch `fix/admin-critical-bugs` (1.5.0 + Analytics Milestone 3 + admin fixes).
 
 ### Added
 - **Visitor panel (M3)** — Journey, Current cart, Previous sessions and Visitor details tabs;
-  switch visitors inside the panel; one card per visitor. *(branch `feat/analytics-m3`)*
+  switch visitors inside the panel; one card per visitor.
 - **Storefront updates card** (Settings → Store) — website rebuild status, "Rebuild now" button;
   admins are emailed when a rebuild fails (max once an hour) and when it works again.
-  *(branch `fix/admin-critical-bugs`)*
-- "Make this the current batch" option on batches. *(fix/admin-critical-bugs)*
-- "Cancel & release stock" for unpaid manual orders. *(fix/admin-critical-bugs)*
+- "Make this the current batch" option on batches.
+- "Cancel & release stock" for unpaid manual orders.
+- **Order Request checkout is now fully tracked** (the live checkout mode): checkout steps
+  (Information / Shipping) and errors are recorded; a sent request shows as "Order request sent"
+  (with its REQ reference) on the live card, feed and visitor panel; the visitor is named; the cart
+  shows as emptied; the checkout is closed as submitted, so it is never counted as abandoned. The
+  order the admin creates from a request joins that visit, so "Payment confirmed" appears there too.
+- Visitor panel → Visitor details: visit (session) ID, referrer, UTM tags and ad click type, and a
+  "View customer" link when the visitor's email matches a customer record.
 
 ### Changed
 - Product page QC "Test Summary": equal-size cards; long results end with "…" and show in full on
-  hover/tap. *(fix/admin-critical-bugs)*
+  hover/tap.
 - Imported reviews and CMS page changes always refresh the website; returned stock only rebuilds
-  the website when a sold-out item comes back in stock. *(fix/admin-critical-bugs)*
+  the website when a sold-out item comes back in stock.
 
-### Fixed *(fix/admin-critical-bugs)*
+### Fixed
 - Order page "Refund Full Amount" failed for every order.
 - Editing a customer's name/email/phone on an order was not saved.
 - Saving a product could overwrite live stock with the number from when the page was opened.
@@ -75,7 +86,7 @@ merged into `main`.
 
 ---
 
-## [1.5.0] — not deployed yet
+## [1.5.0] — 2026-11-26
 
 Branch `feat/starshipit-duplicate-alert` (built on 1.4.0).
 
@@ -104,7 +115,7 @@ Branch `feat/starshipit-duplicate-alert` (built on 1.4.0).
 
 ---
 
-## [1.4.0] — live
+## [1.4.0] — replaced by 1.5.0
 
 First versioned release: everything live before versioning started.
 

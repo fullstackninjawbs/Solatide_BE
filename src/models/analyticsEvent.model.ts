@@ -5,12 +5,14 @@ import mongoose from 'mongoose';
  * - 'purchase' = payment confirmed (server, clientReported:false); old browser 'purchase' events
  *   (clientReported:true) were sent when an order was submitted.
  * - 'order_placed' / 'order_cancelled' / 'order_refunded' are recorded by the server only.
+ * - 'order_request' = an order request was sent (Order Request checkout: no order exists yet; the
+ *   admin creates it later). Recorded by the server only.
  */
 export const BROWSER_EVENT_TYPES = [
   'page_view', 'product_view', 'variant_select', 'add_to_cart', 'remove_from_cart', 'cart_quantity_change',
   'begin_checkout', 'checkout_step', 'checkout_error',
 ] as const;
-export const SERVER_EVENT_TYPES = ['order_placed', 'purchase', 'order_cancelled', 'order_refunded'] as const;
+export const SERVER_EVENT_TYPES = ['order_placed', 'order_request', 'purchase', 'order_cancelled', 'order_refunded'] as const;
 export const ANALYTICS_EVENT_TYPES = [...BROWSER_EVENT_TYPES, ...SERVER_EVENT_TYPES] as const;
 
 export type AnalyticsEventType = (typeof ANALYTICS_EVENT_TYPES)[number];
@@ -42,6 +44,8 @@ export interface IAnalyticsEvent extends mongoose.Document {
   /** checkout_error: short reason (field names / server message), never what the customer typed */
   errorMessage?: string;
   path?: string;
+  /** order_request: the request's reference shown to the customer (e.g. REQ-5AC85W) */
+  requestNumber?: string;
   /** true for events sent by the browser (spoofable); excluded from purchase/revenue metrics */
   clientReported?: boolean;
 }
@@ -113,6 +117,7 @@ const analyticsEventSchema = new mongoose.Schema<IAnalyticsEvent>(
       type: String,
       trim: true,
     },
+    requestNumber: { type: String, trim: true },
   },
   {
     timestamps: false,

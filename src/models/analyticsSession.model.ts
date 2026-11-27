@@ -97,6 +97,7 @@ const sessionSchema = new mongoose.Schema(
       stage: String,
       value: Number,
       orderId: mongoose.Schema.Types.ObjectId,
+      requestNumber: String,
       at: Date,
     },
     /**
@@ -112,6 +113,8 @@ const sessionSchema = new mongoose.Schema(
     checkout: { checkoutId: String, stage: String, startedAt: Date },
     identity: { type: identitySchema, default: undefined },
     orderIds: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
+    /** Order requests sent in this visit (Order Request checkout), by reference */
+    requestNumbers: { type: [String], default: undefined },
   },
   { timestamps: false }
 );
@@ -147,6 +150,9 @@ const checkoutSessionSchema = new mongoose.Schema(
     lastResumedAt: Date,
     orderId: mongoose.Schema.Types.ObjectId,
     orderSubmittedAt: Date,
+    /** Order Request checkout: submitted as this request (the order, if created, is orderId) */
+    orderRequestId: mongoose.Schema.Types.ObjectId,
+    requestNumber: String,
   },
   { timestamps: false }
 );
